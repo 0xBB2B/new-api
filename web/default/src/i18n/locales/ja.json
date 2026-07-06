@@ -3692,6 +3692,7 @@
     "Reset usage window": "使用量ウィンドウをリセット",
     "Reset value": "リセット値",
     "Resets in:": "リセットまで：",
+    "Resets to {{value}}": "{{value}} にリセットされます",
     "Resetting...": "リセット中...",
     "Resolve Conflicts": "競合を解決",
     "Resource Configuration": "リソース設定",

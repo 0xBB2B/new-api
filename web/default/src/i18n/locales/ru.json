@@ -3692,6 +3692,7 @@
     "Reset usage window": "Сбросить окно использования",
     "Reset value": "Значение сброса",
     "Resets in:": "Сброс через:",
+    "Resets to {{value}}": "Сброс до {{value}}",
     "Resetting...": "Сброс...",
     "Resolve Conflicts": "Разрешить конфликты",
     "Resource Configuration": "Конфигурация ресурсов",

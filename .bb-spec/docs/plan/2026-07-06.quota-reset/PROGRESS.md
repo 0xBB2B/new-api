@@ -9,11 +9,13 @@
 | 05 | self-api-visibility | done | 2026-07-06 |
 | 06 | admin-settings-ui | done | 2026-07-06 |
 | 07 | admin-users-ui | done | 2026-07-06 |
-| 08 | wallet-ui | pending | — |
+| 08 | wallet-ui | done | 2026-07-06 |
 
 ## 当前
 
-准备执行 `08-wallet-ui.md`。
+全部 8 步已完成。
+
+08 备注：Review 合规 3/3；主 Agent 修复移动端问题——重置值原本只在被 `hidden md:block` 隐藏的 description 中呈现，小屏丢失必须可见的业务数值，改为该卡 description 始终可见。
 
 07 备注：Review 合规 4/4、违规 0；交互无自动化覆盖属项目既有约束（无前端测试基建），验收由 /test-webview 承担。
 

@@ -3692,6 +3692,7 @@
     "Reset usage window": "重置用量窗口",
     "Reset value": "重置值",
     "Resets in:": "将于以下时间重置：",
+    "Resets to {{value}}": "将重置为 {{value}}",
     "Resetting...": "重置中...",
     "Resolve Conflicts": "解决冲突",
     "Resource Configuration": "资源配置",
