@@ -103,6 +103,20 @@ function isCodexCredential(value: string | undefined): boolean {
   }
 }
 
+function isClaudeCredential(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    if (parsed === undefined) return true
+    if (!isJsonObjectValue(parsed) || !isJsonObjectValue(parsed.claudeAiOauth)) {
+      return false
+    }
+    const accessToken = parsed.claudeAiOauth.accessToken
+    return typeof accessToken === 'string' && accessToken.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
 function isVertexJsonKey(value: string | undefined): boolean {
   try {
     const parsed = parseOptionalJson(value)
@@ -261,6 +275,23 @@ export const channelFormSchema = z
           ctx,
           'key',
           'Codex credential must be a JSON object with access_token and account_id'
+        )
+      }
+    }
+
+    if (data.type === 59) {
+      if (data.multi_key_mode && data.multi_key_mode !== 'single') {
+        addRequiredIssue(
+          ctx,
+          'multi_key_mode',
+          'Claude subscription channels do not support batch creation'
+        )
+      }
+      if (data.key?.trim() && !isClaudeCredential(data.key)) {
+        addRequiredIssue(
+          ctx,
+          'key',
+          'Claude subscription credential must be a JSON object with claudeAiOauth.accessToken'
         )
       }
     }
@@ -549,7 +580,12 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   // Field passthrough controls:
   // - OpenAI (type 1) and Anthropic (type 14): allow_service_tier
   // - OpenAI only: disable_store, allow_safety_identifier
-  if (formData.type === 1 || formData.type === 14 || formData.type === 57) {
+  if (
+    formData.type === 1 ||
+    formData.type === 14 ||
+    formData.type === 57 ||
+    formData.type === 59
+  ) {
     settingsObj.allow_service_tier = formData.allow_service_tier === true
   } else if ('allow_service_tier' in settingsObj) {
     delete settingsObj.allow_service_tier
@@ -568,12 +604,16 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       delete settingsObj.allow_safety_identifier
     if ('allow_include_obfuscation' in settingsObj)
       delete settingsObj.allow_include_obfuscation
-    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj)
+    if (
+      formData.type !== 14 &&
+      formData.type !== 59 &&
+      'allow_inference_geo' in settingsObj
+    )
       delete settingsObj.allow_inference_geo
   }
 
-  // Anthropic (type 14): claude_beta_query, allow_inference_geo, allow_speed
-  if (formData.type === 14) {
+  // Anthropic (type 14) and Claude Subscription (type 59): claude_beta_query, allow_inference_geo, allow_speed
+  if (formData.type === 14 || formData.type === 59) {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
     settingsObj.allow_speed = formData.allow_speed === true
     settingsObj.claude_beta_query = formData.claude_beta_query === true

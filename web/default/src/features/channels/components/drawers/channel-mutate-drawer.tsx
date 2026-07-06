@@ -127,6 +127,7 @@ import {
   getChannelKey,
   getGroups,
   getPrefillGroups,
+  refreshClaudeCredential,
   refreshCodexCredential,
 } from '../../api'
 import {
@@ -599,6 +600,8 @@ export function ChannelMutateDrawer({
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
     useState(false)
+  const [isClaudeCredentialRefreshing, setIsClaudeCredentialRefreshing] =
+    useState(false)
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
@@ -762,7 +765,9 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
   const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+    currentType !== 57 &&
+    currentType !== 59 &&
+    !(currentType === 41 && vertexKeyType === 'api_key')
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -940,7 +945,7 @@ export function ChannelMutateDrawer({
       currentAllowIncludeObfuscation ||
       currentAllowInferenceGeo
     )
-  } else if (currentType === 14) {
+  } else if (currentType === 14 || currentType === 59) {
     fieldPassthroughConfigured = Boolean(
       currentAllowServiceTier ||
       currentAllowInferenceGeo ||
@@ -983,7 +988,12 @@ export function ChannelMutateDrawer({
       configured: extraSettingsConfigured,
     },
   ]
-  if (currentType === 1 || currentType === 14 || currentType === 57) {
+  if (
+    currentType === 1 ||
+    currentType === 14 ||
+    currentType === 57 ||
+    currentType === 59
+  ) {
     advancedNavChildren.push({
       id: ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough,
       title: t('Field passthrough controls'),
@@ -1311,6 +1321,25 @@ export function ChannelMutateDrawer({
       toast.error(error instanceof Error ? error.message : t('Refresh failed'))
     } finally {
       setIsCodexCredentialRefreshing(false)
+    }
+  }, [channelId, queryClient, t])
+
+  const handleRefreshClaudeCredential = useCallback(async () => {
+    if (!channelId) return
+    setIsClaudeCredentialRefreshing(true)
+    try {
+      const res = await refreshClaudeCredential(channelId)
+      if (!res.success) {
+        throw new Error(res.message || t('Failed to refresh credential'))
+      }
+      toast.success(t('Credential refreshed'))
+      queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.detail(channelId),
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Refresh failed'))
+    } finally {
+      setIsClaudeCredentialRefreshing(false)
     }
   }, [channelId, queryClient, t])
 
@@ -2968,6 +2997,48 @@ export function ChannelMutateDrawer({
                                 </div>
                               )}
 
+                              {currentType === 59 && (
+                                <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
+                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                    <div className='text-muted-foreground text-xs'>
+                                      {t(
+                                        'Claude subscription channels use a Claude Code OAuth JSON credential as the key.'
+                                      )}
+                                    </div>
+                                    <div className='flex flex-wrap items-center gap-2'>
+                                      {isEditing && channelId && (
+                                        <Button
+                                          type='button'
+                                          variant='outline'
+                                          size='sm'
+                                          onClick={handleRefreshClaudeCredential}
+                                          disabled={
+                                            sensitiveLocked ||
+                                            isClaudeCredentialRefreshing
+                                          }
+                                        >
+                                          {isClaudeCredentialRefreshing ? (
+                                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                          ) : (
+                                            <RefreshCw className='mr-2 h-4 w-4' />
+                                          )}
+                                          {isClaudeCredentialRefreshing
+                                            ? t('Refreshing...')
+                                            : t('Refresh credential')}
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                                    <AlertDescription>
+                                      {t(
+                                        "Disclaimer: Personal subscription use only. Do not distribute or share any credentials. This channel has prerequisites and requires prior setup; use it only if you understand the flow and risks, and comply with Anthropic's terms and policies. Credentials and configuration are for Claude Code integration only, and are not intended for any other client, platform, or channel."
+                                      )}
+                                    </AlertDescription>
+                                  </Alert>
+                                </div>
+                              )}
+
                               {isEditing && isMultiKeyChannel && (
                                 <FormField
                                   control={form.control}
@@ -4108,7 +4179,8 @@ export function ChannelMutateDrawer({
 
                         {(currentType === 1 ||
                           currentType === 14 ||
-                          currentType === 57) && (
+                          currentType === 57 ||
+                          currentType === 59) && (
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
                             className={sideDrawerSectionClassName(
@@ -4262,7 +4334,8 @@ export function ChannelMutateDrawer({
                                   </>
                                 )}
 
-                                {currentType === 14 && (
+                                {(currentType === 14 ||
+                                  currentType === 59) && (
                                   <>
                                     <FormField
                                       control={form.control}
