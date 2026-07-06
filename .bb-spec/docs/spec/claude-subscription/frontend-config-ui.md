@@ -14,12 +14,14 @@ description: 前端渠道类型下拉含该类型;Key 提示粘贴 Claude Code O
 - 编辑抽屉为该类型渲染:
   - 「刷新凭据」按钮,点击触发后端手动刷新并回显结果。
   - 合规免责声明:提示 OAuth 凭据仅供个人订阅使用、需遵守 Anthropic 服务条款。
+  - 凭据获取指引:按操作系统(macOS Keychain / Linux·Windows 文件)给出可复制的命令,命令产出可直接粘贴到 Key 字段的 `{"claudeAiOauth":{...}}`。
 - 隐藏/禁用 batch 创建与多 key 输入(与单 key 约束一致)。
 
 ## 约束
 - 渠道类型下拉可见并可选 `Claude Subscription`。
 - 该类型的 Key 输入提示文案指向「Claude Code OAuth JSON 凭据」。
 - 编辑该类型渠道时可见「刷新凭据」按钮与合规免责声明。
+- 该类型抽屉展示按操作系统的凭据获取命令,可复制;命令产出 `{"claudeAiOauth":{...}}`。
 - 该类型表单不出现 batch/多 key 入口。
 
 ## 例子
@@ -30,4 +32,5 @@ description: 前端渠道类型下拉含该类型;Key 提示粘贴 Claude Code O
 - [ ] 渠道类型下拉含 `Claude Subscription` 且可选。
 - [ ] 该类型 Key 输入提示为「Claude Code OAuth JSON 凭据」。
 - [ ] 编辑该类型渠道时展示「刷新凭据」按钮与合规免责声明。
+- [ ] 该类型抽屉展示 macOS/Linux/Windows 三条可复制的凭据获取命令,输出为 `{"claudeAiOauth":{...}}`。
 - [ ] 该类型表单不出现 batch/多 key 入口。

@@ -3029,6 +3029,53 @@ export function ChannelMutateDrawer({
                                       )}
                                     </div>
                                   </div>
+                                  <div className='flex flex-col gap-2'>
+                                    <div className='text-muted-foreground text-xs'>
+                                      {t(
+                                        'On the machine where Claude Code is logged in, run the command for your OS and paste the output into the Key field above:'
+                                      )}
+                                    </div>
+                                    {[
+                                      {
+                                        os: 'macOS',
+                                        cmd: `security find-generic-password -s "Claude Code-credentials" -w | jq -c '{claudeAiOauth}'`,
+                                      },
+                                      {
+                                        os: 'Linux / WSL',
+                                        cmd: `jq -c '{claudeAiOauth}' ~/.claude/.credentials.json`,
+                                      },
+                                      {
+                                        os: 'Windows (PowerShell)',
+                                        cmd: `@{ claudeAiOauth = (Get-Content "$env:USERPROFILE\\.claude\\.credentials.json" -Raw | ConvertFrom-Json).claudeAiOauth } | ConvertTo-Json -Compress -Depth 10`,
+                                      },
+                                    ].map(({ os, cmd }) => (
+                                      <div key={os} className='flex flex-col gap-1'>
+                                        <span className='text-muted-foreground text-[11px] font-medium'>
+                                          {os}
+                                        </span>
+                                        <div className='flex items-center gap-2'>
+                                          <code className='bg-muted flex-1 overflow-x-auto rounded px-2 py-1 font-mono text-[11px] whitespace-pre'>
+                                            {cmd}
+                                          </code>
+                                          <Button
+                                            type='button'
+                                            variant='ghost'
+                                            size='icon'
+                                            className='h-6 w-6 shrink-0'
+                                            aria-label={t('Copy')}
+                                            onClick={() => copyToClipboard(cmd)}
+                                          >
+                                            <Copy className='h-3.5 w-3.5' />
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    <div className='text-muted-foreground text-[11px]'>
+                                      {t(
+                                        'macOS keeps the credential in Keychain (there is no ~/.claude/.credentials.json file). If the access token has already expired, save the channel first and click Refresh credential.'
+                                      )}
+                                    </div>
+                                  </div>
                                   <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
                                     <AlertDescription>
                                       {t(
