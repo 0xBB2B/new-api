@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -505,6 +506,14 @@ func GetSelf(c *gin.Context) {
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
+	}
+
+	if period, value, ok := service.ResolveQuotaResetRule(user.Status, userSetting); ok {
+		responseData["quota_reset"] = map[string]interface{}{
+			"period":          period,
+			"reset_value":     value,
+			"next_reset_time": service.NextQuotaResetTime(period, time.Now()).Unix(),
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

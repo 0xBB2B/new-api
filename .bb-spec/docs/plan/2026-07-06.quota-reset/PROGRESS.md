@@ -6,14 +6,16 @@
 | 02 | user-rule-storage | done | 2026-07-06 |
 | 03 | reset-engine | done | 2026-07-06 |
 | 04 | schedule-and-manual | done | 2026-07-06 |
-| 05 | self-api-visibility | pending | — |
+| 05 | self-api-visibility | done | 2026-07-06 |
 | 06 | admin-settings-ui | pending | — |
 | 07 | admin-users-ui | pending | — |
 | 08 | wallet-ui | pending | — |
 
 ## 当前
 
-准备执行 `05-self-api-visibility.md`。
+准备执行 `06-admin-settings-ui.md`（阶段 2 前端开始）。
+
+05 备注：Review 合规 3/3。"禁用用户端点层缺席"用例不补：鉴权中间件使禁用用户不可达 GetSelf，disabled 分支已在 service 层覆盖且 GetSelf 直传 user.Status，属结构性保证。
 
 04 备注：Green 阶段发现测试夹具缺陷（操作者 admin 也适用全局规则，spec 规定管理员同口径参与，断言 2 应为 3），主 Agent 修正断言并补管理员被重置的显式断言；Review 合规 3/3，主 Agent 补 tick 编排层 3 条用例（边界触发推进、无边界只推进、重入跳过不推进），"非管理员被拒"归 AdminAuth 中间件契约不在 feature 层重复测。
 
