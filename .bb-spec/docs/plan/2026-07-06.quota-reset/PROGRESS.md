@@ -8,12 +8,14 @@
 | 04 | schedule-and-manual | done | 2026-07-06 |
 | 05 | self-api-visibility | done | 2026-07-06 |
 | 06 | admin-settings-ui | done | 2026-07-06 |
-| 07 | admin-users-ui | pending | — |
+| 07 | admin-users-ui | done | 2026-07-06 |
 | 08 | wallet-ui | pending | — |
 
 ## 当前
 
-准备执行 `07-admin-users-ui.md`。
+准备执行 `08-wallet-ui.md`。
+
+07 备注：Review 合规 4/4、违规 0；交互无自动化覆盖属项目既有约束（无前端测试基建），验收由 /test-webview 承担。
 
 前端三步（06-08）执行形态调整并如实记录：web/default 无组件级测试基础设施（仅 node:test 纯逻辑测试惯例），硬造组件测试违反项目测试约定，故 Red 阶段跳过，改为 Impl → typecheck/lint/i18n:sync/format/copyright 门槛 → Review；交互验收由 /test-webview 承担。
 06 备注：Review 合规 4/4；主 Agent 修掉一处冗余三元；section 层无单测为项目惯例（兄弟 section 同样无测试），i18n 对称性由 i18n:sync 工具承担。
