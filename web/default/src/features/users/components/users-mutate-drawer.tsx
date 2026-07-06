@@ -197,7 +197,7 @@ export function UsersMutateDrawer({
               rule: data.quota_reset_rule_enabled
                 ? {
                     period: data.quota_reset_period,
-                    value: data.quota_reset_value,
+                    value: parseQuotaFromDollars(data.quota_reset_value),
                   }
                 : null,
               opt_out: data.quota_reset_opt_out,
@@ -580,15 +580,20 @@ export function UsersMutateDrawer({
                         name='quota_reset_value'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('Reset value')}</FormLabel>
+                            <FormLabel>
+                              {t('Reset value ({{currency}})', {
+                                currency: currencyLabel,
+                              })}
+                            </FormLabel>
                             <FormControl>
                               <Input
                                 type='number'
+                                step={tokensOnly ? 1 : 0.000001}
                                 min={0}
                                 value={field.value}
                                 onChange={(e) =>
                                   field.onChange(
-                                    Number.parseInt(e.target.value, 10) || 0
+                                    Number.parseFloat(e.target.value) || 0
                                   )
                                 }
                               />

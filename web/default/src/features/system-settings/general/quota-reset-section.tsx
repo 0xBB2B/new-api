@@ -40,6 +40,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
 
 import {
   SettingsForm,
@@ -56,7 +58,7 @@ const quotaResetSchema = z.object({
   quota_reset_setting: z.object({
     enabled: z.boolean(),
     period: z.enum(['daily', 'weekly', 'monthly']),
-    reset_value: z.coerce.number().int().min(0),
+    reset_value: z.coerce.number().min(0),
   }),
 })
 
@@ -69,6 +71,9 @@ type QuotaResetSectionProps = {
 export function QuotaResetSection({ defaultValues }: QuotaResetSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const currencyLabel = getCurrencyLabel()
+  const { meta: currencyMeta } = getCurrencyDisplay()
+  const tokensOnly = currencyMeta.kind === 'tokens'
 
   const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
     useSettingsForm<QuotaResetFormValues>({
@@ -77,14 +82,27 @@ export function QuotaResetSection({ defaultValues }: QuotaResetSectionProps) {
         unknown,
         QuotaResetFormValues
       >,
-      defaultValues,
+      defaultValues: {
+        ...defaultValues,
+        quota_reset_setting: {
+          ...defaultValues.quota_reset_setting,
+          reset_value: quotaUnitsToDollars(
+            defaultValues.quota_reset_setting.reset_value
+          ),
+        },
+      },
       onSubmit: async (_data, changedFields) => {
         for (const [key, value] of Object.entries(changedFields)) {
           if (value === undefined || value === null) continue
 
+          const submitValue =
+            key === 'quota_reset_setting.reset_value'
+              ? parseQuotaFromDollars(value as number)
+              : value
+
           await updateOption.mutateAsync({
             key,
-            value: value as string | number | boolean,
+            value: submitValue as string | number | boolean,
           })
         }
       },
@@ -171,10 +189,15 @@ export function QuotaResetSection({ defaultValues }: QuotaResetSectionProps) {
                 name='quota_reset_setting.reset_value'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Reset value')}</FormLabel>
+                    <FormLabel>
+                      {t('Reset value ({{currency}})', {
+                        currency: currencyLabel,
+                      })}
+                    </FormLabel>
                     <FormControl>
                       <Input
                         type='number'
+                        step={tokensOnly ? 1 : 0.000001}
                         min={0}
                         {...safeNumberFieldProps(field)}
                       />

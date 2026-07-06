@@ -47,7 +47,7 @@ export const userFormSchema = z.object({
   quota_reset_opt_out: z.boolean(),
   quota_reset_rule_enabled: z.boolean(),
   quota_reset_period: z.enum(['daily', 'weekly', 'monthly']),
-  quota_reset_value: z.number().int().min(0),
+  quota_reset_value: z.number().min(0),
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>
@@ -150,6 +150,6 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     quota_reset_period:
       (quotaResetRule?.period as UserFormValues['quota_reset_period']) ??
       'monthly',
-    quota_reset_value: quotaResetRule?.value ?? 0,
+    quota_reset_value: quotaUnitsToDollars(quotaResetRule?.value ?? 0),
   }
 }
