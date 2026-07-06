@@ -7,13 +7,16 @@
 | 03 | reset-engine | done | 2026-07-06 |
 | 04 | schedule-and-manual | done | 2026-07-06 |
 | 05 | self-api-visibility | done | 2026-07-06 |
-| 06 | admin-settings-ui | pending | — |
+| 06 | admin-settings-ui | done | 2026-07-06 |
 | 07 | admin-users-ui | pending | — |
 | 08 | wallet-ui | pending | — |
 
 ## 当前
 
-准备执行 `06-admin-settings-ui.md`（阶段 2 前端开始）。
+准备执行 `07-admin-users-ui.md`。
+
+前端三步（06-08）执行形态调整并如实记录：web/default 无组件级测试基础设施（仅 node:test 纯逻辑测试惯例），硬造组件测试违反项目测试约定，故 Red 阶段跳过，改为 Impl → typecheck/lint/i18n:sync/format/copyright 门槛 → Review；交互验收由 /test-webview 承担。
+06 备注：Review 合规 4/4；主 Agent 修掉一处冗余三元；section 层无单测为项目惯例（兄弟 section 同样无测试），i18n 对称性由 i18n:sync 工具承担。
 
 05 备注：Review 合规 3/3。"禁用用户端点层缺席"用例不补：鉴权中间件使禁用用户不可达 GetSelf，disabled 分支已在 service 层覆盖且 GetSelf 直传 user.Status，属结构性保证。
 
