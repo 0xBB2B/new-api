@@ -1440,6 +1440,9 @@ func UpdateUserSetting(c *gin.Context) {
 		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
 		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
 		RecordIpLog:                      req.RecordIpLog,
+		// 仅管理员端点可写的字段，自服务保存时原样保留
+		QuotaResetRule:   existingSettings.QuotaResetRule,
+		QuotaResetOptOut: existingSettings.QuotaResetOptOut,
 	}
 
 	// 如果是webhook类型,添加webhook相关设置
@@ -1479,4 +1482,48 @@ func UpdateUserSetting(c *gin.Context) {
 	}
 
 	common.ApiSuccessI18n(c, i18n.MsgSettingSaved, nil)
+}
+
+type UpdateUserQuotaResetRuleRequest struct {
+	UserId int                 `json:"user_id"`
+	Rule   *dto.QuotaResetRule `json:"rule"`
+	OptOut bool                `json:"opt_out"`
+}
+
+func UpdateUserQuotaResetRule(c *gin.Context) {
+	var req UpdateUserQuotaResetRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if req.Rule != nil && (!operation_setting.IsValidQuotaResetPeriod(req.Rule.Period) || req.Rule.Value < 0) {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	targetUser, err := model.GetUserById(req.UserId, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canManageTargetRole(c.GetInt("role"), targetUser.Role) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+
+	setting := targetUser.GetSetting()
+	setting.QuotaResetRule = req.Rule
+	setting.QuotaResetOptOut = req.OptOut
+	if err := model.UpdateUserSetting(targetUser.Id, setting); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	params := map[string]interface{}{"opt_out": req.OptOut}
+	if req.Rule != nil {
+		params["rule"] = fmt.Sprintf("%s:%d", req.Rule.Period, req.Rule.Value)
+	}
+	recordManageAuditFor(c, targetUser.Id, "user.quota_reset_rule", params)
+
+	common.ApiSuccessI18n(c, i18n.MsgUpdateSuccess, nil)
 }
