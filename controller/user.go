@@ -1527,3 +1527,14 @@ func UpdateUserQuotaResetRule(c *gin.Context) {
 
 	common.ApiSuccessI18n(c, i18n.MsgUpdateSuccess, nil)
 }
+
+func RunQuotaResetNow(c *gin.Context) {
+	count, err := service.RunQuotaResetPass(nil, service.QuotaResetTriggerManual)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	recordManageAuditFor(c, c.GetInt("id"), "user.quota_reset_run", map[string]interface{}{"count": count})
+	common.ApiSuccess(c, gin.H{"reset_count": count})
+}

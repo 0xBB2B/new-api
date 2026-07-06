@@ -196,6 +196,81 @@ func TestNextQuotaResetTime(t *testing.T) {
 	}
 }
 
+func TestCrossedQuotaResetPeriods(t *testing.T) {
+	cases := []struct {
+		name string
+		from time.Time
+		to   time.Time
+		want []string
+	}{
+		{
+			name: "same_day_no_midnight_crossed",
+			from: time.Date(2026, 7, 8, 9, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 7, 8, 17, 0, 0, 0, time.Local),
+			want: []string{},
+		},
+		{
+			name: "crosses_ordinary_weekday_midnight_daily_only",
+			from: time.Date(2026, 7, 7, 23, 0, 0, 0, time.Local), // Tuesday
+			to:   time.Date(2026, 7, 8, 1, 0, 0, 0, time.Local),  // Wednesday
+			want: []string{operation_setting.QuotaResetPeriodDaily},
+		},
+		{
+			name: "crosses_monday_midnight_daily_and_weekly",
+			from: time.Date(2026, 7, 5, 23, 0, 0, 0, time.Local), // Sunday
+			to:   time.Date(2026, 7, 6, 1, 0, 0, 0, time.Local),  // Monday
+			want: []string{operation_setting.QuotaResetPeriodDaily, operation_setting.QuotaResetPeriodWeekly},
+		},
+		{
+			name: "crosses_first_of_month_midnight_daily_and_monthly",
+			from: time.Date(2026, 6, 30, 23, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 7, 1, 1, 0, 0, 0, time.Local), // Wednesday, 1st
+			want: []string{operation_setting.QuotaResetPeriodDaily, operation_setting.QuotaResetPeriodMonthly},
+		},
+		{
+			name: "crosses_monday_and_first_of_month_midnight_all_three",
+			from: time.Date(2026, 5, 31, 23, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 6, 1, 1, 0, 0, 0, time.Local), // Monday, 1st
+			want: []string{
+				operation_setting.QuotaResetPeriodDaily,
+				operation_setting.QuotaResetPeriodWeekly,
+				operation_setting.QuotaResetPeriodMonthly,
+			},
+		},
+		{
+			name: "from_exactly_at_midnight_excluded_from_half_open_interval",
+			from: time.Date(2026, 7, 8, 0, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 7, 8, 12, 0, 0, 0, time.Local),
+			want: []string{},
+		},
+		{
+			name: "to_exactly_at_midnight_included_in_half_open_interval",
+			from: time.Date(2026, 7, 7, 23, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 7, 8, 0, 0, 0, 0, time.Local),
+			want: []string{operation_setting.QuotaResetPeriodDaily},
+		},
+		{
+			name: "downtime_gap_missed_boundary_is_not_retroactively_triggered",
+			from: time.Date(2026, 7, 8, 8, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 7, 8, 9, 0, 0, 0, time.Local),
+			want: []string{},
+		},
+		{
+			name: "spans_three_days_each_period_at_most_once",
+			from: time.Date(2026, 7, 7, 12, 0, 0, 0, time.Local),
+			to:   time.Date(2026, 7, 10, 12, 0, 0, 0, time.Local),
+			want: []string{operation_setting.QuotaResetPeriodDaily},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := crossedQuotaResetPeriods(tc.from, tc.to)
+			assert.ElementsMatch(t, tc.want, got)
+		})
+	}
+}
+
 func TestRunQuotaResetPass(t *testing.T) {
 	t.Run("batch_resets_only_users_with_effective_rule", func(t *testing.T) {
 		truncate(t)
@@ -324,5 +399,49 @@ func TestRunQuotaResetPass(t *testing.T) {
 		require.Len(t, logs, 2)
 		assert.Equal(t, "额度重置（定时）：300000 -> 500000", logs[0].Content)
 		assert.Equal(t, "额度重置（定时）：500000 -> 500000", logs[1].Content)
+	})
+}
+
+func TestQuotaResetTick(t *testing.T) {
+	t.Run("crossed boundary runs pass and advances lastTick", func(t *testing.T) {
+		truncate(t)
+		setGlobalQuotaReset(t, true, operation_setting.QuotaResetPeriodDaily, 700)
+		seedQuotaResetUser(t, 9001, 123, 10, 2, common.UserStatusEnabled, dto.UserSetting{})
+
+		lastTick = time.Now().Add(-25 * time.Hour)
+		before := time.Now()
+		quotaResetTick()
+
+		assert.Equal(t, 700, getQuotaResetUser(t, 9001).Quota)
+		assert.False(t, lastTick.Before(before), "lastTick must advance to tick time")
+	})
+
+	t.Run("no boundary crossed leaves users untouched but advances lastTick", func(t *testing.T) {
+		truncate(t)
+		setGlobalQuotaReset(t, true, operation_setting.QuotaResetPeriodDaily, 700)
+		seedQuotaResetUser(t, 9002, 123, 10, 2, common.UserStatusEnabled, dto.UserSetting{})
+
+		lastTick = time.Now().Add(-time.Second)
+		before := time.Now()
+		quotaResetTick()
+
+		assert.Equal(t, 123, getQuotaResetUser(t, 9002).Quota)
+		assert.False(t, lastTick.Before(before))
+	})
+
+	t.Run("reentrant tick skips without advancing lastTick", func(t *testing.T) {
+		truncate(t)
+		setGlobalQuotaReset(t, true, operation_setting.QuotaResetPeriodDaily, 700)
+		seedQuotaResetUser(t, 9003, 123, 10, 2, common.UserStatusEnabled, dto.UserSetting{})
+
+		prev := time.Now().Add(-25 * time.Hour)
+		lastTick = prev
+		quotaResetTaskRunning.Store(true)
+		t.Cleanup(func() { quotaResetTaskRunning.Store(false) })
+
+		quotaResetTick()
+
+		assert.Equal(t, 123, getQuotaResetUser(t, 9003).Quota)
+		assert.True(t, lastTick.Equal(prev), "skipped tick must not advance lastTick")
 	})
 }
