@@ -21,6 +21,17 @@
 
 - [preserve-project-identity](brand-protection/preserve-project-identity.md) — 项目名与组织身份的引用/元数据受保护，禁止修改、删除、替换、匿名化。
 
+## claude-subscription
+
+- [channel-identity](claude-subscription/channel-identity.md) — Claude 订阅是独立渠道类型，默认 base URL api.anthropic.com，由专属 OAuth adaptor 分派，与标准 claude 渠道并存。
+- [claude-code-system-prompt](claude-subscription/claude-code-system-prompt.md) — 强制注入 "You are Claude Code..." 作为第一条 system；管理员自定义 SystemPrompt 前置拼接在其之前。
+- [credential-auto-refresh](claude-subscription/credential-auto-refresh.md) — refresh_token 换新并轮换回写 Key；后台仅 master、10min tick、剩余 <24h 才刷新、跳过 multi-key；另有手动刷新入口。
+- [frontend-config-ui](claude-subscription/frontend-config-ui.md) — 前端类型下拉含该类型；Key 提示粘贴 Claude Code OAuth JSON；编辑抽屉提供刷新凭据按钮与合规免责声明；隐藏 batch/多 key 入口。
+- [oauth-credential-format](claude-subscription/oauth-credential-format.md) — 渠道 Key 存 Claude Code 原生 OAuth JSON；解析 accessToken/refreshToken/expiresAt，accessToken 必填，expiresAt 为毫秒时间戳。
+- [oauth-request-headers](claude-subscription/oauth-request-headers.md) — 上游鉴权头用 Authorization Bearer + anthropic-beta oauth-2025-04-20 + anthropic-version；禁带 x-api-key。
+- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不实现 usage 用量查询。
+- [single-key-only](claude-subscription/single-key-only.md) — Claude 订阅渠道为单账号单渠道，禁止 batch 创建与多 key；前端拒绝、后台刷新跳过 multi-key。
+
 ## db-compat
 
 - [boolean-default-not-declared-in-orm-tag](db-compat/boolean-default-not-declared-in-orm-tag.md) — bool 字段禁用 ORM default tag 声明默认值；改由代码层（构造/归一化/hook）赋值。
