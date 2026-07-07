@@ -47,6 +47,14 @@
 - [json-codec-single-entry](json-wrapper/json-codec-single-entry.md) — 项目提供 common/json.go 作为 JSON 编解码包装入口；pkg 内 codec 层同属合法；业务代码两种写法并存为现状。
 - [json-raw-message-shape-dispatch](json-wrapper/json-raw-message-shape-dispatch.md) — 可变形态 JSON 字段用「首字节判形」分派，禁用试错式反序列化。
 
+## quota-reset
+
+- [manual-trigger](quota-reset/manual-trigger.md) — 管理端「立即按规则重置」入口：仅管理员可用，对全体参与用户执行与定时触发完全相同的重置。
+- [reset-semantics](quota-reset/reset-semantics.md) — 单次额度重置动作的语义：quota 覆盖写为重置值（≥0 整数），统计字段不动，每用户记一条系统日志。
+- [rule-resolution](quota-reset/rule-resolution.md) — 额度重置规则的生效解析：全局默认 + 每用户专属完全覆盖；退出标记最优先；仅启用状态用户参与。
+- [schedule-trigger](quota-reset/schedule-trigger.md) — 额度重置的定时触发：每天/每周/每月三种周期的触发时点按服务器本地时区计算；错过不追赶。
+- [user-visibility](quota-reset/user-visibility.md) — 有生效重置规则的用户在个人页可见下次重置时间与重置值；无生效规则的用户不展示。
+
 ## relay-adapter-pattern
 
 - [adaptor-interface-total-method-set](relay-adapter-pattern/adaptor-interface-total-method-set.md) — 每个 provider adapter 实现同一套完整接口方法集；不支持的模态返回 not implemented，不裁剪接口。
