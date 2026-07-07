@@ -132,6 +132,7 @@ import {
   getChannelKey,
   getGroups,
   getPrefillGroups,
+  refreshClaudeCredential,
   refreshCodexCredential,
 } from '../../api'
 import {
@@ -604,6 +605,8 @@ export function ChannelMutateDrawer({
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
     useState(false)
+  const [isClaudeCredentialRefreshing, setIsClaudeCredentialRefreshing] =
+    useState(false)
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
@@ -830,7 +833,9 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
   const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+    currentType !== 57 &&
+    currentType !== 59 &&
+    !(currentType === 41 && vertexKeyType === 'api_key')
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -1008,7 +1013,7 @@ export function ChannelMutateDrawer({
       currentAllowIncludeObfuscation ||
       currentAllowInferenceGeo
     )
-  } else if (currentType === 14) {
+  } else if (currentType === 14 || currentType === 59) {
     fieldPassthroughConfigured = Boolean(
       currentAllowServiceTier ||
       currentAllowInferenceGeo ||
@@ -1051,7 +1056,12 @@ export function ChannelMutateDrawer({
       configured: extraSettingsConfigured,
     },
   ]
-  if (currentType === 1 || currentType === 14 || currentType === 57) {
+  if (
+    currentType === 1 ||
+    currentType === 14 ||
+    currentType === 57 ||
+    currentType === 59
+  ) {
     advancedNavChildren.push({
       id: ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough,
       title: t('Field passthrough controls'),
@@ -1379,6 +1389,25 @@ export function ChannelMutateDrawer({
       toast.error(error instanceof Error ? error.message : t('Refresh failed'))
     } finally {
       setIsCodexCredentialRefreshing(false)
+    }
+  }, [channelId, queryClient, t])
+
+  const handleRefreshClaudeCredential = useCallback(async () => {
+    if (!channelId) return
+    setIsClaudeCredentialRefreshing(true)
+    try {
+      const res = await refreshClaudeCredential(channelId)
+      if (!res.success) {
+        throw new Error(res.message || t('Failed to refresh credential'))
+      }
+      toast.success(t('Credential refreshed'))
+      queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.detail(channelId),
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Refresh failed'))
+    } finally {
+      setIsClaudeCredentialRefreshing(false)
     }
   }, [channelId, queryClient, t])
 
@@ -3078,6 +3107,95 @@ export function ChannelMutateDrawer({
                                 </div>
                               )}
 
+                              {currentType === 59 && (
+                                <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
+                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                    <div className='text-muted-foreground text-xs'>
+                                      {t(
+                                        'Claude subscription channels use a Claude Code OAuth JSON credential as the key.'
+                                      )}
+                                    </div>
+                                    <div className='flex flex-wrap items-center gap-2'>
+                                      {isEditing && channelId && (
+                                        <Button
+                                          type='button'
+                                          variant='outline'
+                                          size='sm'
+                                          onClick={handleRefreshClaudeCredential}
+                                          disabled={
+                                            sensitiveLocked ||
+                                            isClaudeCredentialRefreshing
+                                          }
+                                        >
+                                          {isClaudeCredentialRefreshing ? (
+                                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                          ) : (
+                                            <RefreshCw className='mr-2 h-4 w-4' />
+                                          )}
+                                          {isClaudeCredentialRefreshing
+                                            ? t('Refreshing...')
+                                            : t('Refresh credential')}
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className='flex flex-col gap-2'>
+                                    <div className='text-muted-foreground text-xs'>
+                                      {t(
+                                        'On the machine where Claude Code is logged in, run the command for your OS and paste the output into the Key field above:'
+                                      )}
+                                    </div>
+                                    {[
+                                      {
+                                        os: 'macOS',
+                                        cmd: `security find-generic-password -s "Claude Code-credentials" -w | jq -c '{claudeAiOauth}'`,
+                                      },
+                                      {
+                                        os: 'Linux / WSL',
+                                        cmd: `jq -c '{claudeAiOauth}' ~/.claude/.credentials.json`,
+                                      },
+                                      {
+                                        os: 'Windows (PowerShell)',
+                                        cmd: `@{ claudeAiOauth = (Get-Content "$env:USERPROFILE\\.claude\\.credentials.json" -Raw | ConvertFrom-Json).claudeAiOauth } | ConvertTo-Json -Compress -Depth 10`,
+                                      },
+                                    ].map(({ os, cmd }) => (
+                                      <div key={os} className='flex flex-col gap-1'>
+                                        <span className='text-muted-foreground text-[11px] font-medium'>
+                                          {os}
+                                        </span>
+                                        <div className='flex items-center gap-2'>
+                                          <code className='bg-muted flex-1 overflow-x-auto rounded px-2 py-1 font-mono text-[11px] whitespace-pre'>
+                                            {cmd}
+                                          </code>
+                                          <Button
+                                            type='button'
+                                            variant='ghost'
+                                            size='icon'
+                                            className='h-6 w-6 shrink-0'
+                                            aria-label={t('Copy')}
+                                            onClick={() => copyToClipboard(cmd)}
+                                          >
+                                            <Copy className='h-3.5 w-3.5' />
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    <div className='text-muted-foreground text-[11px]'>
+                                      {t(
+                                        'macOS keeps the credential in Keychain (there is no ~/.claude/.credentials.json file). If the access token has already expired, save the channel first and click Refresh credential.'
+                                      )}
+                                    </div>
+                                  </div>
+                                  <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                                    <AlertDescription>
+                                      {t(
+                                        "Disclaimer: Personal subscription use only. Do not distribute or share any credentials. This channel has prerequisites and requires prior setup; use it only if you understand the flow and risks, and comply with Anthropic's terms and policies. Credentials and configuration are for Claude Code integration only, and are not intended for any other client, platform, or channel."
+                                      )}
+                                    </AlertDescription>
+                                  </Alert>
+                                </div>
+                              )}
+
                               {isEditing && isMultiKeyChannel && (
                                 <FormField
                                   control={form.control}
@@ -4218,7 +4336,8 @@ export function ChannelMutateDrawer({
 
                         {(currentType === 1 ||
                           currentType === 14 ||
-                          currentType === 57) && (
+                          currentType === 57 ||
+                          currentType === 59) && (
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
                             className={sideDrawerSectionClassName(
@@ -4372,7 +4491,8 @@ export function ChannelMutateDrawer({
                                   </>
                                 )}
 
-                                {currentType === 14 && (
+                                {(currentType === 14 ||
+                                  currentType === 59) && (
                                   <>
                                     <FormField
                                       control={form.control}
