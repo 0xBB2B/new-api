@@ -24,7 +24,7 @@
 ## claude-subscription
 
 - [channel-identity](claude-subscription/channel-identity.md) — Claude 订阅是独立渠道类型，默认 base URL api.anthropic.com，由专属 OAuth adaptor 分派，与标准 claude 渠道并存。
-- [claude-code-system-prompt](claude-subscription/claude-code-system-prompt.md) — 强制注入 "You are Claude Code..." 作为第一条 system；管理员自定义 SystemPrompt 前置拼接在其之前。
+- [claude-code-system-prompt](claude-subscription/claude-code-system-prompt.md) — 强制注入 "You are Claude Code..." 作为第一条 system；自定义 SystemPrompt 沿用渠道全局语义，不由本渠道特殊处理。
 - [credential-auto-refresh](claude-subscription/credential-auto-refresh.md) — refresh_token 换新并轮换回写 Key；后台仅 master、10min tick、剩余 <24h 才刷新、跳过 multi-key；另有手动刷新入口。
 - [frontend-config-ui](claude-subscription/frontend-config-ui.md) — 前端类型下拉含该类型；Key 提示粘贴 Claude Code OAuth JSON；编辑抽屉提供刷新凭据按钮与合规免责声明；隐藏 batch/多 key 入口。
 - [oauth-credential-format](claude-subscription/oauth-credential-format.md) — 渠道 Key 存 Claude Code 原生 OAuth JSON；解析 accessToken/refreshToken/expiresAt，accessToken 必填，expiresAt 为毫秒时间戳。

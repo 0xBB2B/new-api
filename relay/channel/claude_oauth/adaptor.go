@@ -61,7 +61,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
-	prependClaudeCodeSystem(request, info)
+	prependClaudeCodeSystem(request)
 	return request, nil
 }
 
@@ -70,31 +70,13 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	prependClaudeCodeSystem(claudeReq, info)
+	prependClaudeCodeSystem(claudeReq)
 	return claudeReq, nil
 }
 
-func prependClaudeCodeSystem(request *dto.ClaudeRequest, info *relaycommon.RelayInfo) {
+func prependClaudeCodeSystem(request *dto.ClaudeRequest) {
 	identityBlock := dto.ClaudeMediaMessage{Type: "text", Text: common.GetPointer(claudeCodeSystemPrompt)}
 	existing := normalizeClaudeSystem(request.System)
-
-	systemPrompt := info.ChannelSetting.SystemPrompt
-	if systemPrompt == "" {
-		request.System = append([]dto.ClaudeMediaMessage{identityBlock}, filterIdentityBlock(existing)...)
-		return
-	}
-
-	if len(existing) == 0 {
-		request.System = []dto.ClaudeMediaMessage{identityBlock, {Type: "text", Text: common.GetPointer(systemPrompt)}}
-		return
-	}
-
-	if info.ChannelSetting.SystemPromptOverride {
-		blocks := []dto.ClaudeMediaMessage{identityBlock, {Type: "text", Text: common.GetPointer(systemPrompt)}}
-		request.System = append(blocks, filterIdentityBlock(existing)...)
-		return
-	}
-
 	request.System = append([]dto.ClaudeMediaMessage{identityBlock}, filterIdentityBlock(existing)...)
 }
 

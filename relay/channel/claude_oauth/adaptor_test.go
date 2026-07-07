@@ -126,13 +126,15 @@ func TestConvertClaudeRequest_ClientSystemPresent_IdentityPrependsBeforeIt(t *te
 	assert.Equal(t, "你是翻译助手", blocks[1].GetText())
 }
 
+// 共享请求管道先于 adaptor 运行：客户端未带 system 时，管道已把 System 置为自定义串。
+// adaptor 只应前置身份串，不得对已含自定义串的 System 再次注入。
 func TestConvertClaudeRequest_SystemPromptOverride_OrderIsIdentityThenCustomPrompt(t *testing.T) {
 	info := newRelayInfo(validOAuthKeyJSON, dto.ChannelSettings{
 		SystemPrompt:         "输出简体中文",
 		SystemPromptOverride: true,
 	})
 	c := newGinContext(nil)
-	request := &dto.ClaudeRequest{Model: "claude-3-5-sonnet-20241022"}
+	request := &dto.ClaudeRequest{Model: "claude-3-5-sonnet-20241022", System: "输出简体中文"}
 
 	converted, err := (&Adaptor{}).ConvertClaudeRequest(c, info, request)
 
@@ -144,6 +146,93 @@ func TestConvertClaudeRequest_SystemPromptOverride_OrderIsIdentityThenCustomProm
 	require.Len(t, blocks, 2)
 	assert.Equal(t, claudeCodeIdentityPrompt, blocks[0].GetText())
 	assert.Equal(t, "输出简体中文", blocks[1].GetText())
+}
+
+func joinSystemText(blocks []dto.ClaudeMediaMessage) string {
+	texts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		texts = append(texts, block.GetText())
+	}
+	return strings.Join(texts, "\n")
+}
+
+func TestConvertClaudeRequest_SystemPromptOverride_ClientSystemStringAlreadyMerged_CustomPromptNotDuplicated(t *testing.T) {
+	info := newRelayInfo(validOAuthKeyJSON, dto.ChannelSettings{
+		SystemPrompt:         "输出简体中文",
+		SystemPromptOverride: true,
+	})
+	c := newGinContext(nil)
+	request := &dto.ClaudeRequest{
+		Model:  "claude-3-5-sonnet-20241022",
+		System: "输出简体中文\n你是翻译助手",
+	}
+
+	converted, err := (&Adaptor{}).ConvertClaudeRequest(c, info, request)
+
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.ClaudeRequest)
+	require.True(t, ok)
+	blocks, err := common.Any2Type[[]dto.ClaudeMediaMessage](convertedRequest.System)
+	require.NoError(t, err)
+	require.NotEmpty(t, blocks)
+	assert.Equal(t, claudeCodeIdentityPrompt, blocks[0].GetText())
+	joined := joinSystemText(blocks)
+	assert.Equal(t, 1, strings.Count(joined, "输出简体中文"))
+	assert.Contains(t, joined, "你是翻译助手")
+}
+
+func TestConvertClaudeRequest_SystemPromptOverride_ClientSystemArrayAlreadyMerged_CustomPromptNotDuplicated(t *testing.T) {
+	info := newRelayInfo(validOAuthKeyJSON, dto.ChannelSettings{
+		SystemPrompt:         "输出简体中文",
+		SystemPromptOverride: true,
+	})
+	c := newGinContext(nil)
+	request := &dto.ClaudeRequest{
+		Model: "claude-3-5-sonnet-20241022",
+		System: []dto.ClaudeMediaMessage{
+			{Type: "text", Text: common.GetPointer("输出简体中文")},
+			{Type: "text", Text: common.GetPointer("你是翻译助手")},
+		},
+	}
+
+	converted, err := (&Adaptor{}).ConvertClaudeRequest(c, info, request)
+
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.ClaudeRequest)
+	require.True(t, ok)
+	blocks, err := common.Any2Type[[]dto.ClaudeMediaMessage](convertedRequest.System)
+	require.NoError(t, err)
+	require.NotEmpty(t, blocks)
+	assert.Equal(t, claudeCodeIdentityPrompt, blocks[0].GetText())
+	joined := joinSystemText(blocks)
+	assert.Equal(t, 1, strings.Count(joined, "输出简体中文"))
+	assert.Contains(t, joined, "你是翻译助手")
+}
+
+func TestConvertClaudeRequest_SystemPromptNotOverride_ClientSystemPresent_CustomPromptNotInjected(t *testing.T) {
+	info := newRelayInfo(validOAuthKeyJSON, dto.ChannelSettings{
+		SystemPrompt:         "输出简体中文",
+		SystemPromptOverride: false,
+	})
+	c := newGinContext(nil)
+	request := &dto.ClaudeRequest{
+		Model:  "claude-3-5-sonnet-20241022",
+		System: "你是翻译助手",
+	}
+
+	converted, err := (&Adaptor{}).ConvertClaudeRequest(c, info, request)
+
+	require.NoError(t, err)
+	convertedRequest, ok := converted.(*dto.ClaudeRequest)
+	require.True(t, ok)
+	blocks, err := common.Any2Type[[]dto.ClaudeMediaMessage](convertedRequest.System)
+	require.NoError(t, err)
+	require.Len(t, blocks, 2)
+	assert.Equal(t, claudeCodeIdentityPrompt, blocks[0].GetText())
+	assert.Equal(t, "你是翻译助手", blocks[1].GetText())
+	for _, block := range blocks {
+		assert.NotEqual(t, "输出简体中文", block.GetText())
+	}
 }
 
 func TestConvertClaudeRequest_ClientAlreadyHasIdentityString_NotDuplicated(t *testing.T) {
