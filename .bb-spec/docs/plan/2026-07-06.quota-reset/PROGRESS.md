@@ -1,0 +1,36 @@
+# 执行进度
+
+| 序号 | Plan | 状态 | 完成时间 |
+|---|---|---|---|
+| 01 | global-rule-setting | done | 2026-07-06 |
+| 02 | user-rule-storage | done | 2026-07-06 |
+| 03 | reset-engine | done | 2026-07-06 |
+| 04 | schedule-and-manual | done | 2026-07-06 |
+| 05 | self-api-visibility | done | 2026-07-06 |
+| 06 | admin-settings-ui | done | 2026-07-06 |
+| 07 | admin-users-ui | done | 2026-07-06 |
+| 08 | wallet-ui | done | 2026-07-06 |
+
+## 当前
+
+全部 8 步已完成。
+
+08 备注：Review 合规 3/3；主 Agent 修复移动端问题——重置值原本只在被 `hidden md:block` 隐藏的 description 中呈现，小屏丢失必须可见的业务数值，改为该卡 description 始终可见。
+
+07 备注：Review 合规 4/4、违规 0；交互无自动化覆盖属项目既有约束（无前端测试基建），验收由 /test-webview 承担。
+
+前端三步（06-08）执行形态调整并如实记录：web/default 无组件级测试基础设施（仅 node:test 纯逻辑测试惯例），硬造组件测试违反项目测试约定，故 Red 阶段跳过，改为 Impl → typecheck/lint/i18n:sync/format/copyright 门槛 → Review；交互验收由 /test-webview 承担。
+06 备注：Review 合规 4/4；主 Agent 修掉一处冗余三元；section 层无单测为项目惯例（兄弟 section 同样无测试），i18n 对称性由 i18n:sync 工具承担。
+
+05 备注：Review 合规 3/3。"禁用用户端点层缺席"用例不补：鉴权中间件使禁用用户不可达 GetSelf，disabled 分支已在 service 层覆盖且 GetSelf 直传 user.Status，属结构性保证。
+
+04 备注：Green 阶段发现测试夹具缺陷（操作者 admin 也适用全局规则，spec 规定管理员同口径参与，断言 2 应为 3），主 Agent 修正断言并补管理员被重置的显式断言；Review 合规 3/3，主 Agent 补 tick 编排层 3 条用例（边界触发推进、无边界只推进、重入跳过不推进），"非管理员被拒"归 AdminAuth 中间件契约不在 feature 层重复测。
+
+03 备注：Review 合规 4/4。主 Agent 修正：移除 ResetUserQuota 中 GORM v2 下静默无效的 `gorm:query_option FOR UPDATE` 假锁（override 语义终态正确性不依赖行锁）；"单用户失败不中断整轮"经评估有意不测（需加注入缝，成本大于价值）。发现全仓既有隐患：model/subscription.go、topup 等处同样的假锁写法在 GORM v1.25.2 均为 no-op，支付路径实际无行锁，建议单独立项。
+
+01 备注：Review 判 spec 合规 4/4；主 Agent 自修闭环——回退 Impl 对 GetOptions 的清单外冗余改动（改为测试夹具显式种默认值）、删 5 处违规注释、补"接受分支断言写入"与"非整数拒绝"用例；enabled 往返用例经评估回归价值低未补。
+02 备注：Review 发现自服务 PUT /api/user/setting 整列重建会抹除规则字段（impl-defect），自修闭环：补 Red 用例 + UpdateUserSetting 带回两字段 + 另补 opt_out 正向与同级拒绝用例，复审清零。发现与本次无关的既有缺陷：该整列重建同样抹除 SidebarModules/Language/BillingPreference，未顺手修，待单独立项。
+
+## 阻塞
+
+（无）
