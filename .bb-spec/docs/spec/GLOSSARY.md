@@ -11,3 +11,7 @@
 | Claude Subscription channel | 用 Claude Max/Pro 订阅的 OAuth 凭据（而非 API key）作上游鉴权的渠道类型，上游为 api.anthropic.com | 简体「Claude 订阅渠道」 |
 | claudeAiOauth credential | Claude Code 存储于 ~/.claude/.credentials.json 的 OAuth 凭据 JSON，含 accessToken/refreshToken/expiresAt（毫秒时间戳） | 简体「OAuth 凭据」 |
 | Claude Code system prompt | OAuth 鉴权硬要求置于首条 system 的身份串 `You are Claude Code, Anthropic's official CLI for Claude.` | 简体「Claude Code 身份 system」 |
+| Codex subscription channel | 用 ChatGPT Plus/Pro 订阅的 OAuth 凭据作上游鉴权的渠道类型（type 57），上游为 chatgpt.com | 简体「Codex 订阅渠道」 |
+| usage window | Codex 订阅的官方限额时间窗口：primary 为 5 小时窗、secondary 为 7 天窗，各自独立计使用率 | 简体「用量窗口」 |
+| used_percent | 上游 wham usage 接口返回的单个用量窗口官方使用率百分比，取值 [0, 100] | 简体「使用率」 |
+| saturation | Codex 渠道瓶颈窗口（两窗口 used_percent 较大者）达到 95 及以上的状态，渠道暂不参与选择 | 简体「触顶」 |

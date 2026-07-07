@@ -32,6 +32,12 @@
 - [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不实现 usage 用量查询。
 - [single-key-only](claude-subscription/single-key-only.md) — Claude 订阅渠道为单账号单渠道，禁止 batch 创建与多 key；前端拒绝、后台刷新跳过 multi-key。
 
+## codex-subscription
+
+- [saturation-eviction](codex-subscription/saturation-eviction.md) — Codex 渠道瓶颈窗口使用率 ≥95% 时移出候选（不改 Status），轮询发现回落自动回归；触顶渠道不被亲和粘滞。
+- [usage-polling](codex-subscription/usage-polling.md) — 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5h/7d 使用率；仅 master 执行，单渠道失败不阻断。
+- [usage-weighted-selection](codex-subscription/usage-weighted-selection.md) — 渠道选择时 Codex 渠道按剩余额度动态缩放权重：有效权重 = 等效静态权重 × (100−使用率)/100；数据过期回退静态。
+
 ## db-compat
 
 - [boolean-default-not-declared-in-orm-tag](db-compat/boolean-default-not-declared-in-orm-tag.md) — bool 字段禁用 ORM default tag 声明默认值；改由代码层（构造/归一化/hook）赋值。
