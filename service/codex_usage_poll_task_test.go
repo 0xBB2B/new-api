@@ -1,11 +1,18 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,9 +20,15 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
+	redis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type capturedRedisSet struct {
+	key   string
+	value string
+}
 
 func TestParseCodexWhamUsageWindows(t *testing.T) {
 	tests := []struct {
@@ -354,6 +367,187 @@ func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *te
 	assert.Equal(t, 0, autoDisabledCalls)
 	assert.Equal(t, 0, nonCodexCalls)
 	assert.False(t, model.CacheIsCodexChannelSaturated(65102))
+}
+
+func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM channels").Error)
+	require.NoError(t, model.CacheLoadCodexChannelUsageSnapshotJSON([]byte(`{}`)))
+	codexUsagePollRunning.Store(false)
+	redisSets := captureCodexUsageRedisSets(t)
+
+	var firstBatchCalls atomic.Int64
+	firstBatchDone := make(chan struct{})
+	var closeFirstBatchDone sync.Once
+	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if firstBatchCalls.Add(1) == int64(codexUsagePollBatchSize) {
+			closeFirstBatchDone.Do(func() { close(firstBatchDone) })
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":12},"secondary_window":{"used_percent":20}}}`))
+	}))
+	defer successServer.Close()
+
+	blockedStarted := make(chan struct{})
+	releaseBlocked := make(chan struct{})
+	var closeBlockedStarted sync.Once
+	var closeReleaseBlocked sync.Once
+	blockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		closeBlockedStarted.Do(func() { close(blockedStarted) })
+		<-releaseBlocked
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":22},"secondary_window":{"used_percent":30}}}`))
+	}))
+	t.Cleanup(func() { closeReleaseBlocked.Do(func() { close(releaseBlocked) }) })
+	defer blockServer.Close()
+
+	baseID := 65200
+	for i := 0; i < codexUsagePollBatchSize; i++ {
+		channel := &model.Channel{Id: baseID + i, Name: fmt.Sprintf("codex-%d", i), Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &successServer.URL}
+		require.NoError(t, model.DB.Create(channel).Error)
+	}
+	blockedChannel := &model.Channel{Id: baseID + codexUsagePollBatchSize, Name: "blocked", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &blockServer.URL}
+	require.NoError(t, model.DB.Create(blockedChannel).Error)
+
+	done := make(chan struct{})
+	go func() {
+		runCodexUsagePollOnce()
+		close(done)
+	}()
+
+	select {
+	case <-firstBatchDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("第一批 Codex 渠道未完成")
+	}
+	select {
+	case <-blockedStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("第二批 Codex 渠道未开始")
+	}
+
+	var firstSnapshot capturedRedisSet
+	select {
+	case firstSnapshot = <-redisSets:
+	case <-time.After(300 * time.Millisecond):
+		closeReleaseBlocked.Do(func() { close(releaseBlocked) })
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		t.Fatal("第一批完成后未发布 Redis 快照")
+	}
+
+	assert.Equal(t, codexUsageSnapshotRedisKey, firstSnapshot.key)
+	var snapshot map[string]struct {
+		Used5hPercent float64 `json:"used_5h_percent"`
+		Used7dPercent float64 `json:"used_7d_percent"`
+	}
+	require.NoError(t, common.Unmarshal([]byte(firstSnapshot.value), &snapshot))
+	firstEntry, ok := snapshot[strconv.Itoa(baseID)]
+	require.True(t, ok)
+	assert.Equal(t, 12.0, firstEntry.Used5hPercent)
+	assert.Equal(t, 20.0, firstEntry.Used7dPercent)
+
+	closeReleaseBlocked.Do(func() { close(releaseBlocked) })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Codex 用量轮询未结束")
+	}
+
+	var secondSnapshot capturedRedisSet
+	select {
+	case secondSnapshot = <-redisSets:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("第二批完成后未发布 Redis 快照")
+	}
+
+	assert.Equal(t, codexUsageSnapshotRedisKey, secondSnapshot.key)
+	require.NoError(t, common.Unmarshal([]byte(secondSnapshot.value), &snapshot))
+	secondEntry, ok := snapshot[strconv.Itoa(blockedChannel.Id)]
+	require.True(t, ok)
+	assert.Equal(t, 22.0, secondEntry.Used5hPercent)
+	assert.Equal(t, 30.0, secondEntry.Used7dPercent)
+}
+
+func captureCodexUsageRedisSets(t *testing.T) <-chan capturedRedisSet {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	sets := make(chan capturedRedisSet, 4)
+
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String()})
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+		_ = client.Close()
+		_ = listener.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go serveCodexUsageRedisConn(conn, sets)
+		}
+	}()
+	return sets
+}
+
+func serveCodexUsageRedisConn(conn net.Conn, sets chan<- capturedRedisSet) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	for {
+		command, err := readRedisCommand(reader)
+		if err != nil {
+			return
+		}
+		if len(command) >= 3 && strings.EqualFold(command[0], "set") {
+			select {
+			case sets <- capturedRedisSet{key: command[1], value: command[2]}:
+			default:
+			}
+		}
+		_, _ = conn.Write([]byte("+OK\r\n"))
+	}
+}
+
+func readRedisCommand(reader *bufio.Reader) ([]string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	if len(line) < 2 || line[0] != '*' {
+		return nil, fmt.Errorf("invalid redis array")
+	}
+	count, err := strconv.Atoi(line[1 : len(line)-2])
+	if err != nil {
+		return nil, err
+	}
+	command := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		bulkHeader, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		length, err := strconv.Atoi(bulkHeader[1 : len(bulkHeader)-2])
+		if err != nil {
+			return nil, err
+		}
+		buf := make([]byte, length+2)
+		if _, err := io.ReadFull(reader, buf); err != nil {
+			return nil, err
+		}
+		command = append(command, string(buf[:length]))
+	}
+	return command, nil
 }
 
 func TestStartCodexUsagePollTask_NonMasterDoesNotStart(t *testing.T) {

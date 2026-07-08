@@ -96,14 +96,14 @@ func runCodexUsagePollOnce() {
 				logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: channel_id=%d name=%s failed: %v", ch.Id, ch.Name, err))
 			}
 		}
-	}
 
-	if common.RedisEnabled {
-		data, err := model.CodexChannelUsageSnapshotJSON()
-		if err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: export snapshot failed: %v", err))
-		} else if err := common.RedisSet(codexUsageSnapshotRedisKey, string(data), codexUsageSnapshotTTL); err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: write snapshot failed: %v", err))
+		if common.RedisEnabled {
+			data, err := model.CodexChannelUsageSnapshotJSON()
+			if err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: export snapshot failed: %v", err))
+			} else if err := common.RedisSet(codexUsageSnapshotRedisKey, string(data), codexUsageSnapshotTTL); err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: write snapshot failed: %v", err))
+			}
 		}
 	}
 }
