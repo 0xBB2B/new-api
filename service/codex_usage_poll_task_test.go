@@ -598,6 +598,106 @@ func TestStartCodexUsageSyncTask_NonMasterWithoutRedisLogsWarning(t *testing.T) 
 	assert.Contains(t, warning, "触顶")
 }
 
+func TestRunCodexUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL *string
+	}{
+		{name: "nil base url", baseURL: nil},
+		{name: "empty string base url", baseURL: common.GetPointer[string]("")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncate(t)
+			codexUsagePollRunning.Store(false)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				body, err := common.Marshal(map[string]any{
+					"rate_limit": map[string]any{
+						"primary_window":   map[string]any{"used_percent": 41.5},
+						"secondary_window": map[string]any{"used_percent": 62.75},
+					},
+				})
+				require.NoError(t, err)
+				_, _ = w.Write(body)
+			}))
+			defer server.Close()
+
+			originalDefaultBaseURL := constant.ChannelBaseURLs[constant.ChannelTypeCodex]
+			constant.ChannelBaseURLs[constant.ChannelTypeCodex] = server.URL
+			t.Cleanup(func() { constant.ChannelBaseURLs[constant.ChannelTypeCodex] = originalDefaultBaseURL })
+
+			channel := &model.Channel{
+				Id:      65301,
+				Name:    "no-base-url",
+				Type:    constant.ChannelTypeCodex,
+				Status:  common.ChannelStatusEnabled,
+				Key:     `{"access_token":"access-token","account_id":"account-id"}`,
+				BaseURL: tt.baseURL,
+			}
+			require.NoError(t, model.DB.Create(channel).Error)
+
+			runCodexUsagePollOnce()
+
+			snapshotJSON, err := model.CodexChannelUsageSnapshotJSON()
+			require.NoError(t, err)
+			var snapshot map[string]struct {
+				Used5hPercent float64 `json:"used_5h_percent"`
+				Used7dPercent float64 `json:"used_7d_percent"`
+			}
+			require.NoError(t, common.Unmarshal(snapshotJSON, &snapshot))
+			entry, ok := snapshot[strconv.Itoa(channel.Id)]
+			require.True(t, ok, "channel usage entry should be cached after polling via type default base URL")
+			assert.Equal(t, 41.5, entry.Used5hPercent)
+			assert.Equal(t, 62.75, entry.Used7dPercent)
+		})
+	}
+}
+
+func TestRunCodexUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *testing.T) {
+	truncate(t)
+	codexUsagePollRunning.Store(false)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":10},"secondary_window":{"used_percent":15}}}`))
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	invalidSetting := "{invalid"
+	weight := common.GetPointer[uint](7)
+	priority := common.GetPointer[int64](3)
+	channel := &model.Channel{
+		Id:       65302,
+		Name:     "bad-setting",
+		Type:     constant.ChannelTypeCodex,
+		Status:   common.ChannelStatusEnabled,
+		Key:      `{"access_token":"access-token","account_id":"account-id"}`,
+		BaseURL:  &baseURL,
+		Setting:  &invalidSetting,
+		Models:   "gpt-5-codex",
+		Group:    "vip",
+		Priority: priority,
+		Weight:   weight,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	runCodexUsagePollOnce()
+
+	var reloaded model.Channel
+	require.NoError(t, model.DB.First(&reloaded, "id = ?", channel.Id).Error)
+	assert.Equal(t, constant.ChannelTypeCodex, reloaded.Type)
+	assert.Equal(t, "gpt-5-codex", reloaded.Models)
+	assert.Equal(t, "vip", reloaded.Group)
+	require.NotNil(t, reloaded.Priority)
+	assert.Equal(t, int64(3), *reloaded.Priority)
+	require.NotNil(t, reloaded.Weight)
+	assert.Equal(t, uint(7), *reloaded.Weight)
+}
+
 func TestPollCodexChannelUsage_InvalidKeyDoesNotSendRequest(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -76,7 +76,6 @@ func runCodexUsagePollOnce() {
 	for {
 		var channels []*model.Channel
 		err := model.DB.
-			Select("id", "name", "key", "status", "setting", "base_url").
 			Where("type = ? AND status = ?", constant.ChannelTypeCodex, common.ChannelStatusEnabled).
 			Order("id asc").
 			Limit(codexUsagePollBatchSize).
