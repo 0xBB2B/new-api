@@ -78,7 +78,11 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 
 	uniquePriorities := make(map[int64]bool, len(abilities))
 	for _, ability_ := range abilities {
-		uniquePriorities[*ability_.Priority] = true
+		priority := int64(0)
+		if ability_.Priority != nil {
+			priority = *ability_.Priority
+		}
+		uniquePriorities[priority] = true
 	}
 	sortedPriorities := make([]int64, 0, len(uniquePriorities))
 	for priority := range uniquePriorities {
@@ -96,7 +100,11 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	weightSum := 0
 	effectiveWeights := make(map[int]int, len(abilities))
 	for _, ability_ := range abilities {
-		if *ability_.Priority != targetPriority {
+		priority := int64(0)
+		if ability_.Priority != nil {
+			priority = *ability_.Priority
+		}
+		if priority != targetPriority {
 			continue
 		}
 		effectiveWeight := codexEffectiveWeight(ability_.ChannelId, channelTypes[ability_.ChannelId], int(ability_.Weight)+10)
@@ -105,7 +113,11 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	}
 	weight := common.GetRandomInt(weightSum)
 	for _, ability_ := range abilities {
-		if *ability_.Priority != targetPriority {
+		priority := int64(0)
+		if ability_.Priority != nil {
+			priority = *ability_.Priority
+		}
+		if priority != targetPriority {
 			continue
 		}
 		weight -= effectiveWeights[ability_.ChannelId]

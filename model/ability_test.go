@@ -126,6 +126,33 @@ func TestGetChannel_RetryClampsToSurvivingLayerWhenLowerLayerCodexSaturated(t *t
 	assert.Equal(t, 57009, channel.Id)
 }
 
+func TestGetChannel_NullPriorityDefaultsToZeroInDBSelection(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	clearPreferredOwnerTables(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+	common.MemoryCacheEnabled = false
+	insertChannelSelectionCandidate(t, 57011, "gpt-5.4", "default", constant.ChannelTypeOpenAI, 0, 100)
+	insertChannelSelectionCandidate(t, 57012, "gpt-5.4", "default", constant.ChannelTypeOpenAI, 1, 100)
+	require.NoError(t, DB.Model(&Ability{}).
+		Where("channel_id = ?", 57011).
+		Updates(map[string]any{"priority": nil}).Error)
+
+	channel, err := GetChannel("default", "gpt-5.4", 0, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 57012, channel.Id)
+
+	channel, err = GetChannel("default", "gpt-5.4", 1, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 57011, channel.Id)
+}
+
 func insertChannelSelectionCandidate(t *testing.T, channelID int, modelName string, group string, channelType int, priority int64, weight uint) {
 	t.Helper()
 	require.NoError(t, DB.Create(&Channel{
