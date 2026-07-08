@@ -42,6 +42,10 @@ model 包内有一份进程级缓存，保存每个 Codex 渠道（type 57）最
 
 ## 验证方式
 
+- 测试落在 `model/codex_usage_cache_test.go`，使用 `package model`。
+- 测试可调用契约：`CacheSetCodexChannelUsage(channelID int, used5hPercent float64, used7dPercent float64)` 写入用量；`CacheIsCodexChannelSaturated(channelID int) bool` 判断触顶；`codexChannelRemainingRatio(channelID int) (float64, bool)` 读取剩余比例。
+- 为确定性模拟过期，测试可在持有 `codexChannelUsageCacheLock` 时重置 `codexChannelUsageCache`，并通过 `codexChannelUsageCacheEntry.refreshedAt` 调整最近刷新时间戳；不得使用 `time.Sleep`。
+- 日志验证可临时替换 `gin.DefaultWriter` 捕获 `common.SysLog` 输出，测试结束必须恢复原 writer。
 - [ ] 写入 (5h=120, 7d=-3) 后读出为 (100, 0)
 - [ ] 写入 (5h=95.0, 7d=10) 判定触顶；(5h=94.9, 7d=10) 不触顶
 - [ ] 未写入过的渠道 ID：不触顶、remaining 返回 ok=false
