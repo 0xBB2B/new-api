@@ -70,7 +70,10 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 		return nil, err
 	}
 
-	abilities, channelTypes := filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	abilities, channelTypes, err := filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	if err != nil {
+		return nil, err
+	}
 	abilities = filterSaturatedCodexAbilities(abilities, channelTypes)
 	if len(abilities) == 0 {
 		return nil, nil
@@ -136,10 +139,10 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 // (type 58) channels are path-checked: kept only when one of their routes matches
 // requestPath and model; all other channel types always pass. When requestPath is
 // empty, filtering is skipped.
-func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) ([]Ability, map[int]int) {
+func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) ([]Ability, map[int]int, error) {
 	channelTypes := make(map[int]int, len(abilities))
 	if len(abilities) == 0 {
-		return abilities, channelTypes
+		return abilities, channelTypes, nil
 	}
 
 	channelIds := make([]int, 0, len(abilities))
@@ -154,8 +157,7 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 
 	var channels []*Channel
 	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
-		// On error, fall back to unfiltered candidates to avoid blocking selection
-		return abilities, channelTypes
+		return nil, nil, err
 	}
 
 	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
@@ -166,7 +168,7 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 		}
 	}
 	if requestPath == "" {
-		return abilities, channelTypes
+		return abilities, channelTypes, nil
 	}
 
 	filtered := make([]Ability, 0, len(abilities))
@@ -180,7 +182,7 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 			filtered = append(filtered, ability)
 		}
 	}
-	return filtered, channelTypes
+	return filtered, channelTypes, nil
 }
 
 func filterSaturatedCodexAbilities(abilities []Ability, channelTypes map[int]int) []Ability {

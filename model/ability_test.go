@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestGetChannel_SaturatedCodexIsExcludedFromDBCandidates(t *testing.T) {
@@ -151,6 +153,34 @@ func TestGetChannel_NullPriorityDefaultsToZeroInDBSelection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 57011, channel.Id)
+}
+
+func TestGetChannel_ChannelTypeLookupErrorReturnsNoChannel(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	clearPreferredOwnerTables(t)
+	insertChannelSelectionCandidate(t, 57013, "gpt-5.4", "default", constant.ChannelTypeCodex, 0, 100)
+	CacheSetCodexChannelUsage(57013, 95, 10)
+
+	callbackName := "test:fail_first_channel_type_lookup"
+	channelQueryCount := 0
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema == nil || tx.Statement.Schema.Name != "Channel" {
+			return
+		}
+		channelQueryCount++
+		if channelQueryCount == 1 {
+			tx.AddError(errors.New("channel type lookup failed"))
+		}
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, DB.Callback().Query().Remove(callbackName))
+	})
+
+	channel, err := GetChannel("default", "gpt-5.4", 0, "")
+
+	require.Error(t, err)
+	assert.Nil(t, channel)
+	assert.Equal(t, 1, channelQueryCount)
 }
 
 func insertChannelSelectionCandidate(t *testing.T, channelID int, modelName string, group string, channelType int, priority int64, weight uint) {
