@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -60,92 +61,60 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
-func getPriority(group string, model string, retry int) (int, error) {
-
-	var priorities []int
-	err := DB.Model(&Ability{}).
-		Select("DISTINCT(priority)").
-		Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
-		Order("priority DESC").              // 按优先级降序排序
-		Pluck("priority", &priorities).Error // Pluck用于将查询的结果直接扫描到一个切片中
-
-	if err != nil {
-		// 处理错误
-		return 0, err
-	}
-
-	if len(priorities) == 0 {
-		// 如果没有查询到优先级，则返回错误
-		return 0, errors.New("数据库一致性被破坏")
-	}
-
-	// 确定要使用的优先级
-	var priorityToUse int
-	if retry >= len(priorities) {
-		// 如果重试次数大于优先级数，则使用最小的优先级
-		priorityToUse = priorities[len(priorities)-1]
-	} else {
-		priorityToUse = priorities[retry]
-	}
-	return priorityToUse, nil
-}
-
-func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
-	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true)
-	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?)", group, model, true, maxPrioritySubQuery)
-	if retry != 0 {
-		priority, err := getPriority(group, model, retry)
-		if err != nil {
-			return nil, err
-		} else {
-			channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = ?", group, model, true, priority)
-		}
-	}
-
-	return channelQuery, nil
-}
-
 func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
 	var abilities []Ability
+	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
+		Order("weight DESC").
+		Find(&abilities).Error
+	if err != nil {
+		return nil, err
+	}
 
-	var err error = nil
-	channelQuery, err := getChannelQuery(group, model, retry)
-	if err != nil {
-		return nil, err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) || common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	} else {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	}
-	if err != nil {
-		return nil, err
-	}
 	abilities, channelTypes := filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
 	abilities = filterSaturatedCodexAbilities(abilities, channelTypes)
-	channel := Channel{}
-	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := 0
-		effectiveWeights := make(map[int]int, len(abilities))
-		for _, ability_ := range abilities {
-			effectiveWeight := codexEffectiveWeight(ability_.ChannelId, channelTypes[ability_.ChannelId], int(ability_.Weight)+10)
-			effectiveWeights[ability_.ChannelId] = effectiveWeight
-			weightSum += effectiveWeight
-		}
-		// Randomly choose one
-		weight := common.GetRandomInt(weightSum)
-		for _, ability_ := range abilities {
-			weight -= effectiveWeights[ability_.ChannelId]
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
-			}
-		}
-	} else {
+	if len(abilities) == 0 {
 		return nil, nil
 	}
+
+	uniquePriorities := make(map[int64]bool, len(abilities))
+	for _, ability_ := range abilities {
+		uniquePriorities[*ability_.Priority] = true
+	}
+	sortedPriorities := make([]int64, 0, len(uniquePriorities))
+	for priority := range uniquePriorities {
+		sortedPriorities = append(sortedPriorities, priority)
+	}
+	sort.Slice(sortedPriorities, func(i, j int) bool { return sortedPriorities[i] > sortedPriorities[j] })
+
+	layer := retry
+	if layer >= len(sortedPriorities) {
+		layer = len(sortedPriorities) - 1
+	}
+	targetPriority := sortedPriorities[layer]
+
+	channel := Channel{}
+	weightSum := 0
+	effectiveWeights := make(map[int]int, len(abilities))
+	for _, ability_ := range abilities {
+		if *ability_.Priority != targetPriority {
+			continue
+		}
+		effectiveWeight := codexEffectiveWeight(ability_.ChannelId, channelTypes[ability_.ChannelId], int(ability_.Weight)+10)
+		effectiveWeights[ability_.ChannelId] = effectiveWeight
+		weightSum += effectiveWeight
+	}
+	weight := common.GetRandomInt(weightSum)
+	for _, ability_ := range abilities {
+		if *ability_.Priority != targetPriority {
+			continue
+		}
+		weight -= effectiveWeights[ability_.ChannelId]
+		if weight <= 0 {
+			channel.Id = ability_.ChannelId
+			break
+		}
+	}
+
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
 }

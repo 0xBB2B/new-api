@@ -133,10 +133,12 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, nil
 	}
 
+	channels = filterSaturatedCodexChannels(channels)
+	if len(channels) == 0 {
+		return nil, nil
+	}
+
 	if len(channels) == 1 {
-		if len(filterSaturatedCodexChannels(channels)) == 0 {
-			return nil, nil
-		}
 		if channel, ok := channelsIDM[channels[0]]; ok {
 			return channel, nil
 		}
@@ -168,9 +170,6 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				if channel.Type == constant.ChannelTypeCodex && CacheIsCodexChannelSaturated(channel.Id) {
-					continue
-				}
 				sumWeight += channel.GetWeight()
 				targetChannels = append(targetChannels, channel)
 			}

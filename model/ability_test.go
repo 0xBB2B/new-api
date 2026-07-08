@@ -48,7 +48,7 @@ func TestGetChannel_OnlySaturatedCodexDBCandidateReturnsNil(t *testing.T) {
 	assert.Nil(t, channel)
 }
 
-func TestGetChannel_SaturatedHighPriorityCodexDoesNotSelectLowerPriority(t *testing.T) {
+func TestGetChannel_SaturatedHighPriorityCodexFallsBackToLowerPriority(t *testing.T) {
 	resetCodexChannelUsageCache(t)
 	clearPreferredOwnerTables(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -63,11 +63,67 @@ func TestGetChannel_SaturatedHighPriorityCodexDoesNotSelectLowerPriority(t *test
 	channel, err := GetChannel("default", "gpt-5.4", 0, "")
 
 	require.NoError(t, err)
-	assert.Nil(t, channel)
+	require.NotNil(t, channel)
+	assert.Equal(t, 57005, channel.Id)
 
 	var codex Channel
 	require.NoError(t, DB.First(&codex, "id = ?", 57004).Error)
 	assert.Equal(t, common.ChannelStatusEnabled, codex.Status)
+}
+
+func TestGetChannel_AllPriorityLayersSaturatedReturnsNil(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	clearPreferredOwnerTables(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+	common.MemoryCacheEnabled = false
+	insertChannelSelectionCandidate(t, 57006, "gpt-5.4", "default", constant.ChannelTypeCodex, 10, 100)
+	insertChannelSelectionCandidate(t, 57007, "gpt-5.4", "default", constant.ChannelTypeCodex, 1, 100)
+	CacheSetCodexChannelUsage(57006, 95, 10)
+	CacheSetCodexChannelUsage(57007, 10, 95)
+
+	channel, err := GetChannel("default", "gpt-5.4", 0, "")
+
+	require.NoError(t, err)
+	assert.Nil(t, channel)
+}
+
+func TestGetChannel_RetryBeyondPriorityLayerCountClampsToLowestLayer(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	clearPreferredOwnerTables(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+	common.MemoryCacheEnabled = false
+	insertChannelSelectionCandidate(t, 57008, "gpt-5.4", "default", constant.ChannelTypeOpenAI, 0, 100)
+
+	channel, err := GetChannel("default", "gpt-5.4", 5, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 57008, channel.Id)
+}
+
+func TestGetChannel_RetryClampsToSurvivingLayerWhenLowerLayerCodexSaturated(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	clearPreferredOwnerTables(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+	common.MemoryCacheEnabled = false
+	insertChannelSelectionCandidate(t, 57009, "gpt-5.4", "default", constant.ChannelTypeOpenAI, 10, 100)
+	insertChannelSelectionCandidate(t, 57010, "gpt-5.4", "default", constant.ChannelTypeCodex, 1, 100)
+	CacheSetCodexChannelUsage(57010, 95, 10)
+
+	channel, err := GetChannel("default", "gpt-5.4", 1, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 57009, channel.Id)
 }
 
 func insertChannelSelectionCandidate(t *testing.T, channelID int, modelName string, group string, channelType int, priority int64, weight uint) {
