@@ -4,11 +4,11 @@
 |---|---|---|---|
 | 01 | usage-cache | done | 2026-07-08 |
 | 02 | usage-poll-task | done | 2026-07-08 |
-| 03 | balanced-selection | pending | — |
+| 03 | balanced-selection | done | 2026-07-08 |
 
 ## 当前
 
-准备执行 `03-balanced-selection.md`。
+全部步骤已完成。
 
 ## 阻塞
 

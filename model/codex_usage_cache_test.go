@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,6 +140,38 @@ func TestCodexChannelUsageCache_SaturationTransitionLogsOnce(t *testing.T) {
 	allLogs := logBuffer.String()
 	CacheSetCodexChannelUsage(channelID, 20, 20)
 	assert.Equal(t, allLogs, logBuffer.String())
+}
+
+func TestCodexEffectiveWeight(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+
+	tests := []struct {
+		name        string
+		channelID   int
+		channelType int
+		weight      int
+		used5h      float64
+		used7d      float64
+		cache       bool
+		want        int
+	}{
+		{name: "usage reduces codex weight", channelID: 55001, channelType: constant.ChannelTypeCodex, weight: 100, used5h: 60, used7d: 20, cache: true, want: 40},
+		{name: "low remaining ratio keeps floor", channelID: 55002, channelType: constant.ChannelTypeCodex, weight: 10, used5h: 94, used7d: 10, cache: true, want: 1},
+		{name: "missing cache keeps original weight", channelID: 55003, channelType: constant.ChannelTypeCodex, weight: 100, want: 100},
+		{name: "non codex ignores usage cache", channelID: 55004, channelType: constant.ChannelTypeOpenAI, weight: 100, used5h: 60, used7d: 20, cache: true, want: 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.cache {
+				CacheSetCodexChannelUsage(tt.channelID, tt.used5h, tt.used7d)
+			}
+
+			got := codexEffectiveWeight(tt.channelID, tt.channelType, tt.weight)
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func resetCodexChannelUsageCache(t *testing.T) {

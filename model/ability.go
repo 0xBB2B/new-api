@@ -121,18 +121,22 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	if err != nil {
 		return nil, err
 	}
-	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	abilities, channelTypes := filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	abilities = filterSaturatedCodexAbilities(abilities, channelTypes)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
-		weightSum := uint(0)
+		weightSum := 0
+		effectiveWeights := make(map[int]int, len(abilities))
 		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
+			effectiveWeight := codexEffectiveWeight(ability_.ChannelId, channelTypes[ability_.ChannelId], int(ability_.Weight)+10)
+			effectiveWeights[ability_.ChannelId] = effectiveWeight
+			weightSum += effectiveWeight
 		}
 		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
+		weight := common.GetRandomInt(weightSum)
 		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
+			weight -= effectiveWeights[ability_.ChannelId]
 			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
 			if weight <= 0 {
 				channel.Id = ability_.ChannelId
@@ -151,9 +155,10 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 // (type 58) channels are path-checked: kept only when one of their routes matches
 // requestPath and model; all other channel types always pass. When requestPath is
 // empty, filtering is skipped.
-func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) []Ability {
-	if requestPath == "" || len(abilities) == 0 {
-		return abilities
+func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) ([]Ability, map[int]int) {
+	channelTypes := make(map[int]int, len(abilities))
+	if len(abilities) == 0 {
+		return abilities, channelTypes
 	}
 
 	channelIds := make([]int, 0, len(abilities))
@@ -169,14 +174,18 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 	var channels []*Channel
 	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
 		// On error, fall back to unfiltered candidates to avoid blocking selection
-		return abilities
+		return abilities, channelTypes
 	}
 
 	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
 	for _, channel := range channels {
+		channelTypes[channel.Id] = channel.Type
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
 			advancedConfigs[channel.Id] = channel.GetOtherSettings().AdvancedCustom
 		}
+	}
+	if requestPath == "" {
+		return abilities, channelTypes
 	}
 
 	filtered := make([]Ability, 0, len(abilities))
@@ -189,6 +198,17 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 		if config != nil && config.SupportsPathForModel(requestPath, model) {
 			filtered = append(filtered, ability)
 		}
+	}
+	return filtered, channelTypes
+}
+
+func filterSaturatedCodexAbilities(abilities []Ability, channelTypes map[int]int) []Ability {
+	filtered := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		if channelTypes[ability.ChannelId] == constant.ChannelTypeCodex && CacheIsCodexChannelSaturated(ability.ChannelId) {
+			continue
+		}
+		filtered = append(filtered, ability)
 	}
 	return filtered
 }
