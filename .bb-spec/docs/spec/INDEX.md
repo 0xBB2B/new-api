@@ -35,7 +35,7 @@
 ## codex-subscription
 
 - [saturation-eviction](codex-subscription/saturation-eviction.md) — Codex 渠道瓶颈窗口使用率 ≥95% 时移出候选（不改 Status），轮询发现回落自动回归；触顶渠道不被亲和粘滞。
-- [usage-polling](codex-subscription/usage-polling.md) — 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5h/7d 使用率；仅 master 执行，单渠道失败不阻断。
+- [usage-polling](codex-subscription/usage-polling.md) — 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5h/7d 使用率；仅 master 执行，单渠道失败不阻断；Redis 可用时快照同步至非 master 节点。
 - [usage-weighted-selection](codex-subscription/usage-weighted-selection.md) — 渠道选择时 Codex 渠道按剩余额度动态缩放权重：有效权重 = 等效静态权重 × (100−使用率)/100；数据过期回退静态。
 
 ## db-compat

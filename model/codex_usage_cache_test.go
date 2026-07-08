@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +173,48 @@ func TestCodexEffectiveWeight(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestCodexChannelUsageSnapshot_RoundTrip(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	channelID := 56001
+	CacheSetCodexChannelUsage(channelID, 96, 20)
+
+	data, err := CodexChannelUsageSnapshotJSON()
+	require.NoError(t, err)
+
+	codexChannelUsageCacheLock.Lock()
+	codexChannelUsageCache = make(map[int]codexChannelUsageCacheEntry)
+	codexChannelUsageCacheLock.Unlock()
+
+	require.NoError(t, CacheLoadCodexChannelUsageSnapshotJSON(data))
+	assert.True(t, CacheIsCodexChannelSaturated(channelID))
+}
+
+func TestCacheLoadCodexChannelUsageSnapshotJSON_PreservesRefreshedAtTimestamp(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+
+	expiredID := 56101
+	expiredAt := time.Now().Add(-10 * time.Minute).UnixMilli()
+	expiredSnapshot := fmt.Sprintf(`{"%d":{"used_5h_percent":96,"used_7d_percent":10,"refreshed_at_unix_ms":%d}}`, expiredID, expiredAt)
+	require.NoError(t, CacheLoadCodexChannelUsageSnapshotJSON([]byte(expiredSnapshot)))
+	assert.False(t, CacheIsCodexChannelSaturated(expiredID))
+
+	freshID := 56102
+	freshAt := time.Now().UnixMilli()
+	freshSnapshot := fmt.Sprintf(`{"%d":{"used_5h_percent":96,"used_7d_percent":10,"refreshed_at_unix_ms":%d}}`, freshID, freshAt)
+	require.NoError(t, CacheLoadCodexChannelUsageSnapshotJSON([]byte(freshSnapshot)))
+	assert.True(t, CacheIsCodexChannelSaturated(freshID))
+}
+
+func TestCacheLoadCodexChannelUsageSnapshotJSON_InvalidDataKeepsCache(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	channelID := 56201
+	CacheSetCodexChannelUsage(channelID, 96, 20)
+
+	err := CacheLoadCodexChannelUsageSnapshotJSON([]byte(`{invalid`))
+	assert.Error(t, err)
+	assert.True(t, CacheIsCodexChannelSaturated(channelID))
 }
 
 func resetCodexChannelUsageCache(t *testing.T) {

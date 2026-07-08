@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -87,4 +88,50 @@ func codexChannelUsageBottleneck(entry codexChannelUsageCacheEntry) float64 {
 		return entry.used5hPercent
 	}
 	return entry.used7dPercent
+}
+
+type codexChannelUsageSnapshotEntry struct {
+	Used5hPercent     float64 `json:"used_5h_percent"`
+	Used7dPercent     float64 `json:"used_7d_percent"`
+	RefreshedAtUnixMs int64   `json:"refreshed_at_unix_ms"`
+}
+
+func CodexChannelUsageSnapshotJSON() ([]byte, error) {
+	codexChannelUsageCacheLock.RLock()
+	snapshot := make(map[string]codexChannelUsageSnapshotEntry, len(codexChannelUsageCache))
+	for channelID, entry := range codexChannelUsageCache {
+		snapshot[strconv.Itoa(channelID)] = codexChannelUsageSnapshotEntry{
+			Used5hPercent:     entry.used5hPercent,
+			Used7dPercent:     entry.used7dPercent,
+			RefreshedAtUnixMs: entry.refreshedAt.UnixMilli(),
+		}
+	}
+	codexChannelUsageCacheLock.RUnlock()
+
+	return common.Marshal(snapshot)
+}
+
+func CacheLoadCodexChannelUsageSnapshotJSON(data []byte) error {
+	var snapshot map[string]codexChannelUsageSnapshotEntry
+	if err := common.Unmarshal(data, &snapshot); err != nil {
+		return err
+	}
+
+	newCache := make(map[int]codexChannelUsageCacheEntry, len(snapshot))
+	for key, entry := range snapshot {
+		channelID, err := strconv.Atoi(key)
+		if err != nil {
+			return fmt.Errorf("codex usage snapshot: invalid channel id %q: %w", key, err)
+		}
+		newCache[channelID] = codexChannelUsageCacheEntry{
+			used5hPercent: entry.Used5hPercent,
+			used7dPercent: entry.Used7dPercent,
+			refreshedAt:   time.UnixMilli(entry.RefreshedAtUnixMs),
+		}
+	}
+
+	codexChannelUsageCacheLock.Lock()
+	codexChannelUsageCache = newCache
+	codexChannelUsageCacheLock.Unlock()
+	return nil
 }

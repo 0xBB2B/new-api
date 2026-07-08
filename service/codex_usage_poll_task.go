@@ -20,6 +20,10 @@ import (
 const (
 	codexUsagePollTickInterval = 60 * time.Second
 	codexUsagePollBatchSize    = 200
+
+	codexUsageSyncTickInterval = 30 * time.Second
+	codexUsageSnapshotRedisKey = "codex_channel_usage_snapshot"
+	codexUsageSnapshotTTL      = 10 * time.Minute
 )
 
 var codexUsagePollRequestTimeout = 15 * time.Second
@@ -27,6 +31,7 @@ var codexUsagePollRequestTimeout = 15 * time.Second
 var (
 	codexUsagePollOnce    sync.Once
 	codexUsagePollRunning atomic.Bool
+	codexUsageSyncOnce    sync.Once
 )
 
 type codexWhamUsageResponse struct {
@@ -92,6 +97,15 @@ func runCodexUsagePollOnce() {
 			}
 		}
 	}
+
+	if common.RedisEnabled {
+		data, err := model.CodexChannelUsageSnapshotJSON()
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: export snapshot failed: %v", err))
+		} else if err := common.RedisSet(codexUsageSnapshotRedisKey, string(data), codexUsageSnapshotTTL); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: write snapshot failed: %v", err))
+		}
+	}
 }
 
 func pollCodexChannelUsage(ctx context.Context, client *http.Client, ch *model.Channel) error {
@@ -125,6 +139,40 @@ func pollCodexChannelUsage(ctx context.Context, client *http.Client, ch *model.C
 	}
 	model.CacheSetCodexChannelUsage(ch.Id, used5hPercent, used7dPercent)
 	return nil
+}
+
+func StartCodexUsageSyncTask() {
+	codexUsageSyncOnce.Do(func() {
+		if common.IsMasterNode {
+			return
+		}
+		if !common.RedisEnabled {
+			common.SysLog("Codex 渠道用量均衡路由同步未启动：非 master 节点且 Redis 未启用，无法感知渠道触顶状态")
+			return
+		}
+
+		gopool.Go(func() {
+			ticker := time.NewTicker(codexUsageSyncTickInterval)
+			defer ticker.Stop()
+
+			syncCodexUsageSnapshotOnce()
+			for range ticker.C {
+				syncCodexUsageSnapshotOnce()
+			}
+		})
+	})
+}
+
+func syncCodexUsageSnapshotOnce() {
+	ctx := context.Background()
+	data, err := common.RedisGet(codexUsageSnapshotRedisKey)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("codex usage sync: read snapshot failed: %v", err))
+		return
+	}
+	if err := model.CacheLoadCodexChannelUsageSnapshotJSON([]byte(data)); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("codex usage sync: load snapshot failed: %v", err))
+	}
 }
 
 func parseCodexWhamUsageWindows(body []byte) (float64, float64, error) {

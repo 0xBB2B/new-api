@@ -375,6 +375,35 @@ func TestCodexUsagePollTickInterval(t *testing.T) {
 	assert.Equal(t, 60*time.Second, codexUsagePollTickInterval)
 }
 
+func TestStartCodexUsageSyncTask_NonMasterWithoutRedisLogsWarning(t *testing.T) {
+	originalMaster := common.IsMasterNode
+	originalRedis := common.RedisEnabled
+	common.IsMasterNode = false
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		common.IsMasterNode = originalMaster
+		common.RedisEnabled = originalRedis
+	})
+
+	var logBuffer bytes.Buffer
+	common.LogWriterMu.Lock()
+	oldWriter := gin.DefaultWriter
+	gin.DefaultWriter = &logBuffer
+	common.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultWriter = oldWriter
+		common.LogWriterMu.Unlock()
+	})
+
+	StartCodexUsageSyncTask()
+
+	warning := logBuffer.String()
+	require.NotEmpty(t, warning)
+	assert.Contains(t, warning, "均衡")
+	assert.Contains(t, warning, "触顶")
+}
+
 func TestPollCodexChannelUsage_InvalidKeyDoesNotSendRequest(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
