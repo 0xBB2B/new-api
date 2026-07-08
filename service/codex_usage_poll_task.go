@@ -22,6 +22,8 @@ const (
 	codexUsagePollBatchSize    = 200
 )
 
+var codexUsagePollRequestTimeout = 15 * time.Second
+
 var (
 	codexUsagePollOnce    sync.Once
 	codexUsagePollRunning atomic.Bool
@@ -107,6 +109,8 @@ func pollCodexChannelUsage(ctx context.Context, client *http.Client, ch *model.C
 		}
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, codexUsagePollRequestTimeout)
+	defer cancel()
 	statusCode, body, err := FetchCodexWhamUsage(ctx, client, ch.GetBaseURL(), accessToken, accountID)
 	if err != nil {
 		return err

@@ -257,6 +257,42 @@ func TestPollCodexChannelUsage_NetworkErrorKeepsOldCache(t *testing.T) {
 	assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
 }
 
+func TestPollCodexChannelUsage_SlowUpstreamFailsWithinRequestTimeout(t *testing.T) {
+	channelID := 65009
+	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+
+	originalTimeout := codexUsagePollRequestTimeout
+	codexUsagePollRequestTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { codexUsagePollRequestTimeout = originalTimeout })
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	baseURL := server.URL
+	channel := &model.Channel{
+		Id:      channelID,
+		Key:     `{"access_token":"access-token","account_id":"account-id"}`,
+		BaseURL: &baseURL,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- pollCodexChannelUsage(context.Background(), server.Client(), channel)
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
+	case <-time.After(2 * time.Second):
+		t.Fatal("pollCodexChannelUsage 未在请求时限内返回，轮询会被慢上游卡死")
+	}
+}
+
 func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *testing.T) {
 	truncate(t)
 	codexUsagePollRunning.Store(false)
