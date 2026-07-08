@@ -3,6 +3,7 @@ package model
 import (
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -44,6 +45,59 @@ func TestGetRandomSatisfiedChannel_SaturatedCodexIsExcludedFromMemoryCandidates(
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 56002, channel.Id)
+}
+
+func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalGroup2Model2Channels := group2model2channels
+	originalChannelsIDM := channelsIDM
+	originalChannel2AdvancedCustomConfig := channel2advancedCustomConfig
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		group2model2channels = originalGroup2Model2Channels
+		channelsIDM = originalChannelsIDM
+		channel2advancedCustomConfig = originalChannel2AdvancedCustomConfig
+	})
+
+	common.MemoryCacheEnabled = true
+	priority := int64(0)
+	codexWeight := uint(1_000_000)
+	openAIWeight := uint(0)
+	group2model2channels = map[string]map[string][]int{
+		"default": {"gpt-5.4": {56010, 56011}},
+	}
+	channelsIDM = map[int]*Channel{
+		56010: {Id: 56010, Type: constant.ChannelTypeCodex, Name: "codex", Weight: &codexWeight, Priority: &priority, Status: common.ChannelStatusEnabled},
+		56011: {Id: 56011, Type: constant.ChannelTypeOpenAI, Name: "openai", Weight: &openAIWeight, Priority: &priority, Status: common.ChannelStatusEnabled},
+	}
+	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
+	CacheSetCodexChannelUsage(56010, 96, 10)
+	codexChannelUsageCacheLock.Lock()
+	entry := codexChannelUsageCache[56010]
+	entry.refreshedAt = time.Now().Add(-6 * time.Minute)
+	codexChannelUsageCache[56010] = entry
+	codexChannelUsageCacheLock.Unlock()
+	rand.Seed(1)
+
+	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 56011, channel.Id)
+
+	codexChannelUsageCacheLock.Lock()
+	entry = codexChannelUsageCache[56010]
+	entry.refreshedAt = time.Now().Add(-11 * time.Minute)
+	codexChannelUsageCache[56010] = entry
+	codexChannelUsageCacheLock.Unlock()
+	rand.Seed(1)
+
+	channel, err = GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 56010, channel.Id)
 }
 
 func TestGetRandomSatisfiedChannel_OnlySaturatedCodexMemoryCandidateReturnsNil(t *testing.T) {

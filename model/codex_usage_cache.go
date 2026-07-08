@@ -12,6 +12,7 @@ import (
 const (
 	codexChannelUsageSaturationThreshold = 95
 	codexChannelUsageCacheExpiration     = 5 * time.Minute
+	codexChannelUsageSaturationWindow    = 10 * time.Minute
 )
 
 type codexChannelUsageCacheEntry struct {
@@ -47,7 +48,7 @@ func CacheSetCodexChannelUsage(channelID int, used5hPercent float64, used7dPerce
 		codexChannelUsageCache = make(map[int]codexChannelUsageCacheEntry)
 	}
 	oldEntry, exists := codexChannelUsageCache[channelID]
-	wasSaturated := exists && codexChannelUsageEntryFresh(oldEntry) && codexChannelUsageBottleneck(oldEntry) >= codexChannelUsageSaturationThreshold
+	wasSaturated := exists && codexChannelUsageEntrySaturationValid(oldEntry) && codexChannelUsageBottleneck(oldEntry) >= codexChannelUsageSaturationThreshold
 	codexChannelUsageCache[channelID] = entry
 	isSaturated := codexChannelUsageBottleneck(entry) >= codexChannelUsageSaturationThreshold
 	codexChannelUsageCacheLock.Unlock()
@@ -66,7 +67,7 @@ func CacheIsCodexChannelSaturated(channelID int) bool {
 	codexChannelUsageCacheLock.RLock()
 	entry, ok := codexChannelUsageCache[channelID]
 	codexChannelUsageCacheLock.RUnlock()
-	return ok && codexChannelUsageEntryFresh(entry) && codexChannelUsageBottleneck(entry) >= codexChannelUsageSaturationThreshold
+	return ok && codexChannelUsageEntrySaturationValid(entry) && codexChannelUsageBottleneck(entry) >= codexChannelUsageSaturationThreshold
 }
 
 func codexChannelRemainingRatio(channelID int) (float64, bool) {
@@ -81,6 +82,10 @@ func codexChannelRemainingRatio(channelID int) (float64, bool) {
 
 func codexChannelUsageEntryFresh(entry codexChannelUsageCacheEntry) bool {
 	return time.Since(entry.refreshedAt) <= codexChannelUsageCacheExpiration
+}
+
+func codexChannelUsageEntrySaturationValid(entry codexChannelUsageCacheEntry) bool {
+	return time.Since(entry.refreshedAt) <= codexChannelUsageSaturationWindow
 }
 
 func codexChannelUsageBottleneck(entry codexChannelUsageCacheEntry) float64 {

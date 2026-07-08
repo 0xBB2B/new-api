@@ -85,11 +85,10 @@ func TestCodexChannelUsageCache_SaturationThreshold(t *testing.T) {
 func TestCodexChannelUsageCache_ExpiredEntryIsIgnoredByReaders(t *testing.T) {
 	resetCodexChannelUsageCache(t)
 	channelID := 53001
-	CacheSetCodexChannelUsage(channelID, 50, 40)
+	CacheSetCodexChannelUsage(channelID, 94, 40)
 
 	codexChannelUsageCacheLock.Lock()
 	entry := codexChannelUsageCache[channelID]
-	entry.used5hPercent = 96
 	entry.refreshedAt = time.Now().Add(-6 * time.Minute)
 	codexChannelUsageCache[channelID] = entry
 	codexChannelUsageCacheLock.Unlock()
@@ -103,6 +102,28 @@ func TestCodexChannelUsageCache_ExpiredEntryIsIgnoredByReaders(t *testing.T) {
 	_, exists := codexChannelUsageCache[channelID]
 	codexChannelUsageCacheLock.Unlock()
 	assert.True(t, exists)
+}
+
+func TestCodexChannelUsageCache_RecentlySaturatedStaleEntryStillSaturated(t *testing.T) {
+	resetCodexChannelUsageCache(t)
+	channelID := 53002
+	CacheSetCodexChannelUsage(channelID, 96, 10)
+
+	codexChannelUsageCacheLock.Lock()
+	entry := codexChannelUsageCache[channelID]
+	entry.refreshedAt = time.Now().Add(-6 * time.Minute)
+	codexChannelUsageCache[channelID] = entry
+	codexChannelUsageCacheLock.Unlock()
+
+	assert.True(t, CacheIsCodexChannelSaturated(channelID))
+
+	codexChannelUsageCacheLock.Lock()
+	entry = codexChannelUsageCache[channelID]
+	entry.refreshedAt = time.Now().Add(-11 * time.Minute)
+	codexChannelUsageCache[channelID] = entry
+	codexChannelUsageCacheLock.Unlock()
+
+	assert.False(t, CacheIsCodexChannelSaturated(channelID))
 }
 
 func TestCodexChannelUsageCache_SaturationTransitionLogsOnce(t *testing.T) {
@@ -154,18 +175,27 @@ func TestCodexEffectiveWeight(t *testing.T) {
 		used5h      float64
 		used7d      float64
 		cache       bool
+		stale       bool
 		want        int
 	}{
 		{name: "usage reduces codex weight", channelID: 55001, channelType: constant.ChannelTypeCodex, weight: 100, used5h: 60, used7d: 20, cache: true, want: 40},
 		{name: "low remaining ratio keeps floor", channelID: 55002, channelType: constant.ChannelTypeCodex, weight: 10, used5h: 94, used7d: 10, cache: true, want: 1},
 		{name: "missing cache keeps original weight", channelID: 55003, channelType: constant.ChannelTypeCodex, weight: 100, want: 100},
 		{name: "non codex ignores usage cache", channelID: 55004, channelType: constant.ChannelTypeOpenAI, weight: 100, used5h: 60, used7d: 20, cache: true, want: 100},
+		{name: "stale codex usage keeps original weight", channelID: 55005, channelType: constant.ChannelTypeCodex, weight: 100, used5h: 60, used7d: 20, cache: true, stale: true, want: 100},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+			t.Run(tt.name, func(t *testing.T) {
 			if tt.cache {
 				CacheSetCodexChannelUsage(tt.channelID, tt.used5h, tt.used7d)
+				if tt.stale {
+					codexChannelUsageCacheLock.Lock()
+					entry := codexChannelUsageCache[tt.channelID]
+					entry.refreshedAt = time.Now().Add(-6 * time.Minute)
+					codexChannelUsageCache[tt.channelID] = entry
+					codexChannelUsageCacheLock.Unlock()
+				}
 			}
 
 			got := codexEffectiveWeight(tt.channelID, tt.channelType, tt.weight)
