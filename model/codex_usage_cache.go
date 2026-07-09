@@ -11,7 +11,6 @@ import (
 
 const (
 	codexChannelUsageSaturationThreshold = 95
-	codexChannelUsageCacheExpiration     = 5 * time.Minute
 	codexChannelUsageSaturationWindow    = 10 * time.Minute
 )
 
@@ -74,14 +73,10 @@ func codexChannelRemainingRatio(channelID int) (float64, bool) {
 	codexChannelUsageCacheLock.RLock()
 	entry, ok := codexChannelUsageCache[channelID]
 	codexChannelUsageCacheLock.RUnlock()
-	if !ok || !codexChannelUsageEntryFresh(entry) {
+	if !ok || !codexChannelUsageEntrySaturationValid(entry) {
 		return 0, false
 	}
 	return (100 - codexChannelUsageBottleneck(entry)) / 100, true
-}
-
-func codexChannelUsageEntryFresh(entry codexChannelUsageCacheEntry) bool {
-	return time.Since(entry.refreshedAt) <= codexChannelUsageCacheExpiration
 }
 
 func codexChannelUsageEntrySaturationValid(entry codexChannelUsageCacheEntry) bool {
