@@ -13,7 +13,7 @@ description: 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5
 
 后台定时任务每 60 秒执行一轮，仅在 master 节点运行。每轮遍历所有**启用状态**的 Codex 渠道，用该渠道 OAuth 凭据中的 access_token 与 account_id 调上游 `GET /backend-api/wham/usage`，从响应中提取 `primary_window`（5 小时窗口）与 `secondary_window`（7 天窗口）的 `used_percent`，连同本次成功刷新的时间戳一起写入渠道用量缓存。
 
-渠道用量缓存是各节点的进程内存；多节点部署下轮询产物经 Redis 快照抵达非 master 节点：master 每轮轮询结束后把全部渠道条目（两窗口 used_percent 与各自刷新时间戳）以 JSON 快照写入 Redis，非 master 节点每 30 秒读取快照并整体替换本地缓存。
+渠道用量缓存是各节点的进程内存；多节点部署下轮询产物经 Redis 快照抵达非 master 节点：master 分批遍历渠道，每处理完一批就把全部渠道条目（两窗口 used_percent 与各自刷新时间戳）以 JSON 全量快照写入 Redis，非 master 节点每 30 秒读取快照并整体替换本地缓存。
 
 ## 约束
 
