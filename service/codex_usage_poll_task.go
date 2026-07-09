@@ -21,6 +21,7 @@ import (
 const (
 	codexUsagePollTickInterval = 60 * time.Second
 	codexUsagePollBatchSize    = 200
+	codexUsagePollConcurrency  = 20
 
 	codexUsageSyncTickInterval = 30 * time.Second
 	codexUsageSnapshotRedisKey = "codex_channel_usage_snapshot"
@@ -91,11 +92,20 @@ func runCodexUsagePollOnce() {
 		}
 		offset += codexUsagePollBatchSize
 
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, codexUsagePollConcurrency)
 		for _, ch := range channels {
-			if err := pollCodexChannelUsage(ctx, nil, ch); err != nil {
-				logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: channel_id=%d name=%s failed: %v", ch.Id, ch.Name, err))
-			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(ch *model.Channel) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				if err := pollCodexChannelUsage(ctx, nil, ch); err != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: channel_id=%d name=%s failed: %v", ch.Id, ch.Name, err))
+				}
+			}(ch)
 		}
+		wg.Wait()
 
 		if common.RedisEnabled {
 			data, err := model.CodexChannelUsageSnapshotJSON()

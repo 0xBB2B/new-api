@@ -700,6 +700,61 @@ func TestRunCodexUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *test
 	assert.Equal(t, invalidSetting, *reloaded.Setting)
 }
 
+func TestRunCodexUsagePollOnce_BatchPollsChannelsConcurrently(t *testing.T) {
+	truncate(t)
+	codexUsagePollRunning.Store(false)
+
+	aStarted := make(chan struct{})
+	releaseA := make(chan struct{})
+	var closeReleaseA sync.Once
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(aStarted)
+		<-releaseA
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":12},"secondary_window":{"used_percent":20}}}`))
+	}))
+	t.Cleanup(serverA.Close)
+	t.Cleanup(func() { closeReleaseA.Do(func() { close(releaseA) }) })
+
+	bCalled := make(chan struct{})
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(bCalled)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":12},"secondary_window":{"used_percent":20}}}`))
+	}))
+	t.Cleanup(serverB.Close)
+
+	channelA := &model.Channel{Id: 65401, Name: "a", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &serverA.URL}
+	channelB := &model.Channel{Id: 65402, Name: "b", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &serverB.URL}
+	require.NoError(t, model.DB.Create(channelA).Error)
+	require.NoError(t, model.DB.Create(channelB).Error)
+
+	done := make(chan struct{})
+	go func() {
+		runCodexUsagePollOnce()
+		close(done)
+	}()
+
+	select {
+	case <-aStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("渠道 A 未被轮询到")
+	}
+
+	select {
+	case <-bCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("同批渠道被串行阻塞，未并发轮询")
+	}
+
+	closeReleaseA.Do(func() { close(releaseA) })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Codex 用量轮询未结束")
+	}
+}
+
 func TestPollCodexChannelUsage_InvalidKeyDoesNotSendRequest(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
