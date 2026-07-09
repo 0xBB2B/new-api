@@ -696,6 +696,8 @@ func TestRunCodexUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *test
 	assert.Equal(t, int64(3), *reloaded.Priority)
 	require.NotNil(t, reloaded.Weight)
 	assert.Equal(t, uint(7), *reloaded.Weight)
+	require.NotNil(t, reloaded.Setting)
+	assert.Equal(t, invalidSetting, *reloaded.Setting)
 }
 
 func TestPollCodexChannelUsage_InvalidKeyDoesNotSendRequest(t *testing.T) {

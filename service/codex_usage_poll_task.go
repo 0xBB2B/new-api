@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 
@@ -116,7 +117,14 @@ func pollCodexChannelUsage(ctx context.Context, client *http.Client, ch *model.C
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if client == nil {
-		client, err = NewProxyHttpClient(ch.GetSetting().Proxy)
+		// 不用 ch.GetSetting()：它在解析失败时会清空 Setting 并写回数据库，轮询必须零写副作用
+		setting := dto.ChannelSettings{}
+		if ch.Setting != nil && *ch.Setting != "" {
+			if err := common.UnmarshalJsonStr(*ch.Setting, &setting); err != nil {
+				return err
+			}
+		}
+		client, err = NewProxyHttpClient(setting.Proxy)
 		if err != nil {
 			return err
 		}
