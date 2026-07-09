@@ -11,7 +11,7 @@ description: 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5
 
 ## 逻辑
 
-后台定时任务每 60 秒执行一轮，仅在 master 节点运行。每轮遍历所有**启用状态**的 Codex 渠道，用该渠道 OAuth 凭据中的 access_token 与 account_id 调上游 `GET /backend-api/wham/usage`，从响应中提取 `primary_window`（5 小时窗口）与 `secondary_window`（7 天窗口）的 `used_percent`，连同本次成功刷新的时间戳一起写入渠道用量缓存。
+后台定时任务每 60 秒执行一轮，仅在 master 节点运行。每轮遍历所有**启用状态**的 Codex 渠道，用该渠道 OAuth 凭据中的 access_token 与 account_id 调上游 `GET /backend-api/wham/usage`，从响应中提取 `rate_limit.primary_window`（5 小时窗口）与 `rate_limit.secondary_window`（7 天窗口）的 `used_percent`，连同本次成功刷新的时间戳一起写入渠道用量缓存。
 
 渠道用量缓存是各节点的进程内存；多节点部署下轮询产物经 Redis 快照抵达非 master 节点：master 分批遍历渠道，每处理完一批就把全部渠道条目（两窗口 used_percent 与各自刷新时间戳）以 JSON 全量快照写入 Redis，非 master 节点每 30 秒读取快照并整体替换本地缓存。
 
@@ -28,14 +28,14 @@ description: 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5
 
 ## 例子
 
-渠道 A、B、C 均为启用状态的 Codex 渠道。某轮轮询：A 返回 `primary_window.used_percent=42.5`、`secondary_window.used_percent=80.1`；B 上游返回 500；C 返回的 JSON 中两个窗口均缺失。结果：A 的缓存更新为 (5h=42.5, 7d=80.1, 刷新时间=now)；B 与 C 保留各自上一次成功的缓存不变；本轮任务正常结束，无渠道被跳过遍历。
+渠道 A、B、C 均为启用状态的 Codex 渠道。某轮轮询：A 返回 `rate_limit.primary_window.used_percent=42.5`、`rate_limit.secondary_window.used_percent=80.1`；B 上游返回 500；C 返回的 JSON 中两个窗口均缺失。结果：A 的缓存更新为 (5h=42.5, 7d=80.1, 刷新时间=now)；B 与 C 保留各自上一次成功的缓存不变；本轮任务正常结束，无渠道被跳过遍历。
 
 ## 验收
 
 - [ ] 启动后每 60 秒触发一轮；非 master 节点不发起 wham usage 请求。
 - [ ] 禁用状态的 Codex 渠道不被轮询。
 - [ ] 某渠道返回 500 时，其余渠道当轮仍被正常刷新，该渠道缓存保留旧值。
-- [ ] 响应仅含 primary_window（used_percent=30）时，缓存写入 (5h=30, 7d=0)。
+- [ ] 响应仅含 rate_limit.primary_window（used_percent=30）时，缓存写入 (5h=30, 7d=0)。
 - [ ] 响应两窗口均缺失时按失败处理，缓存不更新。
 - [ ] used_percent=120 的响应缓存后读出为 100。
 - [ ] 快照 JSON 经导出→加载往返后，触顶判定与剩余比例与导出前一致，刷新时间戳保留（旧时间戳条目加载后仍判过期）。
