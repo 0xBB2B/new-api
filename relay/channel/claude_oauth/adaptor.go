@@ -2,6 +2,7 @@ package claude_oauth
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -66,9 +68,16 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
-	claudeReq, err := claude.RequestOpenAI2ClaudeMessage(c, *request)
+	if request == nil {
+		return nil, errors.New("request is nil")
+	}
+	result, err := relayconvert.ConvertRequest(c, info, types.RelayFormatClaude, request)
 	if err != nil {
 		return nil, err
+	}
+	claudeReq, ok := result.Value.(*dto.ClaudeRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected Claude request after conversion, got %T", result.Value)
 	}
 	prependClaudeCodeSystem(claudeReq)
 	return claudeReq, nil
