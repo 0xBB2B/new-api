@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import {
-  CHANNEL_FORM_DEFAULT_VALUES,
-  channelFormSchema,
-} from './channel-form'
+import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema } from './channel-form'
 
-const CLAUDE_SUBSCRIPTION_TYPE = 59
+const CLAUDE_SUBSCRIPTION_TYPE = 60
 
 function hasIssueForField(
   issues: readonly { path: PropertyKey[] }[],
@@ -15,7 +12,7 @@ function hasIssueForField(
   return issues.some((issue) => issue.path[0] === field)
 }
 
-describe('channelFormSchema for Claude subscription channel (type 59)', () => {
+describe('channelFormSchema for Claude subscription channel (type 60)', () => {
   test('accepts a valid Claude Code OAuth credential', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
@@ -76,7 +73,10 @@ describe('channelFormSchema for Claude subscription channel (type 59)', () => {
 
     assert.equal(result.success, false)
     if (!result.success) {
-      assert.equal(hasIssueForField(result.error.issues, 'multi_key_mode'), true)
+      assert.equal(
+        hasIssueForField(result.error.issues, 'multi_key_mode'),
+        true
+      )
     }
   })
 })

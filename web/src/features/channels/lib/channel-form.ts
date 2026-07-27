@@ -140,7 +140,10 @@ function isClaudeCredential(value: string | undefined): boolean {
   try {
     const parsed = parseOptionalJson(value)
     if (parsed === undefined) return true
-    if (!isJsonObjectValue(parsed) || !isJsonObjectValue(parsed.claudeAiOauth)) {
+    if (
+      !isJsonObjectValue(parsed) ||
+      !isJsonObjectValue(parsed.claudeAiOauth)
+    ) {
       return false
     }
     const accessToken = parsed.claudeAiOauth.accessToken
@@ -325,7 +328,7 @@ export const channelFormSchema = z
       }
     }
 
-    if (data.type === 59) {
+    if (data.type === 60) {
       if (data.multi_key_mode && data.multi_key_mode !== 'single') {
         addRequiredIssue(
           ctx,
@@ -630,7 +633,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     formData.type === 1 ||
     formData.type === 14 ||
     formData.type === 57 ||
-    formData.type === 59
+    formData.type === 60
   ) {
     settingsObj.allow_service_tier = formData.allow_service_tier === true
   } else if ('allow_service_tier' in settingsObj) {
@@ -656,15 +659,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     }
     if (
       formData.type !== 14 &&
-      formData.type !== 59 &&
+      formData.type !== 60 &&
       'allow_inference_geo' in settingsObj
     ) {
       delete settingsObj.allow_inference_geo
     }
   }
 
-  // Anthropic (type 14) and Claude Subscription (type 59): claude_beta_query, allow_inference_geo, allow_speed
-  if (formData.type === 14 || formData.type === 59) {
+  // Anthropic (type 14) and Claude Subscription (type 60): claude_beta_query, allow_inference_geo, allow_speed
+  if (formData.type === 14 || formData.type === 60) {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
     settingsObj.allow_speed = formData.allow_speed === true
     settingsObj.claude_beta_query = formData.claude_beta_query === true

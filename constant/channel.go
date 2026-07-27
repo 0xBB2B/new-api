@@ -56,7 +56,8 @@ const (
 	ChannelTypeReplicate          = 56
 	ChannelTypeCodex              = 57
 	ChannelTypeAdvancedCustom     = 58
-	ChannelTypeClaudeSubscription = 59
+	ChannelTypeSub2API            = 59
+	ChannelTypeClaudeSubscription = 60
 	ChannelTypeDummy              // this one is only for count, do not add any channel after this
 
 )
@@ -121,7 +122,8 @@ var ChannelBaseURLs = []string{
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
 	"",                                          //58
-	"https://api.anthropic.com",                 //59
+	"",                                          //59
+	"https://api.anthropic.com",                 //60
 }
 
 var ChannelTypeNames = map[int]string{
@@ -180,6 +182,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeReplicate:          "Replicate",
 	ChannelTypeCodex:              "ChatGPT Subscription (Codex)",
 	ChannelTypeAdvancedCustom:     "Advanced Custom",
+	ChannelTypeSub2API:            "Sub2API",
 	ChannelTypeClaudeSubscription: "Claude Subscription",
 }
 
