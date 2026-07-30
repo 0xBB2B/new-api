@@ -53,11 +53,12 @@ export function getChannelTypeIcon(type: number): string {
     8: 'OpenAI', // Custom
     58: 'NewAPI', // Advanced Custom
     59: 'Sub2API', // Sub2API
+    60: 'NewAPI', // New API
     3: 'Azure', // Azure
 
     // Anthropic
     14: 'Claude', // Anthropic
-    60: 'Claude', // Claude Subscription
+    61: 'Claude', // Claude Subscription
 
     // Google family
     24: 'Gemini', // Gemini

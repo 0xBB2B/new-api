@@ -37,7 +37,7 @@ func requireChannelType(t *testing.T, db *gorm.DB, name string) int {
 func TestMigrateClaudeSubscriptionChannelTypeRenumbersOnlyOnce(t *testing.T) {
 	db := useChannelTypeMigrationDB(t)
 	require.NoError(t, db.Create(&[]Channel{
-		{Name: "legacy-claude", Type: supersededClaudeSubscriptionChannelType},
+		{Name: "legacy-claude", Type: 59},
 		{Name: "anthropic", Type: constant.ChannelTypeAnthropic},
 	}).Error)
 
@@ -45,7 +45,24 @@ func TestMigrateClaudeSubscriptionChannelTypeRenumbersOnlyOnce(t *testing.T) {
 	assert.Equal(t, constant.ChannelTypeClaudeSubscription, requireChannelType(t, db, "legacy-claude"))
 	assert.Equal(t, constant.ChannelTypeAnthropic, requireChannelType(t, db, "anthropic"))
 
-	require.NoError(t, db.Create(&Channel{Name: "sub2api", Type: constant.ChannelTypeSub2API}).Error)
+	require.NoError(t, db.Create(&[]Channel{
+		{Name: "sub2api", Type: constant.ChannelTypeSub2API},
+		{Name: "new-api", Type: constant.ChannelTypeNewAPI},
+	}).Error)
 	require.NoError(t, MigrateClaudeSubscriptionChannelType())
 	assert.Equal(t, constant.ChannelTypeSub2API, requireChannelType(t, db, "sub2api"))
+	assert.Equal(t, constant.ChannelTypeNewAPI, requireChannelType(t, db, "new-api"))
+}
+
+func TestMigrateClaudeSubscriptionChannelTypeRenumbersFrom60(t *testing.T) {
+	db := useChannelTypeMigrationDB(t)
+	require.NoError(t, db.Create(&Option{Key: "migration.channel_type.claude_subscription_60", Value: "1"}).Error)
+	require.NoError(t, db.Create(&Channel{Name: "claude-on-60", Type: 60}).Error)
+
+	require.NoError(t, MigrateClaudeSubscriptionChannelType())
+	assert.Equal(t, constant.ChannelTypeClaudeSubscription, requireChannelType(t, db, "claude-on-60"))
+
+	require.NoError(t, db.Create(&Channel{Name: "new-api", Type: constant.ChannelTypeNewAPI}).Error)
+	require.NoError(t, MigrateClaudeSubscriptionChannelType())
+	assert.Equal(t, constant.ChannelTypeNewAPI, requireChannelType(t, db, "new-api"))
 }

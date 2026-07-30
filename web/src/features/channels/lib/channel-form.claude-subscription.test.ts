@@ -3,7 +3,7 @@ import { describe, test } from 'node:test'
 
 import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema } from './channel-form'
 
-const CLAUDE_SUBSCRIPTION_TYPE = 60
+const CLAUDE_SUBSCRIPTION_TYPE = 61
 
 function hasIssueForField(
   issues: readonly { path: PropertyKey[] }[],
@@ -12,7 +12,7 @@ function hasIssueForField(
   return issues.some((issue) => issue.path[0] === field)
 }
 
-describe('channelFormSchema for Claude subscription channel (type 60)', () => {
+describe('channelFormSchema for Claude subscription channel (type 61)', () => {
   test('accepts a valid Claude Code OAuth credential', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
