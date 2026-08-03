@@ -40,8 +40,6 @@ service/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 
 .codegraph
-.tokensave
 settings.local.json
-.headroom_*
 go.work
 go.work.sum
