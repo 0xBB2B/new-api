@@ -13,7 +13,7 @@ description: Claude 订阅渠道用量数据源：GET /api/oauth/usage，Bearer 
 
 用渠道 OAuth 凭据中的 accessToken 调上游 `GET {baseURL}/api/oauth/usage`（baseURL 默认 `https://api.anthropic.com`）。该接口是 Claude Code `/usage` 命令的数据源，响应存在两种形态，解析时同时兼容：
 
-- 顶层窗口对象形态：`five_hour`、`seven_day`、`seven_day_opus` 等对象各含 `utilization`（0–100 百分比）。
+- 顶层窗口对象形态：键为 `five_hour` 或以 `seven_day` 为前缀（如 `seven_day`、`seven_day_opus`、`seven_day_sonnet`）的顶层对象各含 `utilization`（0–100 百分比）；`extra_usage` 等其他顶层对象不是用量窗口，不参与解析。
 - `limits` 数组形态：各项含 `percent`（0–100 百分比）。
 
 瓶颈使用率取响应中所有出现窗口使用率的最大值。
@@ -34,6 +34,8 @@ description: Claude 订阅渠道用量数据源：GET /api/oauth/usage，Bearer 
 ## 验收
 
 - [ ] 顶层窗口对象形态 (five_hour=23, seven_day=12, seven_day_opus=68) 的瓶颈使用率为 68。
+- [ ] 响应含 seven_day_sonnet=91（其余窗口更低）时瓶颈使用率为 91。
+- [ ] 响应含 extra_usage.utilization=99 且窗口均更低时，瓶颈使用率不受 extra_usage 影响。
 - [ ] limits 数组形态 (session=40, weekly_all=85) 的瓶颈使用率为 85。
 - [ ] 响应无任何用量窗口时判定为失败。
 - [ ] 请求头含 Authorization Bearer、anthropic-beta oauth-2025-04-20 与 claude-code User-Agent 三者。
