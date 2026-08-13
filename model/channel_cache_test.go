@@ -13,7 +13,7 @@ import (
 )
 
 func TestGetRandomSatisfiedChannel_SaturatedCodexIsExcludedFromMemoryCandidates(t *testing.T) {
-	resetCodexChannelUsageCache(t)
+	resetSubscriptionChannelUsageCache(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
@@ -37,7 +37,7 @@ func TestGetRandomSatisfiedChannel_SaturatedCodexIsExcludedFromMemoryCandidates(
 		56002: {Id: 56002, Type: constant.ChannelTypeOpenAI, Name: "openai", Weight: &openAIWeight, Priority: &priority, Status: common.ChannelStatusEnabled},
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
-	CacheSetCodexChannelUsage(56001, 95, 10)
+	CacheSetSubscriptionChannelUsage(56001, 95)
 	rand.Seed(1)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
@@ -48,7 +48,7 @@ func TestGetRandomSatisfiedChannel_SaturatedCodexIsExcludedFromMemoryCandidates(
 }
 
 func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *testing.T) {
-	resetCodexChannelUsageCache(t)
+	resetSubscriptionChannelUsageCache(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
@@ -72,12 +72,12 @@ func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *test
 		56011: {Id: 56011, Type: constant.ChannelTypeOpenAI, Name: "openai", Weight: &openAIWeight, Priority: &priority, Status: common.ChannelStatusEnabled},
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
-	CacheSetCodexChannelUsage(56010, 96, 10)
-	codexChannelUsageCacheLock.Lock()
-	entry := codexChannelUsageCache[56010]
+	CacheSetSubscriptionChannelUsage(56010, 96)
+	subscriptionChannelUsageCacheLock.Lock()
+	entry := subscriptionChannelUsageCache[56010]
 	entry.refreshedAt = time.Now().Add(-6 * time.Minute)
-	codexChannelUsageCache[56010] = entry
-	codexChannelUsageCacheLock.Unlock()
+	subscriptionChannelUsageCache[56010] = entry
+	subscriptionChannelUsageCacheLock.Unlock()
 	rand.Seed(1)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
@@ -86,11 +86,11 @@ func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *test
 	require.NotNil(t, channel)
 	assert.Equal(t, 56011, channel.Id)
 
-	codexChannelUsageCacheLock.Lock()
-	entry = codexChannelUsageCache[56010]
+	subscriptionChannelUsageCacheLock.Lock()
+	entry = subscriptionChannelUsageCache[56010]
 	entry.refreshedAt = time.Now().Add(-11 * time.Minute)
-	codexChannelUsageCache[56010] = entry
-	codexChannelUsageCacheLock.Unlock()
+	subscriptionChannelUsageCache[56010] = entry
+	subscriptionChannelUsageCacheLock.Unlock()
 	rand.Seed(1)
 
 	channel, err = GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
@@ -101,7 +101,7 @@ func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *test
 }
 
 func TestGetRandomSatisfiedChannel_OnlySaturatedCodexMemoryCandidateReturnsNil(t *testing.T) {
-	resetCodexChannelUsageCache(t)
+	resetSubscriptionChannelUsageCache(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
@@ -123,7 +123,7 @@ func TestGetRandomSatisfiedChannel_OnlySaturatedCodexMemoryCandidateReturnsNil(t
 		56003: {Id: 56003, Type: constant.ChannelTypeCodex, Name: "codex-only", Weight: &weight, Priority: &priority, Status: common.ChannelStatusEnabled},
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
-	CacheSetCodexChannelUsage(56003, 95, 10)
+	CacheSetSubscriptionChannelUsage(56003, 95)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
 
@@ -132,7 +132,7 @@ func TestGetRandomSatisfiedChannel_OnlySaturatedCodexMemoryCandidateReturnsNil(t
 }
 
 func TestGetRandomSatisfiedChannel_SaturatedHighPriorityCodexFallsBackToLowerPriority(t *testing.T) {
-	resetCodexChannelUsageCache(t)
+	resetSubscriptionChannelUsageCache(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
@@ -156,7 +156,7 @@ func TestGetRandomSatisfiedChannel_SaturatedHighPriorityCodexFallsBackToLowerPri
 		56005: {Id: 56005, Type: constant.ChannelTypeOpenAI, Name: "openai-low", Weight: &weight, Priority: &lowPriority, Status: common.ChannelStatusEnabled},
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
-	CacheSetCodexChannelUsage(56004, 95, 10)
+	CacheSetSubscriptionChannelUsage(56004, 95)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
 
@@ -167,7 +167,7 @@ func TestGetRandomSatisfiedChannel_SaturatedHighPriorityCodexFallsBackToLowerPri
 }
 
 func TestGetRandomSatisfiedChannel_AllPriorityLayersSaturatedReturnsNil(t *testing.T) {
-	resetCodexChannelUsageCache(t)
+	resetSubscriptionChannelUsageCache(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
@@ -191,8 +191,8 @@ func TestGetRandomSatisfiedChannel_AllPriorityLayersSaturatedReturnsNil(t *testi
 		56007: {Id: 56007, Type: constant.ChannelTypeCodex, Name: "codex-low", Weight: &weight, Priority: &lowPriority, Status: common.ChannelStatusEnabled},
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
-	CacheSetCodexChannelUsage(56006, 95, 10)
-	CacheSetCodexChannelUsage(56007, 10, 95)
+	CacheSetSubscriptionChannelUsage(56006, 95)
+	CacheSetSubscriptionChannelUsage(56007, 95)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
 
@@ -201,7 +201,7 @@ func TestGetRandomSatisfiedChannel_AllPriorityLayersSaturatedReturnsNil(t *testi
 }
 
 func TestGetRandomSatisfiedChannel_RetryClampsToSurvivingLayerWhenLowerLayerCodexSaturated(t *testing.T) {
-	resetCodexChannelUsageCache(t)
+	resetSubscriptionChannelUsageCache(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
@@ -225,7 +225,7 @@ func TestGetRandomSatisfiedChannel_RetryClampsToSurvivingLayerWhenLowerLayerCode
 		56009: {Id: 56009, Type: constant.ChannelTypeCodex, Name: "codex-low", Weight: &weight, Priority: &lowPriority, Status: common.ChannelStatusEnabled},
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
-	CacheSetCodexChannelUsage(56009, 95, 10)
+	CacheSetSubscriptionChannelUsage(56009, 95)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 1, "")
 

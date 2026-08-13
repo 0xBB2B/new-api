@@ -196,6 +196,10 @@ func GetChannelTypeName(channelType int) string {
 	return "Unknown"
 }
 
+func IsSubscriptionChannel(channelType int) bool {
+	return channelType == ChannelTypeCodex || channelType == ChannelTypeClaudeSubscription
+}
+
 type ChannelSpecialBase struct {
 	ClaudeBaseURL string
 	OpenAIBaseURL string

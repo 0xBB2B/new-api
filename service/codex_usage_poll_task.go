@@ -108,7 +108,7 @@ func runCodexUsagePollOnce() {
 		wg.Wait()
 
 		if common.RedisEnabled {
-			data, err := model.CodexChannelUsageSnapshotJSON()
+			data, err := model.SubscriptionChannelUsageSnapshotJSON()
 			if err != nil {
 				logger.LogWarn(ctx, fmt.Sprintf("codex usage poll: export snapshot failed: %v", err))
 			} else if err := common.RedisSet(codexUsageSnapshotRedisKey, string(data), codexUsageSnapshotTTL); err != nil {
@@ -154,7 +154,11 @@ func pollCodexChannelUsage(ctx context.Context, client *http.Client, ch *model.C
 	if err != nil {
 		return err
 	}
-	model.CacheSetCodexChannelUsage(ch.Id, used5hPercent, used7dPercent)
+	bottleneckPercent := used5hPercent
+	if used7dPercent > bottleneckPercent {
+		bottleneckPercent = used7dPercent
+	}
+	model.CacheSetSubscriptionChannelUsage(ch.Id, bottleneckPercent)
 	return nil
 }
 
@@ -187,7 +191,7 @@ func syncCodexUsageSnapshotOnce() {
 		logger.LogWarn(ctx, fmt.Sprintf("codex usage sync: read snapshot failed: %v", err))
 		return
 	}
-	if err := model.CacheLoadCodexChannelUsageSnapshotJSON([]byte(data)); err != nil {
+	if err := model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(data)); err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("codex usage sync: load snapshot failed: %v", err))
 	}
 }

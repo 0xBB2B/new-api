@@ -222,7 +222,7 @@ func filterSaturatedCodexChannels(channels []int) []int {
 	filtered := make([]int, 0, len(channels))
 	for _, channelId := range channels {
 		channel, ok := channelsIDM[channelId]
-		if !ok || channel.Type != constant.ChannelTypeCodex || !CacheIsCodexChannelSaturated(channelId) {
+		if !ok || channel.Type != constant.ChannelTypeCodex || !CacheIsSubscriptionChannelSaturated(channelId) {
 			filtered = append(filtered, channelId)
 		}
 	}
@@ -233,7 +233,7 @@ func codexEffectiveWeight(channelID int, channelType int, weight int) int {
 	if channelType != constant.ChannelTypeCodex {
 		return weight
 	}
-	remainingRatio, ok := codexChannelRemainingRatio(channelID)
+	remainingRatio, ok := subscriptionChannelRemainingRatio(channelID)
 	if !ok {
 		return weight
 	}

@@ -46,7 +46,7 @@ func TestDistribute_SaturatedCodexAffinityFallsBackAndKeepsCache(t *testing.T) {
 	insertDistributorChannel(t, 58002, constant.ChannelTypeOpenAI)
 	model.InitChannelCache()
 	seedDistributorAffinity(t, "pc-saturated", 58001)
-	model.CacheSetCodexChannelUsage(58001, 95, 10)
+	model.CacheSetSubscriptionChannelUsage(58001, 95)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -118,8 +118,8 @@ func distributorAffinityContext(affinityValue string) *gin.Context {
 
 func resetCodexUsageForMiddlewareTest(t *testing.T) {
 	t.Helper()
-	model.CacheSetCodexChannelUsage(58001, 0, 0)
+	model.CacheSetSubscriptionChannelUsage(58001, 0)
 	t.Cleanup(func() {
-		model.CacheSetCodexChannelUsage(58001, 0, 0)
+		model.CacheSetSubscriptionChannelUsage(58001, 0)
 	})
 }

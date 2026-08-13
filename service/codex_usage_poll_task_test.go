@@ -92,7 +92,7 @@ func TestParseCodexWhamUsageWindows(t *testing.T) {
 
 func TestPollCodexChannelUsage_SuccessWritesCache(t *testing.T) {
 	channelID := 65001
-	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
 
 	var logBuffer bytes.Buffer
 	common.LogWriterMu.Lock()
@@ -134,13 +134,13 @@ func TestPollCodexChannelUsage_SuccessWritesCache(t *testing.T) {
 	err := pollCodexChannelUsage(context.Background(), server.Client(), channel)
 	require.NoError(t, err)
 
-	assert.False(t, model.CacheIsCodexChannelSaturated(channelID))
+	assert.False(t, model.CacheIsSubscriptionChannelSaturated(channelID))
 	assert.Contains(t, logBuffer.String(), "channel_id=65001")
 	assert.Contains(t, logBuffer.String(), "bottleneck_usage=20.50")
 
 	logBuffer.Reset()
 	secondChannelID := 65007
-	model.CacheSetCodexChannelUsage(secondChannelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(secondChannelID, 96)
 	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		body, err := common.Marshal(map[string]any{
@@ -157,14 +157,14 @@ func TestPollCodexChannelUsage_SuccessWritesCache(t *testing.T) {
 	channel.BaseURL = &secondServer.URL
 	err = pollCodexChannelUsage(context.Background(), secondServer.Client(), channel)
 	require.NoError(t, err)
-	assert.False(t, model.CacheIsCodexChannelSaturated(secondChannelID))
+	assert.False(t, model.CacheIsSubscriptionChannelSaturated(secondChannelID))
 	assert.Contains(t, logBuffer.String(), "channel_id=65007")
 	assert.Contains(t, logBuffer.String(), "bottleneck_usage=33.33")
 }
 
 func TestPollCodexChannelUsage_NonSuccessStatusKeepsOldCache(t *testing.T) {
 	channelID := 65002
-	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
 
 	var logBuffer bytes.Buffer
 	common.LogWriterMu.Lock()
@@ -191,13 +191,13 @@ func TestPollCodexChannelUsage_NonSuccessStatusKeepsOldCache(t *testing.T) {
 
 	err := pollCodexChannelUsage(context.Background(), server.Client(), channel)
 	assert.Error(t, err)
-	assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
-	assert.NotContains(t, logBuffer.String(), "Codex 渠道使用率回归")
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
+	assert.NotContains(t, logBuffer.String(), "订阅渠道使用率回归")
 }
 
 func TestPollCodexChannelUsage_UnauthorizedKeepsOldCacheAndKey(t *testing.T) {
 	channelID := 65004
-	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -209,13 +209,13 @@ func TestPollCodexChannelUsage_UnauthorizedKeepsOldCacheAndKey(t *testing.T) {
 
 	err := pollCodexChannelUsage(context.Background(), server.Client(), channel)
 	assert.Error(t, err)
-	assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
 	assert.Equal(t, originalKey, channel.Key)
 }
 
 func TestPollCodexChannelUsage_InvalidResponseKeepsOldCache(t *testing.T) {
 	channelID := 65005
-	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"rate_limit":`))
@@ -231,7 +231,7 @@ func TestPollCodexChannelUsage_InvalidResponseKeepsOldCache(t *testing.T) {
 
 	err := pollCodexChannelUsage(context.Background(), server.Client(), channel)
 	assert.Error(t, err)
-	assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
 }
 
 func TestPollCodexChannelUsage_MissingCredentialDoesNotSendRequest(t *testing.T) {
@@ -252,7 +252,7 @@ func TestPollCodexChannelUsage_MissingCredentialDoesNotSendRequest(t *testing.T)
 
 func TestPollCodexChannelUsage_NetworkErrorKeepsOldCache(t *testing.T) {
 	channelID := 65008
-	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -267,12 +267,12 @@ func TestPollCodexChannelUsage_NetworkErrorKeepsOldCache(t *testing.T) {
 
 	err := pollCodexChannelUsage(context.Background(), client, channel)
 	assert.Error(t, err)
-	assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
 }
 
 func TestPollCodexChannelUsage_SlowUpstreamFailsWithinRequestTimeout(t *testing.T) {
 	channelID := 65009
-	model.CacheSetCodexChannelUsage(channelID, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
 
 	originalTimeout := codexUsagePollRequestTimeout
 	codexUsagePollRequestTimeout = 50 * time.Millisecond
@@ -300,7 +300,7 @@ func TestPollCodexChannelUsage_SlowUpstreamFailsWithinRequestTimeout(t *testing.
 	select {
 	case err := <-done:
 		require.Error(t, err)
-		assert.True(t, model.CacheIsCodexChannelSaturated(channelID))
+		assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
 	case <-time.After(2 * time.Second):
 		t.Fatal("pollCodexChannelUsage 未在请求时限内返回，轮询会被慢上游卡死")
 	}
@@ -358,7 +358,7 @@ func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *te
 		require.NoError(t, model.DB.Create(channel).Error)
 	}
 
-	model.CacheSetCodexChannelUsage(65102, 96, 20)
+	model.CacheSetSubscriptionChannelUsage(65102, 96)
 	runCodexUsagePollOnce()
 
 	assert.Equal(t, 1, badCalls)
@@ -366,13 +366,13 @@ func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *te
 	assert.Equal(t, 0, disabledCalls)
 	assert.Equal(t, 0, autoDisabledCalls)
 	assert.Equal(t, 0, nonCodexCalls)
-	assert.False(t, model.CacheIsCodexChannelSaturated(65102))
+	assert.False(t, model.CacheIsSubscriptionChannelSaturated(65102))
 }
 
 func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T) {
 	truncate(t)
 	require.NoError(t, model.DB.Exec("DELETE FROM channels").Error)
-	require.NoError(t, model.CacheLoadCodexChannelUsageSnapshotJSON([]byte(`{}`)))
+	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
 	codexUsagePollRunning.Store(false)
 	redisSets := captureCodexUsageRedisSets(t)
 
@@ -440,14 +440,12 @@ func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T
 
 	assert.Equal(t, codexUsageSnapshotRedisKey, firstSnapshot.key)
 	var snapshot map[string]struct {
-		Used5hPercent float64 `json:"used_5h_percent"`
-		Used7dPercent float64 `json:"used_7d_percent"`
+		BottleneckPercent float64 `json:"bottleneck_percent"`
 	}
 	require.NoError(t, common.Unmarshal([]byte(firstSnapshot.value), &snapshot))
 	firstEntry, ok := snapshot[strconv.Itoa(baseID)]
 	require.True(t, ok)
-	assert.Equal(t, 12.0, firstEntry.Used5hPercent)
-	assert.Equal(t, 20.0, firstEntry.Used7dPercent)
+	assert.Equal(t, 20.0, firstEntry.BottleneckPercent)
 
 	closeReleaseBlocked.Do(func() { close(releaseBlocked) })
 	select {
@@ -467,8 +465,7 @@ func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T
 	require.NoError(t, common.Unmarshal([]byte(secondSnapshot.value), &snapshot))
 	secondEntry, ok := snapshot[strconv.Itoa(blockedChannel.Id)]
 	require.True(t, ok)
-	assert.Equal(t, 22.0, secondEntry.Used5hPercent)
-	assert.Equal(t, 30.0, secondEntry.Used7dPercent)
+	assert.Equal(t, 30.0, secondEntry.BottleneckPercent)
 }
 
 func captureCodexUsageRedisSets(t *testing.T) <-chan capturedRedisSet {
@@ -641,17 +638,15 @@ func TestRunCodexUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *test
 
 			runCodexUsagePollOnce()
 
-			snapshotJSON, err := model.CodexChannelUsageSnapshotJSON()
+			snapshotJSON, err := model.SubscriptionChannelUsageSnapshotJSON()
 			require.NoError(t, err)
 			var snapshot map[string]struct {
-				Used5hPercent float64 `json:"used_5h_percent"`
-				Used7dPercent float64 `json:"used_7d_percent"`
+				BottleneckPercent float64 `json:"bottleneck_percent"`
 			}
 			require.NoError(t, common.Unmarshal(snapshotJSON, &snapshot))
 			entry, ok := snapshot[strconv.Itoa(channel.Id)]
 			require.True(t, ok, "channel usage entry should be cached after polling via type default base URL")
-			assert.Equal(t, 41.5, entry.Used5hPercent)
-			assert.Equal(t, 62.75, entry.Used7dPercent)
+			assert.Equal(t, 62.75, entry.BottleneckPercent)
 		})
 	}
 }

@@ -188,7 +188,7 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 func filterSaturatedCodexAbilities(abilities []Ability, channelTypes map[int]int) []Ability {
 	filtered := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
-		if channelTypes[ability.ChannelId] == constant.ChannelTypeCodex && CacheIsCodexChannelSaturated(ability.ChannelId) {
+		if channelTypes[ability.ChannelId] == constant.ChannelTypeCodex && CacheIsSubscriptionChannelSaturated(ability.ChannelId) {
 			continue
 		}
 		filtered = append(filtered, ability)
