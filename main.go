@@ -124,8 +124,8 @@ func main() {
 
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
-	service.StartCodexUsagePollTask()
-	service.StartCodexUsageSyncTask()
+	service.StartSubscriptionUsagePollTask()
+	service.StartSubscriptionUsageSyncTask()
 
 	// Claude subscription credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartClaudeCredentialAutoRefreshTask()

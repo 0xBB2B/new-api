@@ -30,31 +30,234 @@ type capturedRedisSet struct {
 	value string
 }
 
-func TestParseCodexWhamUsageWindows(t *testing.T) {
+func claudeOAuthKeyJSON(accessToken string) string {
+	return `{"claudeAiOauth":{"accessToken":"` + accessToken + `","refreshToken":"refresh-token","expiresAt":1234567890123}}`
+}
+
+func TestSubscriptionUsageDueChannelTypes(t *testing.T) {
+	tests := []struct {
+		round int
+		want  []int
+	}{
+		{round: 0, want: []int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription}},
+		{round: 1, want: []int{constant.ChannelTypeCodex}},
+		{round: 2, want: []int{constant.ChannelTypeCodex}},
+		{round: 3, want: []int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription}},
+		{round: 4, want: []int{constant.ChannelTypeCodex}},
+		{round: 5, want: []int{constant.ChannelTypeCodex}},
+		{round: 6, want: []int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription}},
+	}
+
+	for _, tt := range tests {
+		t.Run("round_"+strconv.Itoa(tt.round), func(t *testing.T) {
+			got := subscriptionUsageDueChannelTypes(tt.round)
+			assert.ElementsMatch(t, tt.want, got)
+		})
+	}
+}
+
+func TestPollClaudeChannelUsage_SuccessWritesCache(t *testing.T) {
+	channelID := 66001
+	model.CacheSetSubscriptionChannelUsage(channelID, 5)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/oauth/usage", r.URL.Path)
+		assert.Equal(t, "Bearer claude-access-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "oauth-2025-04-20", r.Header.Get("anthropic-beta"))
+		assert.Equal(t, "claude-code/2.1.229", r.Header.Get("User-Agent"))
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":23},"seven_day":{"utilization":77}}`))
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	channel := &model.Channel{
+		Id:      channelID,
+		Type:    constant.ChannelTypeClaudeSubscription,
+		Key:     claudeOAuthKeyJSON("claude-access-token"),
+		BaseURL: &baseURL,
+	}
+
+	err := pollClaudeChannelUsage(context.Background(), server.Client(), channel)
+	require.NoError(t, err)
+
+	snapshotJSON, err := model.SubscriptionChannelUsageSnapshotJSON()
+	require.NoError(t, err)
+	var snapshot map[string]struct {
+		BottleneckPercent float64 `json:"bottleneck_percent"`
+	}
+	require.NoError(t, common.Unmarshal(snapshotJSON, &snapshot))
+	entry, ok := snapshot[strconv.Itoa(channelID)]
+	require.True(t, ok)
+	assert.Equal(t, 77.0, entry.BottleneckPercent)
+}
+
+func TestPollClaudeChannelUsage_UnauthorizedKeepsOldCache(t *testing.T) {
+	channelID := 66002
+	model.CacheSetSubscriptionChannelUsage(channelID, 96)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	channel := &model.Channel{
+		Id:      channelID,
+		Type:    constant.ChannelTypeClaudeSubscription,
+		Key:     claudeOAuthKeyJSON("claude-access-token"),
+		BaseURL: &baseURL,
+	}
+
+	originalKey := channel.Key
+	err := pollClaudeChannelUsage(context.Background(), server.Client(), channel)
+	assert.Error(t, err)
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
+	assert.Equal(t, originalKey, channel.Key)
+}
+
+func TestRunSubscriptionUsagePollOnce_OnlyPollsGivenChannelTypes(t *testing.T) {
+	truncate(t)
+
+	codexCalls := 0
+	codexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		codexCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":10},"secondary_window":{"used_percent":15}}}`))
+	}))
+	defer codexServer.Close()
+
+	claudeCalls := 0
+	claudeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claudeCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":10},"seven_day":{"utilization":15}}`))
+	}))
+	defer claudeServer.Close()
+
+	codexChannel := &model.Channel{Id: 66101, Name: "codex", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &codexServer.URL}
+	claudeChannel := &model.Channel{Id: 66102, Name: "claude", Type: constant.ChannelTypeClaudeSubscription, Status: common.ChannelStatusEnabled, Key: claudeOAuthKeyJSON("claude-access-token"), BaseURL: &claudeServer.URL}
+	require.NoError(t, model.DB.Create(codexChannel).Error)
+	require.NoError(t, model.DB.Create(claudeChannel).Error)
+
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
+	assert.Equal(t, 1, codexCalls)
+	assert.Equal(t, 0, claudeCalls)
+
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription})
+	assert.Equal(t, 2, codexCalls)
+	assert.Equal(t, 1, claudeCalls)
+}
+
+func TestRunSubscriptionUsagePollOnce_SkipsDisabledClaudeChannel(t *testing.T) {
+	truncate(t)
+
+	claudeCalls := 0
+	claudeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claudeCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer claudeServer.Close()
+
+	claudeChannel := &model.Channel{Id: 66103, Name: "claude-disabled", Type: constant.ChannelTypeClaudeSubscription, Status: common.ChannelStatusManuallyDisabled, Key: claudeOAuthKeyJSON("claude-access-token"), BaseURL: &claudeServer.URL}
+	require.NoError(t, model.DB.Create(claudeChannel).Error)
+
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription})
+	assert.Equal(t, 0, claudeCalls)
+}
+
+func TestRunSubscriptionUsagePollOnce_ClaudeFailureDoesNotBlockCodexInSameRound(t *testing.T) {
+	truncate(t)
+
+	codexCalls := 0
+	codexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		codexCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":10},"secondary_window":{"used_percent":15}}}`))
+	}))
+	defer codexServer.Close()
+
+	claudeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer claudeServer.Close()
+
+	codexChannel := &model.Channel{Id: 66104, Name: "codex", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &codexServer.URL}
+	claudeChannel := &model.Channel{Id: 66105, Name: "claude-401", Type: constant.ChannelTypeClaudeSubscription, Status: common.ChannelStatusEnabled, Key: claudeOAuthKeyJSON("claude-access-token"), BaseURL: &claudeServer.URL}
+	require.NoError(t, model.DB.Create(codexChannel).Error)
+	require.NoError(t, model.DB.Create(claudeChannel).Error)
+
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription})
+
+	assert.Equal(t, 1, codexCalls)
+	snapshotJSON, err := model.SubscriptionChannelUsageSnapshotJSON()
+	require.NoError(t, err)
+	var snapshot map[string]struct {
+		BottleneckPercent float64 `json:"bottleneck_percent"`
+	}
+	require.NoError(t, common.Unmarshal(snapshotJSON, &snapshot))
+	codexEntry, ok := snapshot[strconv.Itoa(codexChannel.Id)]
+	require.True(t, ok)
+	assert.Equal(t, 15.0, codexEntry.BottleneckPercent)
+}
+
+func TestRunSubscriptionUsagePollOnce_PublishesRedisSnapshotUnderSubscriptionKey(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
+	redisSets := captureSubscriptionUsageRedisSets(t)
+
+	claudeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":18},"seven_day":{"utilization":42}}`))
+	}))
+	defer claudeServer.Close()
+
+	claudeChannel := &model.Channel{Id: 66106, Name: "claude", Type: constant.ChannelTypeClaudeSubscription, Status: common.ChannelStatusEnabled, Key: claudeOAuthKeyJSON("claude-access-token"), BaseURL: &claudeServer.URL}
+	require.NoError(t, model.DB.Create(claudeChannel).Error)
+
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeClaudeSubscription})
+
+	var snapshotSet capturedRedisSet
+	select {
+	case snapshotSet = <-redisSets:
+	default:
+		t.Fatal("订阅渠道用量轮询未发布 Redis 快照")
+	}
+
+	assert.Equal(t, "subscription_channel_usage_snapshot", snapshotSet.key)
+	var snapshot map[string]struct {
+		BottleneckPercent float64 `json:"bottleneck_percent"`
+	}
+	require.NoError(t, common.Unmarshal([]byte(snapshotSet.value), &snapshot))
+	entry, ok := snapshot[strconv.Itoa(claudeChannel.Id)]
+	require.True(t, ok)
+	assert.Equal(t, 42.0, entry.BottleneckPercent)
+}
+
+func TestParseCodexWhamUsageBottleneck(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		want5h  float64
-		want7d  float64
+		want    float64
 		wantErr bool
 	}{
 		{
-			name:   "both windows",
-			body:   `{"rate_limit":{"primary_window":{"used_percent":12.5},"secondary_window":{"used_percent":34.75}}}`,
-			want5h: 12.5,
-			want7d: 34.75,
+			name: "both windows",
+			body: `{"rate_limit":{"primary_window":{"used_percent":12.5},"secondary_window":{"used_percent":34.75}}}`,
+			want: 34.75,
 		},
 		{
-			name:   "primary only",
-			body:   `{"rate_limit":{"primary_window":{"used_percent":12.5}}}`,
-			want5h: 12.5,
-			want7d: 0,
+			name: "primary only",
+			body: `{"rate_limit":{"primary_window":{"used_percent":12.5}}}`,
+			want: 12.5,
 		},
 		{
-			name:   "secondary only",
-			body:   `{"rate_limit":{"secondary_window":{"used_percent":34.75}}}`,
-			want5h: 0,
-			want7d: 34.75,
+			name: "secondary only",
+			body: `{"rate_limit":{"secondary_window":{"used_percent":34.75}}}`,
+			want: 34.75,
 		},
 		{
 			name:    "missing both windows",
@@ -62,30 +265,27 @@ func TestParseCodexWhamUsageWindows(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:   "window present without used percent",
-			body:   `{"rate_limit":{"primary_window":{}}}`,
-			want5h: 0,
-			want7d: 0,
+			name: "window present without used percent",
+			body: `{"rate_limit":{"primary_window":{}}}`,
+			want: 0,
 		},
 		{
-			name:   "explicit zero",
-			body:   `{"rate_limit":{"primary_window":{"used_percent":0},"secondary_window":{"used_percent":0}}}`,
-			want5h: 0,
-			want7d: 0,
+			name: "explicit zero",
+			body: `{"rate_limit":{"primary_window":{"used_percent":0},"secondary_window":{"used_percent":0}}}`,
+			want: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got5h, got7d, err := parseCodexWhamUsageWindows([]byte(tt.body))
+			got, err := parseCodexWhamUsageBottleneck([]byte(tt.body))
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.want5h, got5h)
-			assert.Equal(t, tt.want7d, got7d)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -270,45 +470,68 @@ func TestPollCodexChannelUsage_NetworkErrorKeepsOldCache(t *testing.T) {
 	assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
 }
 
-func TestPollCodexChannelUsage_SlowUpstreamFailsWithinRequestTimeout(t *testing.T) {
-	channelID := 65009
-	model.CacheSetSubscriptionChannelUsage(channelID, 96)
-
-	originalTimeout := codexUsagePollRequestTimeout
-	codexUsagePollRequestTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { codexUsagePollRequestTimeout = originalTimeout })
-
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-release
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() { close(release) })
-
-	baseURL := server.URL
-	channel := &model.Channel{
-		Id:      channelID,
-		Key:     `{"access_token":"access-token","account_id":"account-id"}`,
-		BaseURL: &baseURL,
+func TestPollSubscriptionChannelUsage_SlowUpstreamFailsWithinRequestTimeout(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelID   int
+		channelType int
+		key         string
+	}{
+		{
+			name:        "codex channel",
+			channelID:   65009,
+			channelType: constant.ChannelTypeCodex,
+			key:         `{"access_token":"access-token","account_id":"account-id"}`,
+		},
+		{
+			name:        "claude subscription channel",
+			channelID:   65010,
+			channelType: constant.ChannelTypeClaudeSubscription,
+			key:         claudeOAuthKeyJSON("claude-access-token"),
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model.CacheSetSubscriptionChannelUsage(tt.channelID, 96)
 
-	done := make(chan error, 1)
-	go func() {
-		done <- pollCodexChannelUsage(context.Background(), server.Client(), channel)
-	}()
+			originalTimeout := subscriptionUsagePollRequestTimeout
+			subscriptionUsagePollRequestTimeout = 50 * time.Millisecond
+			t.Cleanup(func() { subscriptionUsagePollRequestTimeout = originalTimeout })
 
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		assert.True(t, model.CacheIsSubscriptionChannelSaturated(channelID))
-	case <-time.After(2 * time.Second):
-		t.Fatal("pollCodexChannelUsage 未在请求时限内返回，轮询会被慢上游卡死")
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				<-release
+			}))
+			t.Cleanup(server.Close)
+			t.Cleanup(func() { close(release) })
+
+			baseURL := server.URL
+			channel := &model.Channel{
+				Id:      tt.channelID,
+				Type:    tt.channelType,
+				Key:     tt.key,
+				BaseURL: &baseURL,
+			}
+
+			done := make(chan error, 1)
+			go func() {
+				done <- pollSubscriptionChannelUsage(context.Background(), channel)
+			}()
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+				assert.True(t, model.CacheIsSubscriptionChannelSaturated(tt.channelID))
+			case <-time.After(2 * time.Second):
+				t.Fatal("pollSubscriptionChannelUsage 未在请求时限内返回，轮询会被慢上游卡死")
+			}
+		})
 	}
 }
 
-func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *testing.T) {
+func TestRunSubscriptionUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *testing.T) {
 	truncate(t)
-	codexUsagePollRunning.Store(false)
+	subscriptionUsagePollRunning.Store(false)
 
 	goodCalls := 0
 	goodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +582,7 @@ func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *te
 	}
 
 	model.CacheSetSubscriptionChannelUsage(65102, 96)
-	runCodexUsagePollOnce()
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
 
 	assert.Equal(t, 1, badCalls)
 	assert.Equal(t, 1, goodCalls)
@@ -369,18 +592,18 @@ func TestRunCodexUsagePollOnce_FiltersEnabledCodexAndContinuesAfterFailure(t *te
 	assert.False(t, model.CacheIsSubscriptionChannelSaturated(65102))
 }
 
-func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T) {
+func TestRunSubscriptionUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T) {
 	truncate(t)
 	require.NoError(t, model.DB.Exec("DELETE FROM channels").Error)
 	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
-	codexUsagePollRunning.Store(false)
-	redisSets := captureCodexUsageRedisSets(t)
+	subscriptionUsagePollRunning.Store(false)
+	redisSets := captureSubscriptionUsageRedisSets(t)
 
 	var firstBatchCalls atomic.Int64
 	firstBatchDone := make(chan struct{})
 	var closeFirstBatchDone sync.Once
 	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if firstBatchCalls.Add(1) == int64(codexUsagePollBatchSize) {
+		if firstBatchCalls.Add(1) == int64(subscriptionUsagePollBatchSize) {
 			closeFirstBatchDone.Do(func() { close(firstBatchDone) })
 		}
 		w.WriteHeader(http.StatusOK)
@@ -402,16 +625,16 @@ func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T
 	defer blockServer.Close()
 
 	baseID := 65200
-	for i := 0; i < codexUsagePollBatchSize; i++ {
+	for i := 0; i < subscriptionUsagePollBatchSize; i++ {
 		channel := &model.Channel{Id: baseID + i, Name: fmt.Sprintf("codex-%d", i), Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &successServer.URL}
 		require.NoError(t, model.DB.Create(channel).Error)
 	}
-	blockedChannel := &model.Channel{Id: baseID + codexUsagePollBatchSize, Name: "blocked", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &blockServer.URL}
+	blockedChannel := &model.Channel{Id: baseID + subscriptionUsagePollBatchSize, Name: "blocked", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &blockServer.URL}
 	require.NoError(t, model.DB.Create(blockedChannel).Error)
 
 	done := make(chan struct{})
 	go func() {
-		runCodexUsagePollOnce()
+		runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
 		close(done)
 	}()
 
@@ -438,7 +661,7 @@ func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T
 		t.Fatal("第一批完成后未发布 Redis 快照")
 	}
 
-	assert.Equal(t, codexUsageSnapshotRedisKey, firstSnapshot.key)
+	assert.Equal(t, subscriptionUsageSnapshotRedisKey, firstSnapshot.key)
 	var snapshot map[string]struct {
 		BottleneckPercent float64 `json:"bottleneck_percent"`
 	}
@@ -461,14 +684,14 @@ func TestRunCodexUsagePollOnce_PublishesRedisSnapshotAfterEachBatch(t *testing.T
 		t.Fatal("第二批完成后未发布 Redis 快照")
 	}
 
-	assert.Equal(t, codexUsageSnapshotRedisKey, secondSnapshot.key)
+	assert.Equal(t, subscriptionUsageSnapshotRedisKey, secondSnapshot.key)
 	require.NoError(t, common.Unmarshal([]byte(secondSnapshot.value), &snapshot))
 	secondEntry, ok := snapshot[strconv.Itoa(blockedChannel.Id)]
 	require.True(t, ok)
 	assert.Equal(t, 30.0, secondEntry.BottleneckPercent)
 }
 
-func captureCodexUsageRedisSets(t *testing.T) <-chan capturedRedisSet {
+func captureSubscriptionUsageRedisSets(t *testing.T) <-chan capturedRedisSet {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -492,13 +715,13 @@ func captureCodexUsageRedisSets(t *testing.T) <-chan capturedRedisSet {
 			if err != nil {
 				return
 			}
-			go serveCodexUsageRedisConn(conn, sets)
+			go serveSubscriptionUsageRedisConn(conn, sets)
 		}
 	}()
 	return sets
 }
 
-func serveCodexUsageRedisConn(conn net.Conn, sets chan<- capturedRedisSet) {
+func serveSubscriptionUsageRedisConn(conn net.Conn, sets chan<- capturedRedisSet) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	for {
@@ -547,26 +770,22 @@ func readRedisCommand(reader *bufio.Reader) ([]string, error) {
 	return command, nil
 }
 
-func TestStartCodexUsagePollTask_NonMasterDoesNotStart(t *testing.T) {
+func TestStartSubscriptionUsagePollTask_NonMasterDoesNotStart(t *testing.T) {
 	originalMaster := common.IsMasterNode
-	originalOnce := codexUsagePollOnce
+	originalOnce := subscriptionUsagePollOnce
 	common.IsMasterNode = false
-	codexUsagePollOnce = sync.Once{}
+	subscriptionUsagePollOnce = new(sync.Once)
 	t.Cleanup(func() {
 		common.IsMasterNode = originalMaster
-		codexUsagePollOnce = originalOnce
+		subscriptionUsagePollOnce = originalOnce
 	})
 
-	StartCodexUsagePollTask()
+	StartSubscriptionUsagePollTask()
 
-	assert.False(t, codexUsagePollRunning.Load())
+	assert.False(t, subscriptionUsagePollRunning.Load())
 }
 
-func TestCodexUsagePollTickInterval(t *testing.T) {
-	assert.Equal(t, 60*time.Second, codexUsagePollTickInterval)
-}
-
-func TestStartCodexUsageSyncTask_NonMasterWithoutRedisLogsWarning(t *testing.T) {
+func TestStartSubscriptionUsageSyncTask_NonMasterWithoutRedisLogsWarning(t *testing.T) {
 	originalMaster := common.IsMasterNode
 	originalRedis := common.RedisEnabled
 	common.IsMasterNode = false
@@ -587,7 +806,7 @@ func TestStartCodexUsageSyncTask_NonMasterWithoutRedisLogsWarning(t *testing.T) 
 		common.LogWriterMu.Unlock()
 	})
 
-	StartCodexUsageSyncTask()
+	StartSubscriptionUsageSyncTask()
 
 	warning := logBuffer.String()
 	require.NotEmpty(t, warning)
@@ -595,7 +814,7 @@ func TestStartCodexUsageSyncTask_NonMasterWithoutRedisLogsWarning(t *testing.T) 
 	assert.Contains(t, warning, "触顶")
 }
 
-func TestRunCodexUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *testing.T) {
+func TestRunSubscriptionUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *testing.T) {
 	tests := []struct {
 		name    string
 		baseURL *string
@@ -607,7 +826,7 @@ func TestRunCodexUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *test
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			truncate(t)
-			codexUsagePollRunning.Store(false)
+			subscriptionUsagePollRunning.Store(false)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -636,7 +855,7 @@ func TestRunCodexUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *test
 			}
 			require.NoError(t, model.DB.Create(channel).Error)
 
-			runCodexUsagePollOnce()
+			runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
 
 			snapshotJSON, err := model.SubscriptionChannelUsageSnapshotJSON()
 			require.NoError(t, err)
@@ -651,9 +870,9 @@ func TestRunCodexUsagePollOnce_EmptyBaseURLFallsBackToChannelTypeDefault(t *test
 	}
 }
 
-func TestRunCodexUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *testing.T) {
+func TestRunSubscriptionUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *testing.T) {
 	truncate(t)
-	codexUsagePollRunning.Store(false)
+	subscriptionUsagePollRunning.Store(false)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -680,7 +899,7 @@ func TestRunCodexUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *test
 	}
 	require.NoError(t, model.DB.Create(channel).Error)
 
-	runCodexUsagePollOnce()
+	runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
 
 	var reloaded model.Channel
 	require.NoError(t, model.DB.First(&reloaded, "id = ?", channel.Id).Error)
@@ -695,9 +914,9 @@ func TestRunCodexUsagePollOnce_InvalidSettingDoesNotCorruptChannelRecord(t *test
 	assert.Equal(t, invalidSetting, *reloaded.Setting)
 }
 
-func TestRunCodexUsagePollOnce_BatchPollsChannelsConcurrently(t *testing.T) {
+func TestRunSubscriptionUsagePollOnce_BatchPollsChannelsConcurrently(t *testing.T) {
 	truncate(t)
-	codexUsagePollRunning.Store(false)
+	subscriptionUsagePollRunning.Store(false)
 
 	aStarted := make(chan struct{})
 	releaseA := make(chan struct{})
@@ -726,7 +945,7 @@ func TestRunCodexUsagePollOnce_BatchPollsChannelsConcurrently(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runCodexUsagePollOnce()
+		runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
 		close(done)
 	}()
 
@@ -768,4 +987,97 @@ func TestPollCodexChannelUsage_InvalidKeyDoesNotSendRequest(t *testing.T) {
 	err := pollCodexChannelUsage(context.Background(), server.Client(), channel)
 	assert.Error(t, err)
 	assert.False(t, called)
+}
+
+func TestSyncSubscriptionUsageSnapshotOnce_ReplacesLocalCacheWholesale(t *testing.T) {
+	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
+	model.CacheSetSubscriptionChannelUsage(71002, 97)
+	payload, err := model.SubscriptionChannelUsageSnapshotJSON()
+	require.NoError(t, err)
+
+	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
+	model.CacheSetSubscriptionChannelUsage(71001, 40)
+
+	startSubscriptionUsageFakeRedisGet(t, string(payload))
+	syncSubscriptionUsageSnapshotOnce()
+
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(71002))
+	snapshotJSON, err := model.SubscriptionChannelUsageSnapshotJSON()
+	require.NoError(t, err)
+	var snapshot map[string]struct {
+		BottleneckPercent float64 `json:"bottleneck_percent"`
+	}
+	require.NoError(t, common.Unmarshal(snapshotJSON, &snapshot))
+	assert.Len(t, snapshot, 1)
+	_, hasOld := snapshot["71001"]
+	assert.False(t, hasOld)
+}
+
+func TestSyncSubscriptionUsageSnapshotOnce_ReadFailureKeepsLocalCache(t *testing.T) {
+	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
+	model.CacheSetSubscriptionChannelUsage(71003, 96)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+		_ = client.Close()
+	})
+
+	syncSubscriptionUsageSnapshotOnce()
+
+	assert.True(t, model.CacheIsSubscriptionChannelSaturated(71003))
+}
+
+func startSubscriptionUsageFakeRedisGet(t *testing.T, payload string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String()})
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+		_ = client.Close()
+		_ = listener.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go serveSubscriptionUsageRedisGetConn(conn, payload)
+		}
+	}()
+}
+
+func serveSubscriptionUsageRedisGetConn(conn net.Conn, payload string) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	for {
+		command, err := readRedisCommand(reader)
+		if err != nil {
+			return
+		}
+		if len(command) >= 2 && strings.EqualFold(command[0], "get") {
+			_, _ = fmt.Fprintf(conn, "$%d\r\n%s\r\n", len(payload), payload)
+			continue
+		}
+		_, _ = conn.Write([]byte("+OK\r\n"))
+	}
 }
