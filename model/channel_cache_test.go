@@ -233,3 +233,125 @@ func TestGetRandomSatisfiedChannel_RetryClampsToSurvivingLayerWhenLowerLayerCode
 	require.NotNil(t, channel)
 	assert.Equal(t, 56008, channel.Id)
 }
+
+func TestFilterSaturatedSubscriptionChannels_ClaudeSubscriptionSaturatedIsExcluded(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	originalChannelsIDM := channelsIDM
+	t.Cleanup(func() {
+		channelsIDM = originalChannelsIDM
+	})
+	weight := uint(100)
+	channelsIDM = map[int]*Channel{
+		56020: {Id: 56020, Type: constant.ChannelTypeClaudeSubscription, Weight: &weight},
+		56021: {Id: 56021, Type: constant.ChannelTypeClaudeSubscription, Weight: &weight},
+	}
+	CacheSetSubscriptionChannelUsage(56020, 95)
+
+	filtered := filterSaturatedSubscriptionChannels([]int{56020, 56021})
+
+	require.Equal(t, []int{56021}, filtered)
+}
+
+func TestSubscriptionEffectiveWeight(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelID   int
+		channelType int
+		weight      int
+		setupCache  func(t *testing.T)
+		want        int
+	}{
+		{
+			name:        "codex with fresh 60 percent bottleneck scales weight",
+			channelID:   57020,
+			channelType: constant.ChannelTypeCodex,
+			weight:      100,
+			setupCache: func(t *testing.T) {
+				CacheSetSubscriptionChannelUsage(57020, 60)
+			},
+			want: 40,
+		},
+		{
+			name:        "claude subscription with fresh 60 percent bottleneck scales weight",
+			channelID:   61020,
+			channelType: constant.ChannelTypeClaudeSubscription,
+			weight:      100,
+			setupCache: func(t *testing.T) {
+				CacheSetSubscriptionChannelUsage(61020, 60)
+			},
+			want: 40,
+		},
+		{
+			name:        "non-subscription channel type returns original weight",
+			channelID:   58020,
+			channelType: constant.ChannelTypeOpenAI,
+			weight:      100,
+			setupCache: func(t *testing.T) {
+				CacheSetSubscriptionChannelUsage(58020, 60)
+			},
+			want: 100,
+		},
+		{
+			name:        "missing cache entry falls back to original weight",
+			channelID:   61021,
+			channelType: constant.ChannelTypeClaudeSubscription,
+			weight:      100,
+			setupCache:  func(t *testing.T) {},
+			want:        100,
+		},
+		{
+			name:        "stale entry beyond ten minutes falls back to original weight",
+			channelID:   61023,
+			channelType: constant.ChannelTypeClaudeSubscription,
+			weight:      100,
+			setupCache: func(t *testing.T) {
+				CacheSetSubscriptionChannelUsage(61023, 60)
+				ageSubscriptionChannelUsageEntry(t, 61023, -11*time.Minute)
+			},
+			want: 100,
+		},
+		{
+			name:        "entry refreshed six minutes ago still scales weight",
+			channelID:   61024,
+			channelType: constant.ChannelTypeClaudeSubscription,
+			weight:      100,
+			setupCache: func(t *testing.T) {
+				CacheSetSubscriptionChannelUsage(61024, 90)
+				ageSubscriptionChannelUsageEntry(t, 61024, -6*time.Minute)
+			},
+			want: 10,
+		},
+		{
+			name:        "scaled weight floors to minimum of 1",
+			channelID:   61022,
+			channelType: constant.ChannelTypeClaudeSubscription,
+			weight:      2,
+			setupCache: func(t *testing.T) {
+				CacheSetSubscriptionChannelUsage(61022, 60)
+			},
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetSubscriptionChannelUsageCache(t)
+			tt.setupCache(t)
+
+			got := subscriptionEffectiveWeight(tt.channelID, tt.channelType, tt.weight)
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSubscriptionEffectiveWeight_CodexAndClaudeSubscriptionMatchUnderSameCacheState(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	CacheSetSubscriptionChannelUsage(57030, 42)
+	CacheSetSubscriptionChannelUsage(61030, 42)
+
+	codexWeight := subscriptionEffectiveWeight(57030, constant.ChannelTypeCodex, 250)
+	claudeWeight := subscriptionEffectiveWeight(61030, constant.ChannelTypeClaudeSubscription, 250)
+
+	assert.Equal(t, codexWeight, claudeWeight)
+}

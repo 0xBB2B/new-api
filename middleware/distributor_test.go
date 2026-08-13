@@ -35,7 +35,7 @@ func TestDistribute_SaturatedCodexAffinityFallsBackAndKeepsCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	require.NoError(t, model.DB.Exec("DELETE FROM abilities").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM channels").Error)
-	resetCodexUsageForMiddlewareTest(t)
+	resetSubscriptionUsageForMiddlewareTest(t, 58001)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
 	t.Cleanup(func() {
@@ -68,6 +68,46 @@ func TestDistribute_SaturatedCodexAffinityFallsBackAndKeepsCache(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	_, found := preferredDistributorChannel(t, "pc-saturated")
+	assert.True(t, found)
+}
+
+func TestDistribute_SaturatedClaudeSubscriptionAffinityFallsBackAndKeepsCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, model.DB.Exec("DELETE FROM abilities").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM channels").Error)
+	resetSubscriptionUsageForMiddlewareTest(t, 58003)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	insertDistributorChannel(t, 58003, constant.ChannelTypeClaudeSubscription)
+	insertDistributorChannel(t, 58004, constant.ChannelTypeOpenAI)
+	model.InitChannelCache()
+	seedDistributorAffinity(t, "pc-saturated-claude", 58003)
+	model.CacheSetSubscriptionChannelUsage(58003, 95)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.Use(Distribute())
+	router.POST("/v1/responses", func(c *gin.Context) {
+		assert.Equal(t, 58004, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+		c.Status(http.StatusOK)
+	})
+
+	body := `{"model":"gpt-5","prompt_cache_key":"pc-saturated-claude"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	_, found := preferredDistributorChannel(t, "pc-saturated-claude")
 	assert.True(t, found)
 }
 
@@ -116,10 +156,10 @@ func distributorAffinityContext(affinityValue string) *gin.Context {
 	return ctx
 }
 
-func resetCodexUsageForMiddlewareTest(t *testing.T) {
+func resetSubscriptionUsageForMiddlewareTest(t *testing.T, channelID int) {
 	t.Helper()
-	model.CacheSetSubscriptionChannelUsage(58001, 0)
+	model.CacheSetSubscriptionChannelUsage(channelID, 0)
 	t.Cleanup(func() {
-		model.CacheSetSubscriptionChannelUsage(58001, 0)
+		model.CacheSetSubscriptionChannelUsage(channelID, 0)
 	})
 }

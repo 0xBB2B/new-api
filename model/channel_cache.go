@@ -133,7 +133,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, nil
 	}
 
-	channels = filterSaturatedCodexChannels(channels)
+	channels = filterSaturatedSubscriptionChannels(channels)
 	if len(channels) == 0 {
 		return nil, nil
 	}
@@ -199,7 +199,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	totalWeight := 0
 	effectiveWeights := make(map[int]int, len(targetChannels))
 	for _, channel := range targetChannels {
-		effectiveWeight := codexEffectiveWeight(channel.Id, channel.Type, channel.GetWeight()*smoothingFactor+smoothingAdjustment)
+		effectiveWeight := subscriptionEffectiveWeight(channel.Id, channel.Type, channel.GetWeight()*smoothingFactor+smoothingAdjustment)
 		effectiveWeights[channel.Id] = effectiveWeight
 		totalWeight += effectiveWeight
 	}
@@ -218,19 +218,19 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	return nil, errors.New("channel not found")
 }
 
-func filterSaturatedCodexChannels(channels []int) []int {
+func filterSaturatedSubscriptionChannels(channels []int) []int {
 	filtered := make([]int, 0, len(channels))
 	for _, channelId := range channels {
 		channel, ok := channelsIDM[channelId]
-		if !ok || channel.Type != constant.ChannelTypeCodex || !CacheIsSubscriptionChannelSaturated(channelId) {
+		if !ok || !constant.IsSubscriptionChannel(channel.Type) || !CacheIsSubscriptionChannelSaturated(channelId) {
 			filtered = append(filtered, channelId)
 		}
 	}
 	return filtered
 }
 
-func codexEffectiveWeight(channelID int, channelType int, weight int) int {
-	if channelType != constant.ChannelTypeCodex {
+func subscriptionEffectiveWeight(channelID int, channelType int, weight int) int {
+	if !constant.IsSubscriptionChannel(channelType) {
 		return weight
 	}
 	remainingRatio, ok := subscriptionChannelRemainingRatio(channelID)

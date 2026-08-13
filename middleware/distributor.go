@@ -108,7 +108,7 @@ func Distribute() func(c *gin.Context) {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
 						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
-						if preferred.Type == constant.ChannelTypeCodex && model.CacheIsSubscriptionChannelSaturated(preferred.Id) {
+						if constant.IsSubscriptionChannel(preferred.Type) && model.CacheIsSubscriptionChannelSaturated(preferred.Id) {
 							affinitySaturated = true
 						} else if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)

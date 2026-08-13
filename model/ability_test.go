@@ -183,6 +183,42 @@ func TestGetChannel_ChannelTypeLookupErrorReturnsNoChannel(t *testing.T) {
 	assert.Equal(t, 1, channelQueryCount)
 }
 
+func TestFilterSaturatedSubscriptionAbilities_ClaudeSubscriptionSaturatedIsExcluded(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	CacheSetSubscriptionChannelUsage(59001, 95)
+	abilities := []Ability{{ChannelId: 59001}, {ChannelId: 59002}}
+	channelTypes := map[int]int{59001: constant.ChannelTypeClaudeSubscription, 59002: constant.ChannelTypeClaudeSubscription}
+
+	filtered := filterSaturatedSubscriptionAbilities(abilities, channelTypes)
+
+	require.Len(t, filtered, 1)
+	assert.Equal(t, 59002, filtered[0].ChannelId)
+}
+
+func TestFilterSaturatedSubscriptionAbilities_ClaudeSubscriptionNotSaturatedIsKept(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	CacheSetSubscriptionChannelUsage(59003, 94.9)
+	abilities := []Ability{{ChannelId: 59003}}
+	channelTypes := map[int]int{59003: constant.ChannelTypeClaudeSubscription}
+
+	filtered := filterSaturatedSubscriptionAbilities(abilities, channelTypes)
+
+	require.Len(t, filtered, 1)
+	assert.Equal(t, 59003, filtered[0].ChannelId)
+}
+
+func TestFilterSaturatedSubscriptionAbilities_NonSubscriptionTypeSaturatedCacheIsKept(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	CacheSetSubscriptionChannelUsage(59004, 95)
+	abilities := []Ability{{ChannelId: 59004}}
+	channelTypes := map[int]int{59004: constant.ChannelTypeOpenAI}
+
+	filtered := filterSaturatedSubscriptionAbilities(abilities, channelTypes)
+
+	require.Len(t, filtered, 1)
+	assert.Equal(t, 59004, filtered[0].ChannelId)
+}
+
 func insertChannelSelectionCandidate(t *testing.T, channelID int, modelName string, group string, channelType int, priority int64, weight uint) {
 	t.Helper()
 	require.NoError(t, DB.Create(&Channel{

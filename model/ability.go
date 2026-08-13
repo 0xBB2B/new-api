@@ -74,7 +74,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	if err != nil {
 		return nil, err
 	}
-	abilities = filterSaturatedCodexAbilities(abilities, channelTypes)
+	abilities = filterSaturatedSubscriptionAbilities(abilities, channelTypes)
 	if len(abilities) == 0 {
 		return nil, nil
 	}
@@ -110,7 +110,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 		if priority != targetPriority {
 			continue
 		}
-		effectiveWeight := codexEffectiveWeight(ability_.ChannelId, channelTypes[ability_.ChannelId], int(ability_.Weight)+10)
+		effectiveWeight := subscriptionEffectiveWeight(ability_.ChannelId, channelTypes[ability_.ChannelId], int(ability_.Weight)+10)
 		effectiveWeights[ability_.ChannelId] = effectiveWeight
 		weightSum += effectiveWeight
 	}
@@ -185,10 +185,10 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 	return filtered, channelTypes, nil
 }
 
-func filterSaturatedCodexAbilities(abilities []Ability, channelTypes map[int]int) []Ability {
+func filterSaturatedSubscriptionAbilities(abilities []Ability, channelTypes map[int]int) []Ability {
 	filtered := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
-		if channelTypes[ability.ChannelId] == constant.ChannelTypeCodex && CacheIsSubscriptionChannelSaturated(ability.ChannelId) {
+		if constant.IsSubscriptionChannel(channelTypes[ability.ChannelId]) && CacheIsSubscriptionChannelSaturated(ability.ChannelId) {
 			continue
 		}
 		filtered = append(filtered, ability)
