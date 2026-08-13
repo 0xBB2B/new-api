@@ -29,14 +29,8 @@
 - [frontend-config-ui](claude-subscription/frontend-config-ui.md) — 前端类型下拉含该类型；Key 提示粘贴 Claude Code OAuth JSON；编辑抽屉提供刷新凭据按钮与合规免责声明；隐藏 batch/多 key 入口。
 - [oauth-credential-format](claude-subscription/oauth-credential-format.md) — 渠道 Key 存 Claude Code 原生 OAuth JSON；解析 accessToken/refreshToken/expiresAt，accessToken 必填，expiresAt 为毫秒时间戳。
 - [oauth-request-headers](claude-subscription/oauth-request-headers.md) — 上游鉴权头用 Authorization Bearer + anthropic-beta oauth-2025-04-20 + anthropic-version；禁带 x-api-key。
-- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不实现 usage 用量查询。
+- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不提供面向用户/管理端的用量展示。
 - [single-key-only](claude-subscription/single-key-only.md) — Claude 订阅渠道为单账号单渠道，禁止 batch 创建与多 key；前端拒绝、后台刷新跳过 multi-key。
-
-## codex-subscription
-
-- [saturation-eviction](codex-subscription/saturation-eviction.md) — Codex 渠道瓶颈窗口使用率 ≥95% 时移出候选（不改 Status），轮询发现回落自动回归；触顶渠道不被亲和粘滞。
-- [usage-polling](codex-subscription/usage-polling.md) — 后台每 60s 轮询各启用 Codex 渠道的 wham usage，缓存 5h/7d 使用率；仅 master 执行，单渠道失败不阻断；Redis 可用时快照同步至非 master 节点。
-- [usage-weighted-selection](codex-subscription/usage-weighted-selection.md) — 渠道选择时 Codex 渠道按剩余额度动态缩放权重：有效权重 = 等效静态权重 × (100−使用率)/100；数据过期回退静态。
 
 ## db-compat
 
@@ -82,3 +76,11 @@
 
 - [optional-scalar-nullable-forwarding](relay-request-shape/optional-scalar-nullable-forwarding.md) — 顶层主请求 DTO 的可选数值/布尔字段用指针 + omitempty，保留显式零值；嵌套结构不受此约束。
 - [unparsed-passthrough-raw-message](relay-request-shape/unparsed-passthrough-raw-message.md) — 网关不理解的 provider 扩展字段用原始 JSON 字节容器承载；逐字节透传到上游。
+
+## subscription-usage
+
+- [claude-usage-source](subscription-usage/claude-usage-source.md) — Claude 订阅渠道用量数据源：GET /api/oauth/usage，Bearer + oauth beta + claude-code UA，取所有窗口使用率最大值为瓶颈；最小轮询间隔 180 秒。
+- [codex-usage-source](subscription-usage/codex-usage-source.md) — Codex 渠道用量数据源：GET /backend-api/wham/usage，取 primary/secondary 窗口 used_percent 的最大值为瓶颈；最小轮询间隔 60 秒。
+- [polling](subscription-usage/polling.md) — 后台仅 master 按数据源声明间隔轮询启用订阅渠道，缓存瓶颈使用率单值；单渠道失败不阻断；Redis 可用时快照同步至非 master 节点。
+- [saturation-eviction](subscription-usage/saturation-eviction.md) — 订阅渠道瓶颈使用率 ≥95 时移出候选（不改 Status），轮询发现回落自动回归；曾触顶渠道刷新失败时短期继续移出。
+- [weighted-selection](subscription-usage/weighted-selection.md) — 渠道选择时订阅渠道按剩余额度动态缩放权重：有效权重 = 等效静态权重 × (100−瓶颈使用率)/100；数据过期回退静态。

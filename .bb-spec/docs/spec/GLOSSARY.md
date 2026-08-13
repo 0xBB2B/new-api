@@ -12,6 +12,8 @@
 | claudeAiOauth credential | Claude Code 存储于 ~/.claude/.credentials.json 的 OAuth 凭据 JSON，含 accessToken/refreshToken/expiresAt（毫秒时间戳） | 简体「OAuth 凭据」 |
 | Claude Code system prompt | OAuth 鉴权硬要求置于首条 system 的身份串 `You are Claude Code, Anthropic's official CLI for Claude.` | 简体「Claude Code 身份 system」 |
 | Codex subscription channel | 用 ChatGPT Plus/Pro 订阅的 OAuth 凭据作上游鉴权的渠道类型（type 57），上游为 chatgpt.com | 简体「Codex 订阅渠道」 |
-| usage window | Codex 订阅的官方限额时间窗口：primary 为 5 小时窗、secondary 为 7 天窗，各自独立计使用率 | 简体「用量窗口」 |
+| usage window | 订阅渠道的官方限额时间窗口，窗口集合由各渠道类型的用量数据源声明（如 Codex 的 primary/secondary、Claude 的 five_hour/seven_day/seven_day_opus），各窗口独立计使用率 | 简体「用量窗口」 |
 | used_percent | 上游 wham usage 接口返回的单个用量窗口官方使用率百分比，取值 [0, 100] | 简体「使用率」 |
-| saturation | Codex 渠道瓶颈窗口（两窗口 used_percent 较大者）达到 95 及以上的状态，渠道暂不参与选择 | 简体「触顶」 |
+| saturation | 订阅渠道瓶颈使用率达到 95 及以上的状态，渠道暂不参与选择 | 简体「触顶」 |
+| subscription channel | 以订阅 OAuth 凭据作上游鉴权、参与用量均衡路由的渠道类型统称，当前为 Codex（type 57）与 Claude Subscription（type 61） | 简体「订阅渠道」 |
+| bottleneck usage | 单渠道所有用量窗口使用率的最大值，取值 [0, 100]，是渠道用量缓存的唯一存储值 | 简体「瓶颈使用率」 |
