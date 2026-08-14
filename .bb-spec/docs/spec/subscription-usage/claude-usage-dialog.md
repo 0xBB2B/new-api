@@ -13,7 +13,7 @@ description: Claude 订阅渠道点击列表用量后的账户和用量弹窗：
 
 点击触发一次实时用量请求（`GET /api/channel/:id/claude/usage`），成功后打开弹窗。弹窗分三个区块：
 
-- **状态卡**：套餐 badge（渠道凭据的 subscriptionType 值，如 max/pro；缺失时不渲染该 badge）、`HTTP <upstream_status>` badge、渠道字段（渠道名 + `(#id)`；敏感信息隐藏开启时名称与 ID 以掩码显示）、刷新按钮（重新请求端点并更新弹窗，请求中禁用）。
+- **状态卡**：套餐 badge（端点响应的 subscription_type 值，如 max/pro；缺失时不渲染该 badge）、`HTTP <upstream_status>` badge、渠道字段（渠道名 + `(#id)`；敏感信息隐藏开启时名称与 ID 以掩码显示）、刷新按钮（重新请求端点并更新弹窗，请求中禁用）。
 - **窗口卡**：按响应实际出现的用量窗口动态渲染，两种形态都支持——顶层对象形态渲染键为 `five_hour`（5小时窗口）与 `seven_day` 前缀（7天/7天 Opus/7天 Sonnet 等）的窗口，取各自 `utilization`；`limits` 数组形态按各项 `kind` 命名窗口，取 `percent`。每张卡：窗口名、大号百分比、进度条；百分比与进度条按同一阈值着色——≥95 红（danger）、≥80 橙（warning）、其余默认。窗口对象含重置时间字段时展示，缺失时不显示该行。
 - **原始 JSON 折叠区**：端点完整响应的格式化 JSON，附复制按钮。
 
@@ -36,7 +36,7 @@ description: Claude 订阅渠道点击列表用量后的账户和用量弹窗：
 - [ ] 顶层对象形态三窗口响应渲染三张卡，96.2 红、88 橙、41 默认，进度条同色。
 - [ ] limits 数组形态按 kind 渲染，percent 着色规则一致。
 - [ ] 响应含 extra_usage 时不出现对应窗口卡。
-- [ ] subscriptionType 存在渲染套餐 badge，缺失不渲染。
+- [ ] 端点响应含 subscription_type 时渲染套餐 badge，缺失不渲染。
 - [ ] 敏感信息隐藏开启时渠道名与 ID 显示掩码。
 - [ ] 端点 success:false 时首次点击 toast 报错不开弹窗；弹窗内刷新失败显示错误横幅。
 - [ ] 原始 JSON 区内容与端点响应一致且可复制。

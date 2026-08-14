@@ -19,6 +19,7 @@ description: 管理端实时端点 GET /api/channel/:id/claude/usage：用渠道
 - `message`：成功为空串；上游非 2xx 时为 `upstream status: <code>`；本地校验失败时为对应错误描述。
 - `upstream_status`：上游最终 HTTP 状态码（本地校验失败时无此字段或为 0）。
 - `data`：上游响应体的 JSON 反序列化结果；反序列化失败时为原始字符串。
+- `subscription_type`：可选，渠道凭据 claudeAiOauth.subscriptionType 的原样标量（如 max/pro）；凭据中缺失时省略该字段。
 
 ## 约束
 
@@ -37,6 +38,7 @@ description: 管理端实时端点 GET /api/channel/:id/claude/usage：用渠道
 ## 验收
 
 - [ ] 正常凭据请求返回 success:true 且 data 与上游 body 逐字段一致。
+- [ ] 凭据含 subscriptionType 时响应含同值 subscription_type 字段，缺失时响应无该字段。
 - [ ] 渠道不存在 / 类型非 61 / 多 key 渠道各返回 success:false 与对应 message，且无上游请求发出。
 - [ ] 上游 401 且凭据含 refreshToken：刷新后重试成功，响应 success:true，渠道 Key 已更新为新凭据。
 - [ ] 上游 401 且凭据无 refreshToken：响应 success:false、upstream_status=401，不触发刷新。
