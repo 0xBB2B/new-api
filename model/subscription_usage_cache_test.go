@@ -102,7 +102,7 @@ func TestSubscriptionChannelUsageCache_BeyondWindowRemainingRatioUnavailable(t *
 	assert.Zero(t, remaining)
 }
 
-func TestSubscriptionChannelUsageCache_RecentlySaturatedStaleEntryStillSaturated(t *testing.T) {
+func TestSubscriptionChannelUsageCache_SaturatedEntryStaysSaturatedWithinFreshWindow(t *testing.T) {
 	resetSubscriptionChannelUsageCache(t)
 	channelID := 64001
 	CacheSetSubscriptionChannelUsage(channelID, 96)
@@ -249,11 +249,11 @@ func TestSubscriptionChannelUsageOverview_FreshEntries(t *testing.T) {
 	assert.True(t, parsed["12"].Saturated)
 }
 
-func TestSubscriptionChannelUsageOverview_StaleWithinWindowSaturated(t *testing.T) {
+func TestSubscriptionChannelUsageOverview_SaturatedEntryStaysSaturatedWithinFreshWindow(t *testing.T) {
 	resetSubscriptionChannelUsageCache(t)
 	channelID := 71001
 	CacheSetSubscriptionChannelUsage(channelID, 96.2)
-	ageSubscriptionChannelUsageEntry(t, channelID, -6*time.Minute)
+	ageSubscriptionChannelUsageEntry(t, channelID, -8*time.Minute)
 
 	parsed := subscriptionChannelUsageOverviewView(t)
 	require.Contains(t, parsed, strconv.Itoa(channelID))

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+/* eslint-disable react-refresh/only-export-components */
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -69,6 +70,49 @@ const progressIndicatorClassName: Record<
   danger: '[&_[data-slot=progress-indicator]]:bg-rose-500',
   warning: '[&_[data-slot=progress-indicator]]:bg-amber-500',
   default: '',
+}
+
+type SubscriptionUsageTooltipContentProps = {
+  usage: SubscriptionUsageEntry
+  channelType: number
+  locale: string | undefined
+  nextRefresh: number
+  isClickable: boolean
+}
+
+function SubscriptionUsageTooltipContent({
+  usage,
+  channelType,
+  locale,
+  nextRefresh,
+  isClickable,
+}: SubscriptionUsageTooltipContentProps) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='space-y-1 text-xs'>
+      <div>
+        {t('Bottleneck usage')}:{' '}
+        {Math.round(usage.bottleneck_percent * 10) / 10}%
+      </div>
+      <div>{t('Saturation threshold: 95')}</div>
+      <div>
+        {t('Last refreshed')}:{' '}
+        {formatTimestampToDate(usage.refreshed_at, 'milliseconds')} (
+        {formatRelativeTime(usage.refreshed_at / 1000, locale)})
+      </div>
+      <div>
+        {t('Estimated next refresh (not guaranteed)')}:{' '}
+        {formatTimestampToDate(nextRefresh, 'milliseconds')}
+      </div>
+      {isClickable && channelType === 57 && (
+        <div>{t('Click to view Codex usage')}</div>
+      )}
+      {isClickable && channelType === 61 && (
+        <div>{t('Click to view Claude usage')}</div>
+      )}
+    </div>
+  )
 }
 
 export function useSubscriptionUsage() {
@@ -134,6 +178,14 @@ export function SubscriptionUsageCell({
     channel.type
   )
   const percentLevel = getUsagePercentLevel(usage.bottleneck_percent)
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setDialogOpen(open)
+    if (!open) {
+      setCodexResponse(null)
+      setClaudeResponse(null)
+    }
+  }
 
   const handleClick = async () => {
     if (!isClickable || isLoading) {
@@ -201,24 +253,13 @@ export function SubscriptionUsageCell({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            <div className='space-y-1 text-xs'>
-              <div>{t('Saturation threshold: 95')}</div>
-              <div>
-                {t('Last refreshed')}:{' '}
-                {formatTimestampToDate(usage.refreshed_at, 'milliseconds')} (
-                {formatRelativeTime(usage.refreshed_at / 1000, locale)})
-              </div>
-              <div>
-                {t('Estimated next refresh (not guaranteed)')}:{' '}
-                {formatTimestampToDate(nextRefresh, 'milliseconds')}
-              </div>
-              {isClickable && channel.type === 57 && (
-                <div>{t('Click to view Codex usage')}</div>
-              )}
-              {isClickable && channel.type === 61 && (
-                <div>{t('Click to view Claude usage')}</div>
-              )}
-            </div>
+            <SubscriptionUsageTooltipContent
+              usage={usage}
+              channelType={channel.type}
+              locale={locale}
+              nextRefresh={nextRefresh}
+              isClickable={isClickable}
+            />
           </TooltipContent>
         </Tooltip>
         {expired && (
@@ -228,7 +269,7 @@ export function SubscriptionUsageCell({
       {isClickable && channel.type === 57 && (
         <CodexUsageDialog
           open={dialogOpen}
-          onOpenChange={setDialogOpen}
+          onOpenChange={handleDialogOpenChange}
           channelName={channelName}
           channelId={channel.id}
           channelDisplayName={channelDisplayName}
@@ -241,7 +282,7 @@ export function SubscriptionUsageCell({
       {isClickable && channel.type === 61 && (
         <ClaudeUsageDialog
           open={dialogOpen}
-          onOpenChange={setDialogOpen}
+          onOpenChange={handleDialogOpenChange}
           channelName={channelName}
           channelId={channel.id}
           channelDisplayName={channelDisplayName}
@@ -257,18 +298,45 @@ export function SubscriptionUsageCell({
 
 type SubscriptionSaturationBadgeProps = {
   usage: SubscriptionUsageEntry | undefined
+  channelType: number
 }
 
 export function SubscriptionSaturationBadge({
   usage,
+  channelType,
 }: SubscriptionSaturationBadgeProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
 
   if (!usage?.saturated) {
     return null
   }
 
+  const nextRefresh = estimateNextSubscriptionRefresh(
+    usage.refreshed_at,
+    channelType
+  )
+
   return (
-    <StatusBadge label={t('Saturated')} variant='danger' copyable={false} />
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger render={<div className='inline-flex' />}>
+          <StatusBadge
+            label={t('Saturated')}
+            variant='danger'
+            copyable={false}
+          />
+        </TooltipTrigger>
+        <TooltipContent>
+          <SubscriptionUsageTooltipContent
+            usage={usage}
+            channelType={channelType}
+            locale={locale}
+            nextRefresh={nextRefresh}
+            isClickable={false}
+          />
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

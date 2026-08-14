@@ -17,7 +17,7 @@ description: 管理端只读端点 GET /api/channel/subscription_usage：读本�
 
 - `bottleneck_percent`：瓶颈使用率，浮点数，取值 [0, 100]。
 - `refreshed_at`：该条目最近一次成功刷新的 Unix 毫秒时间戳。
-- `saturated`：是否触顶，布尔值，由服务端按与渠道选择完全同源的判定逻辑计算（含阈值 95、10 分钟新鲜窗与曾触顶渠道过期后 10 分钟内继续视为触顶的保护）。
+- `saturated`：是否触顶，布尔值，由服务端按与渠道选择完全同源的判定逻辑计算（阈值 95 + 10 分钟新鲜窗：最近一次成功刷新显示触顶起 10 分钟内持续视为触顶，超窗自动失效）。
 
 ## 约束
 
@@ -51,5 +51,5 @@ description: 管理端只读端点 GET /api/channel/subscription_usage：读本�
 - [ ] 未认证请求与非管理员请求被拒绝，行为与渠道列表接口一致。
 - [ ] 缓存为空时返回 success=true 且 data 为 `{}`。
 - [ ] 瓶颈使用率 96.2 且 3 分钟前刷新的渠道 saturated=true；刷新为 41 后 saturated=false。
-- [ ] 曾触顶渠道条目过期且距最近触顶 8 分钟时 saturated=true；从未触顶的过期条目 saturated=false。
+- [ ] 最近一次成功刷新显示触顶、其后 8 分钟无新刷新的条目 saturated=true；从未触顶的过期条目 saturated=false。
 - [ ] 请求端点前后，用量缓存内容与渠道表数据无任何变化。

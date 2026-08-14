@@ -48,9 +48,6 @@ func TestGetSubscriptionChannelUsage_DataMatchesModelOverview(t *testing.T) {
 	channelID := 72002
 	model.CacheSetSubscriptionChannelUsage(channelID, 30)
 
-	overviewJSON, err := common.Marshal(model.SubscriptionChannelUsageOverview())
-	require.NoError(t, err)
-
 	response := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(response)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/subscription_usage", nil)
@@ -58,20 +55,20 @@ func TestGetSubscriptionChannelUsage_DataMatchesModelOverview(t *testing.T) {
 	GetSubscriptionChannelUsage(ctx)
 
 	var payload struct {
-		Data map[string]any `json:"data"`
+		Data map[string]subscriptionChannelUsageOverviewEntryView `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
-	dataJSON, err := common.Marshal(payload.Data)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(overviewJSON), string(dataJSON))
+
+	key := strconv.Itoa(channelID)
+	require.Contains(t, payload.Data, key)
+	assert.Equal(t, subscriptionChannelUsageOverviewEntryFor(t, channelID), payload.Data[key])
 }
 
 func TestGetSubscriptionChannelUsage_NoWriteSideEffects(t *testing.T) {
 	channelID := 72003
 	model.CacheSetSubscriptionChannelUsage(channelID, 55)
 
-	before, err := common.Marshal(model.SubscriptionChannelUsageOverview())
-	require.NoError(t, err)
+	before := subscriptionChannelUsageOverviewEntryFor(t, channelID)
 
 	response := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(response)
@@ -79,7 +76,17 @@ func TestGetSubscriptionChannelUsage_NoWriteSideEffects(t *testing.T) {
 
 	GetSubscriptionChannelUsage(ctx)
 
-	after, err := common.Marshal(model.SubscriptionChannelUsageOverview())
+	after := subscriptionChannelUsageOverviewEntryFor(t, channelID)
+	assert.Equal(t, before, after)
+}
+
+func subscriptionChannelUsageOverviewEntryFor(t *testing.T, channelID int) subscriptionChannelUsageOverviewEntryView {
+	t.Helper()
+	data, err := common.Marshal(model.SubscriptionChannelUsageOverview())
 	require.NoError(t, err)
-	assert.JSONEq(t, string(before), string(after))
+	var overview map[string]subscriptionChannelUsageOverviewEntryView
+	require.NoError(t, common.Unmarshal(data, &overview))
+	entry, ok := overview[strconv.Itoa(channelID)]
+	require.True(t, ok)
+	return entry
 }

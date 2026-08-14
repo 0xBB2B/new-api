@@ -167,6 +167,7 @@ func TestGetClaudeChannelUsage_ChannelNotFound_ReturnsFailure(t *testing.T) {
 
 	envelope, _ := decodeClaudeUsageResponse(t, recorder)
 	assert.False(t, envelope.Success)
+	assert.Equal(t, "record not found", envelope.Message)
 }
 
 func TestGetClaudeChannelUsage_WrongChannelType_ReturnsFailureWithoutUpstreamRequest(t *testing.T) {
@@ -190,7 +191,7 @@ func TestGetClaudeChannelUsage_WrongChannelType_ReturnsFailureWithoutUpstreamReq
 
 	envelope, _ := decodeClaudeUsageResponse(t, recorder)
 	assert.False(t, envelope.Success)
-	assert.NotEmpty(t, envelope.Message)
+	assert.Equal(t, "channel type is not Claude Subscription", envelope.Message)
 	assert.Equal(t, 0, requestCount)
 }
 
@@ -216,6 +217,7 @@ func TestGetClaudeChannelUsage_MultiKeyChannel_ReturnsFailureWithoutUpstreamRequ
 
 	envelope, _ := decodeClaudeUsageResponse(t, recorder)
 	assert.False(t, envelope.Success)
+	assert.Equal(t, "multi-key channel is not supported", envelope.Message)
 	assert.Equal(t, 0, requestCount)
 }
 

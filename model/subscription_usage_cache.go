@@ -39,7 +39,7 @@ func CacheSetSubscriptionChannelUsage(channelID int, bottleneckPercent float64) 
 		subscriptionChannelUsageCache = make(map[int]subscriptionChannelUsageCacheEntry)
 	}
 	oldEntry, exists := subscriptionChannelUsageCache[channelID]
-	wasSaturated := exists && subscriptionChannelUsageEntryFresh(oldEntry) && oldEntry.bottleneckPercent >= subscriptionChannelUsageSaturationThreshold
+	wasSaturated := exists && subscriptionChannelUsageEntrySaturated(oldEntry)
 	subscriptionChannelUsageCache[channelID] = entry
 	isSaturated := entry.bottleneckPercent >= subscriptionChannelUsageSaturationThreshold
 	subscriptionChannelUsageCacheLock.Unlock()
@@ -58,7 +58,7 @@ func CacheIsSubscriptionChannelSaturated(channelID int) bool {
 	subscriptionChannelUsageCacheLock.RLock()
 	entry, ok := subscriptionChannelUsageCache[channelID]
 	subscriptionChannelUsageCacheLock.RUnlock()
-	return ok && subscriptionChannelUsageEntryFresh(entry) && entry.bottleneckPercent >= subscriptionChannelUsageSaturationThreshold
+	return ok && subscriptionChannelUsageEntrySaturated(entry)
 }
 
 func subscriptionChannelRemainingRatio(channelID int) (float64, bool) {
@@ -73,6 +73,10 @@ func subscriptionChannelRemainingRatio(channelID int) (float64, bool) {
 
 func subscriptionChannelUsageEntryFresh(entry subscriptionChannelUsageCacheEntry) bool {
 	return time.Since(entry.refreshedAt) <= subscriptionChannelUsageSaturationWindow
+}
+
+func subscriptionChannelUsageEntrySaturated(entry subscriptionChannelUsageCacheEntry) bool {
+	return subscriptionChannelUsageEntryFresh(entry) && entry.bottleneckPercent >= subscriptionChannelUsageSaturationThreshold
 }
 
 type subscriptionChannelUsageSnapshotEntry struct {
@@ -109,7 +113,7 @@ func SubscriptionChannelUsageOverview() map[string]SubscriptionChannelUsageView 
 		overview[strconv.Itoa(channelID)] = SubscriptionChannelUsageView{
 			BottleneckPercent: entry.bottleneckPercent,
 			RefreshedAt:       entry.refreshedAt.UnixMilli(),
-			Saturated:         subscriptionChannelUsageEntryFresh(entry) && entry.bottleneckPercent >= subscriptionChannelUsageSaturationThreshold,
+			Saturated:         subscriptionChannelUsageEntrySaturated(entry),
 		}
 	}
 	return overview

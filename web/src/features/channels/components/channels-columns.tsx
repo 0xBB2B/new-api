@@ -499,7 +499,10 @@ function SubscriptionUsageColumnCell({ channel }: { channel: Channel }) {
 function SubscriptionSaturationColumnBadge({ channel }: { channel: Channel }) {
   const { data: usageByChannel } = useSubscriptionUsage()
   return (
-    <SubscriptionSaturationBadge usage={usageByChannel?.[String(channel.id)]} />
+    <SubscriptionSaturationBadge
+      usage={usageByChannel?.[String(channel.id)]}
+      channelType={channel.type}
+    />
   )
 }
 

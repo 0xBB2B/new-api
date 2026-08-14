@@ -74,7 +74,7 @@ type SubscriptionUsage = {
 }
 
 function findLeafByText(root: ParentNode, text: string): Element | null {
-  for (const el of Array.from(root.querySelectorAll('*'))) {
+  for (const el of root.querySelectorAll('*')) {
     if (el.children.length === 0 && el.textContent === text) {
       return el
     }
@@ -163,9 +163,10 @@ describe('SubscriptionUsageCell', () => {
     const percentEl = findLeafByText(container, '62.4%')
     assert.ok(progressEl, 'expected a progress element to render')
     assert.ok(percentEl, 'expected a leaf element with the percent text')
-    const position = progressEl!.compareDocumentPosition(percentEl!)
+    const position =
+      percentEl && progressEl?.compareDocumentPosition(percentEl)
     assert.equal(
-      Boolean(position & Node.DOCUMENT_POSITION_FOLLOWING),
+      Boolean((position ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING),
       true
     )
 
@@ -184,7 +185,7 @@ describe('SubscriptionUsageCell', () => {
 
     const percentEl = findLeafByText(container, '96.2%')
     assert.ok(percentEl, 'expected a leaf element with the percent text')
-    assert.equal(percentEl!.className.includes('rose'), true)
+    assert.equal(percentEl?.className.includes('rose'), true)
 
     await unmount()
   })
@@ -201,7 +202,7 @@ describe('SubscriptionUsageCell', () => {
 
     const percentEl = findLeafByText(container, '88%')
     assert.ok(percentEl, 'expected a leaf element with the percent text')
-    assert.equal(percentEl!.className.includes('amber'), true)
+    assert.equal(percentEl?.className.includes('amber'), true)
 
     await unmount()
   })
@@ -218,8 +219,8 @@ describe('SubscriptionUsageCell', () => {
 
     const percentEl = findLeafByText(container, '62.4%')
     assert.ok(percentEl, 'expected a leaf element with the percent text')
-    assert.equal(percentEl!.className.includes('rose'), false)
-    assert.equal(percentEl!.className.includes('amber'), false)
+    assert.equal(percentEl?.className.includes('rose'), false)
+    assert.equal(percentEl?.className.includes('amber'), false)
 
     await unmount()
   })
@@ -263,7 +264,7 @@ describe('SubscriptionSaturationBadge', () => {
       saturated: true,
     }
     const { container, unmount } = await renderInto(
-      <SubscriptionSaturationBadge usage={usage} />
+      <SubscriptionSaturationBadge usage={usage} channelType={61} />
     )
 
     assert.equal(container.textContent?.includes('Saturated'), true)
@@ -278,7 +279,7 @@ describe('SubscriptionSaturationBadge', () => {
       saturated: false,
     }
     const { container, unmount } = await renderInto(
-      <SubscriptionSaturationBadge usage={usage} />
+      <SubscriptionSaturationBadge usage={usage} channelType={61} />
     )
 
     assert.equal(container.textContent?.includes('Saturated'), false)
@@ -288,7 +289,7 @@ describe('SubscriptionSaturationBadge', () => {
 
   test('renders nothing when usage is undefined', async () => {
     const { container, unmount } = await renderInto(
-      <SubscriptionSaturationBadge usage={undefined} />
+      <SubscriptionSaturationBadge usage={undefined} channelType={61} />
     )
 
     assert.equal(container.textContent?.includes('Saturated'), false)
@@ -303,7 +304,7 @@ describe('SubscriptionSaturationBadge', () => {
       saturated: false,
     }
     const { container, unmount } = await renderInto(
-      <SubscriptionSaturationBadge usage={usage} />
+      <SubscriptionSaturationBadge usage={usage} channelType={61} />
     )
 
     assert.equal(container.textContent?.includes('Saturated'), false)
