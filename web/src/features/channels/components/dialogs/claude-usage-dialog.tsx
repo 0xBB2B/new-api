@@ -125,9 +125,18 @@ const progressIndicatorClassName: Record<
   default: '',
 }
 
-function InfoField(props: { label: string; value: string }) {
+function InfoField(props: {
+  label: string
+  value: string
+  className?: string
+}) {
   return (
-    <div className='bg-background ring-border/60 min-w-0 rounded-lg p-3 ring-1'>
+    <div
+      className={cn(
+        'bg-background ring-border/60 min-w-0 rounded-lg p-3 ring-1',
+        props.className
+      )}
+    >
       <div className='text-muted-foreground text-[11px] font-medium'>
         {props.label}
       </div>
@@ -264,10 +273,14 @@ export function ClaudeUsageDialog({
                 copyable={false}
               />
             </div>
-            <div className='mt-4 grid grid-cols-1 gap-3 md:grid-cols-3'>
+            <div className='mt-4 grid grid-cols-1 gap-3 md:grid-cols-2'>
               <InfoField label={t('Email')} value={emailValue} />
               <InfoField label={t('Channel')} value={channelLabel} />
-              <InfoField label={t('User ID')} value={userIdValue} />
+              <InfoField
+                label={t('User ID')}
+                value={userIdValue}
+                className='md:col-span-2'
+              />
             </div>
           </CardContent>
         </Card>
