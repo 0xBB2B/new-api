@@ -94,6 +94,27 @@ func SubscriptionChannelUsageSnapshotJSON() ([]byte, error) {
 	return common.Marshal(snapshot)
 }
 
+type SubscriptionChannelUsageView struct {
+	BottleneckPercent float64 `json:"bottleneck_percent"`
+	RefreshedAt       int64   `json:"refreshed_at"`
+	Saturated         bool    `json:"saturated"`
+}
+
+func SubscriptionChannelUsageOverview() map[string]SubscriptionChannelUsageView {
+	subscriptionChannelUsageCacheLock.RLock()
+	defer subscriptionChannelUsageCacheLock.RUnlock()
+
+	overview := make(map[string]SubscriptionChannelUsageView, len(subscriptionChannelUsageCache))
+	for channelID, entry := range subscriptionChannelUsageCache {
+		overview[strconv.Itoa(channelID)] = SubscriptionChannelUsageView{
+			BottleneckPercent: entry.bottleneckPercent,
+			RefreshedAt:       entry.refreshedAt.UnixMilli(),
+			Saturated:         subscriptionChannelUsageEntryFresh(entry) && entry.bottleneckPercent >= subscriptionChannelUsageSaturationThreshold,
+		}
+	}
+	return overview
+}
+
 func CacheLoadSubscriptionChannelUsageSnapshotJSON(data []byte) error {
 	var snapshot map[string]subscriptionChannelUsageSnapshotEntry
 	if err := common.Unmarshal(data, &snapshot); err != nil {
