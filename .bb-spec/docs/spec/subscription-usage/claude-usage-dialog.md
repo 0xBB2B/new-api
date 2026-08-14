@@ -13,8 +13,8 @@ description: Claude 订阅渠道点击列表用量后的账户和用量弹窗：
 
 点击触发一次实时用量请求（`GET /api/channel/:id/claude/usage`），成功后打开弹窗。弹窗分三个区块：
 
-- **状态卡**：套餐 badge（端点响应的 subscription_type 值，如 max/pro；缺失时不渲染该 badge）、`HTTP <upstream_status>` badge、渠道字段（渠道名 + `(#id)`；敏感信息隐藏开启时名称与 ID 以掩码显示）、刷新按钮（重新请求端点并更新弹窗，请求中禁用）。
-- **窗口卡**：按响应实际出现的用量窗口动态渲染，两种形态都支持——顶层对象形态渲染键为 `five_hour`（5小时窗口）与 `seven_day` 前缀（7天/7天 Opus/7天 Sonnet 等）的窗口，取各自 `utilization`；`limits` 数组形态按各项 `kind` 命名窗口，取 `percent`。每张卡：窗口名、大号百分比、进度条；百分比与进度条按同一阈值着色——≥95 红（danger）、≥80 橙（warning）、其余默认。窗口对象含重置时间字段时展示，缺失时不显示该行。
+- **状态卡**：badge 行——套餐 badge（端点响应的 subscription_type 值，如 max/pro；缺失时不渲染该 badge）+ `HTTP <upstream_status>` badge；字段框行（版式对齐 Codex 弹窗）——邮箱（响应 data 顶层 `email` 字段，缺失显示 `-`）、渠道（渠道名 + `(#id)`；敏感信息隐藏开启时名称与 ID 以掩码显示）、User ID（响应 data 顶层 `user_id` 字段，缺失显示 `-`）；刷新按钮（重新请求端点并更新弹窗，请求中禁用）。
+- **窗口卡**：按响应实际出现的用量窗口动态渲染，两种形态都支持——顶层对象形态渲染键为 `five_hour`（5小时窗口）与 `seven_day` 前缀（7天/7天 Opus/7天 Sonnet 等）的窗口，取各自 `utilization`；`limits` 数组形态按各项 `kind` 命名窗口，取 `percent`。每张卡固定版式（对齐 Codex 弹窗，字段缺失一律显示 `-` 占位、不隐藏行）：标题行（窗口名 + 大号百分比 + 「已使用」标签）、「窗口：」行（窗口时长，Claude 响应无时长字段时为 `-`）、进度条、底部两列「重置于：」（窗口 `resets_at` 的绝对时间，缺失 `-`）与「将于以下时间重置：」（由 `resets_at` 推算的相对时间，缺失 `-`）。百分比与进度条按同一阈值着色——≥95 红（danger）、≥80 橙（warning）、其余默认。
 - **原始 JSON 折叠区**：端点完整响应的格式化 JSON，附复制按钮。
 
 端点返回 `success:false` 时不打开弹窗、toast 提示错误；弹窗已打开后刷新失败时在弹窗顶部横幅展示 message。关闭弹窗清空本地状态。
@@ -25,11 +25,12 @@ description: Claude 订阅渠道点击列表用量后的账户和用量弹窗：
 - `extra_usage` 等非窗口对象不渲染为窗口卡（仍可在原始 JSON 中查看）。
 - 百分比着色阈值固定：≥95 红、≥80 橙、其余默认；进度条与百分比同色。
 - 所有文案走 i18n（英文源串作 key），7 语言键集对称。
-- 弹窗不展示重置次数、Email、User ID、额外限额等区块。
+- 弹窗不展示重置次数、额外限额等 Codex 专属区块。
+- 字段缺失的展示统一为 `-` 占位（邮箱/User ID/窗口时长/重置时间），不隐藏对应字段或行。
 
 ## 例子
 
-渠道 12 响应 `data` 为 `{"five_hour":{"utilization":96.2},"seven_day":{"utilization":88},"seven_day_opus":{"utilization":41}}`：弹窗渲染三张窗口卡——「5小时窗口 96.2%」红色、「7天窗口 88%」橙色、「7天 Opus 窗口 41%」默认色，各带同色进度条；状态卡显示套餐 badge（如 max）、`HTTP 200`、渠道名 `Claude 订阅 C (#12)`。另一渠道响应为 `{"limits":[{"kind":"session","percent":40},{"kind":"weekly_all","percent":85}]}`：渲染「session 40%」默认色与「weekly_all 85%」橙色两张卡。
+渠道 12 响应 `data` 为 `{"five_hour":{"utilization":96.2},"seven_day":{"utilization":88},"seven_day_opus":{"utilization":41}}`：弹窗渲染三张窗口卡——「5小时窗口 96.2%」红色、「7天窗口 88%」橙色、「7天 Opus 窗口 41%」默认色，各带同色进度条；三张卡的「窗口：」「重置于：」「将于以下时间重置：」均显示 `-`（响应无对应字段）。状态卡显示套餐 badge（如 max）、`HTTP 200`，字段框邮箱 `-`、渠道 `Claude 订阅 C (#12)`、User ID `-`。另一渠道响应为 `{"limits":[{"kind":"session","percent":40},{"kind":"weekly_all","percent":85}]}`：渲染「session 40%」默认色与「weekly_all 85%」橙色两张卡。
 
 ## 验收
 
@@ -37,6 +38,8 @@ description: Claude 订阅渠道点击列表用量后的账户和用量弹窗：
 - [ ] limits 数组形态按 kind 渲染，percent 着色规则一致。
 - [ ] 响应含 extra_usage 时不出现对应窗口卡。
 - [ ] 端点响应含 subscription_type 时渲染套餐 badge，缺失不渲染。
+- [ ] 状态卡恒渲染邮箱/渠道/User ID 三个字段框；响应无 email/user_id 时对应框显示 `-`，响应含该字段时显示其值。
+- [ ] 窗口卡恒渲染「窗口：」「重置于：」「将于以下时间重置：」；resets_at 缺失时均为 `-`，存在时重置于为绝对时间、将于以下时间重置为相对时间。
 - [ ] 敏感信息隐藏开启时渠道名与 ID 显示掩码。
 - [ ] 端点 success:false 时首次点击 toast 报错不开弹窗；弹窗内刷新失败显示错误横幅。
 - [ ] 原始 JSON 区内容与端点响应一致且可复制。

@@ -29,6 +29,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -106,7 +107,8 @@ export function SubscriptionUsageCell({
   channelDisplayName,
   channelDisplayId,
 }: SubscriptionUsageCellProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [isLoading, setIsLoading] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [codexResponse, setCodexResponse] =
@@ -204,7 +206,7 @@ export function SubscriptionUsageCell({
               <div>
                 {t('Last refreshed')}:{' '}
                 {formatTimestampToDate(usage.refreshed_at, 'milliseconds')} (
-                {formatRelativeTime(usage.refreshed_at / 1000)})
+                {formatRelativeTime(usage.refreshed_at / 1000, locale)})
               </div>
               <div>
                 {t('Estimated next refresh (not guaranteed)')}:{' '}

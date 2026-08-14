@@ -53,6 +53,8 @@ const { createRoot } = await import('react-dom/client')
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { TooltipProvider } = await import('@/components/ui/tooltip')
+const { formatTimestampToDate } = await import('@/lib/format')
+const { formatRelativeTime } = await import('../../lib')
 const { ClaudeUsageDialog, resolveClaudeUsageWindows } = await import(
   '../dialogs/claude-usage-dialog'
 )
@@ -60,6 +62,7 @@ const { ClaudeUsageDialog, resolveClaudeUsageWindows } = await import(
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
   lng: 'en',
+  nsSeparator: false,
   resources: { en: { translation: {} } },
 })
 
@@ -86,6 +89,12 @@ async function renderInto(node: React.ReactElement) {
       container.remove()
     },
   }
+}
+
+function valuesForLabel(label: string): string[] {
+  return [...document.querySelectorAll('div,span')]
+    .filter((el) => el.textContent?.trim() === label)
+    .map((el) => el.parentElement?.textContent?.replace(label, '').trim() ?? '')
 }
 
 describe('resolveClaudeUsageWindows', () => {
@@ -202,7 +211,7 @@ describe('ClaudeUsageDialog', () => {
     await unmount()
   })
 
-  test('renders a formatted reset time only when resets_at is present', async () => {
+  test('renders a formatted reset time when resets_at is present and a dash placeholder when it is missing', async () => {
     const { unmount } = await renderInto(
       <ClaudeUsageDialog
         open
@@ -219,9 +228,148 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(bodyText.includes('Reset at:'), true)
     assert.equal(bodyText.includes('1700000000'), false)
-    assert.equal((bodyText.match(/Reset at:/g) ?? []).length, 1)
+    assert.equal((bodyText.match(/Reset at:/g) ?? []).length, 2)
+
+    const values = valuesForLabel('Reset at:')
+    assert.equal(values.length, 2)
+    assert.equal(values.includes(formatTimestampToDate(1700000000)), true)
+    assert.equal(values.includes('-'), true)
+
+    await unmount()
+  })
+
+  test('shows a dash placeholder for the email and user ID fields when absent', async () => {
+    const { unmount } = await renderInto(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        response={{
+          success: true,
+          upstream_status: 200,
+          data: { five_hour: { utilization: 10 } },
+        }}
+      />
+    )
+
+    const bodyText = document.body.textContent ?? ''
+    assert.equal(bodyText.includes('Email'), true)
+    assert.equal(bodyText.includes('User ID'), true)
+    assert.equal(valuesForLabel('Email').includes('-'), true)
+    assert.equal(valuesForLabel('User ID').includes('-'), true)
+
+    await unmount()
+  })
+
+  test('renders the email and user ID field values when present in the response data', async () => {
+    const { unmount } = await renderInto(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        response={{
+          success: true,
+          upstream_status: 200,
+          data: { email: 'a@b.c', user_id: 'u_123' },
+        }}
+      />
+    )
+
+    const bodyText = document.body.textContent ?? ''
+    assert.equal(bodyText.includes('a@b.c'), true)
+    assert.equal(bodyText.includes('u_123'), true)
+    assert.equal(valuesForLabel('Email').includes('a@b.c'), true)
+    assert.equal(valuesForLabel('User ID').includes('u_123'), true)
+
+    await unmount()
+  })
+
+  test('renders the fixed window placeholder rows for a window without resets_at', async () => {
+    const { unmount } = await renderInto(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        response={{
+          success: true,
+          upstream_status: 200,
+          data: { five_hour: { utilization: 10 } },
+        }}
+      />
+    )
+
+    const bodyText = document.body.textContent ?? ''
+    assert.equal(/Window:/.test(bodyText), true)
+    assert.equal(/Used/.test(bodyText), true)
+    assert.equal(/Reset at:/.test(bodyText), true)
+    assert.equal(/Resets in:/.test(bodyText), true)
+
+    const windowRow = [...document.querySelectorAll('div')].find((el) =>
+      el.textContent?.trim().startsWith('Window:')
+    )
+    assert.equal(windowRow?.textContent?.trim(), 'Window: -')
+    assert.equal(valuesForLabel('Resets in:').includes('-'), true)
+
+    await unmount()
+  })
+
+  test('normalizes empty email and user ID strings to a dash placeholder', async () => {
+    const { unmount } = await renderInto(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        response={{
+          success: true,
+          upstream_status: 200,
+          data: { email: '', user_id: '  ' },
+        }}
+      />
+    )
+
+    assert.equal(valuesForLabel('Email').includes('-'), true)
+    assert.equal(valuesForLabel('User ID').includes('-'), true)
+
+    await unmount()
+  })
+
+  test('renders a relative reset time in the Resets in column when resets_at is present', async () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 30 * 24 * 3600
+    const { unmount } = await renderInto(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        response={{
+          success: true,
+          upstream_status: 200,
+          data: { five_hour: { utilization: 10, resets_at: resetsAt } },
+        }}
+      />
+    )
+
+    const values = valuesForLabel('Resets in:')
+    assert.equal(values.includes(formatRelativeTime(resetsAt, 'en')), true)
+
+    await unmount()
+  })
+
+  test('masks the channel field when display overrides are provided', async () => {
+    const { unmount } = await renderInto(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        channelName='Claude 订阅 C'
+        channelId={3}
+        channelDisplayName='••••'
+        channelDisplayId='••••'
+        response={{
+          success: true,
+          upstream_status: 200,
+          data: { five_hour: { utilization: 10 } },
+        }}
+      />
+    )
+
+    const bodyText = document.body.textContent ?? ''
+    assert.equal(bodyText.includes('•••• (#••••)'), true)
+    assert.equal(bodyText.includes('Claude 订阅 C'), false)
 
     await unmount()
   })

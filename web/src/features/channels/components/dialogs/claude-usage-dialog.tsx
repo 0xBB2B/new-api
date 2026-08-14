@@ -38,11 +38,12 @@ import {
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { ClaudeUsageResponse } from '../../api'
-import { getUsagePercentLevel } from '../../lib'
+import { formatRelativeTime, getUsagePercentLevel } from '../../lib'
 
 type ClaudeUsageWindow = {
   key: string
@@ -124,6 +125,17 @@ const progressIndicatorClassName: Record<
   default: '',
 }
 
+function InfoField(props: { label: string; value: string }) {
+  return (
+    <div className='bg-background ring-border/60 min-w-0 rounded-lg p-3 ring-1'>
+      <div className='text-muted-foreground text-[11px] font-medium'>
+        {props.label}
+      </div>
+      <div className='mt-1 text-xs leading-5 break-all'>{props.value}</div>
+    </div>
+  )
+}
+
 type ClaudeUsageDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -147,7 +159,8 @@ export function ClaudeUsageDialog({
   onRefresh,
   isRefreshing,
 }: ClaudeUsageDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const [showRawJson, setShowRawJson] = useState(false)
 
@@ -168,6 +181,17 @@ export function ClaudeUsageDialog({
   const channelLabel = channelLabelId
     ? `${channelLabelName} (#${channelLabelId})`
     : channelLabelName
+
+  const dataFields =
+    response?.data &&
+    typeof response.data === 'object' &&
+    !Array.isArray(response.data)
+      ? (response.data as Record<string, unknown>)
+      : {}
+  const emailValue =
+    (typeof dataFields.email === 'string' && dataFields.email.trim()) || '-'
+  const userIdValue =
+    (typeof dataFields.user_id === 'string' && dataFields.user_id.trim()) || '-'
 
   const errorMessage =
     response?.success === false
@@ -239,9 +263,11 @@ export function ClaudeUsageDialog({
                 variant='neutral'
                 copyable={false}
               />
-              <span className='text-muted-foreground text-xs'>
-                {channelLabel}
-              </span>
+            </div>
+            <div className='mt-4 grid grid-cols-1 gap-3 md:grid-cols-3'>
+              <InfoField label={t('Email')} value={emailValue} />
+              <InfoField label={t('Channel')} value={channelLabel} />
+              <InfoField label={t('User ID')} value={userIdValue} />
             </div>
           </CardContent>
         </Card>
@@ -258,14 +284,22 @@ export function ClaudeUsageDialog({
                       <CardTitle className='text-sm font-semibold'>
                         {t(window.label)}
                       </CardTitle>
-                      <div
-                        className={cn(
-                          'text-xl font-semibold tabular-nums',
-                          percentTextClassName[level]
-                        )}
-                      >
-                        {window.percent}%
+                      <div className='shrink-0 text-right'>
+                        <div
+                          className={cn(
+                            'text-xl leading-none font-semibold tabular-nums',
+                            percentTextClassName[level]
+                          )}
+                        >
+                          {window.percent}%
+                        </div>
+                        <div className='text-muted-foreground mt-1 text-[11px]'>
+                          {t('Used')}
+                        </div>
                       </div>
+                    </div>
+                    <div className='text-muted-foreground mt-1 text-xs'>
+                      {t('Window:')} -
                     </div>
                   </CardHeader>
                   <CardContent className='p-3 pt-0'>
@@ -273,11 +307,28 @@ export function ClaudeUsageDialog({
                       value={window.percent}
                       className={progressIndicatorClassName[level]}
                     />
-                    {window.resetsAt != null ? (
-                      <div className='text-muted-foreground mt-2 text-xs'>
-                        {t('Reset at:')} {formatTimestampToDate(window.resetsAt)}
+                    <div className='mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2'>
+                      <div className='min-w-0'>
+                        <div className='text-muted-foreground text-[11px]'>
+                          {t('Reset at:')}
+                        </div>
+                        <div className='break-all tabular-nums'>
+                          {window.resetsAt != null
+                            ? formatTimestampToDate(window.resetsAt)
+                            : '-'}
+                        </div>
                       </div>
-                    ) : null}
+                      <div className='min-w-0 sm:text-right'>
+                        <div className='text-muted-foreground text-[11px]'>
+                          {t('Resets in:')}
+                        </div>
+                        <div className='tabular-nums'>
+                          {window.resetsAt != null
+                            ? formatRelativeTime(window.resetsAt, locale)
+                            : '-'}
+                        </div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               )
