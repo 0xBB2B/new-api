@@ -3993,7 +3993,7 @@
     "Sampling temperature; lower is more deterministic": "採樣溫度；越低越穩定",
     "Sandbox mode": "沙盒模式",
     "Saturated": "觸頂",
-    "Saturation threshold: 95": "飽和閾值：95",
+    "Saturation threshold: 95": "觸頂閾值：95",
     "Save": "儲存",
     "Save & Submit": "儲存並提交",
     "Save all settings": "儲存所有設定",
