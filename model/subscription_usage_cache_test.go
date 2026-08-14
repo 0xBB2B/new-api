@@ -3,6 +3,7 @@ package model
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +102,7 @@ func TestSubscriptionChannelUsageCache_BeyondWindowRemainingRatioUnavailable(t *
 	assert.Zero(t, remaining)
 }
 
-func TestSubscriptionChannelUsageCache_RecentlySaturatedStaleEntryStillSaturated(t *testing.T) {
+func TestSubscriptionChannelUsageCache_SaturatedEntryStaysSaturatedWithinFreshWindow(t *testing.T) {
 	resetSubscriptionChannelUsageCache(t)
 	channelID := 64001
 	CacheSetSubscriptionChannelUsage(channelID, 96)
@@ -219,6 +220,83 @@ func TestSubscriptionChannelUsageSnapshot_InvalidChannelIDKeepsCache(t *testing.
 	err = CacheLoadSubscriptionChannelUsageSnapshotJSON(tamperedData)
 	assert.Error(t, err)
 	assert.True(t, CacheIsSubscriptionChannelSaturated(channelID))
+}
+
+type subscriptionChannelUsageOverviewEntryView struct {
+	BottleneckPercent float64 `json:"bottleneck_percent"`
+	RefreshedAt       int64   `json:"refreshed_at"`
+	Saturated         bool    `json:"saturated"`
+}
+
+func TestSubscriptionChannelUsageOverview_FreshEntries(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	before := time.Now().UnixMilli()
+	CacheSetSubscriptionChannelUsage(7, 62.4)
+	CacheSetSubscriptionChannelUsage(12, 96.2)
+	after := time.Now().UnixMilli()
+
+	parsed := subscriptionChannelUsageOverviewView(t)
+
+	require.Len(t, parsed, 2)
+	require.Contains(t, parsed, "7")
+	assert.Equal(t, 62.4, parsed["7"].BottleneckPercent)
+	assert.False(t, parsed["7"].Saturated)
+	assert.GreaterOrEqual(t, parsed["7"].RefreshedAt, before)
+	assert.LessOrEqual(t, parsed["7"].RefreshedAt, after)
+
+	require.Contains(t, parsed, "12")
+	assert.Equal(t, 96.2, parsed["12"].BottleneckPercent)
+	assert.True(t, parsed["12"].Saturated)
+}
+
+func TestSubscriptionChannelUsageOverview_SaturatedEntryStaysSaturatedWithinFreshWindow(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	channelID := 71001
+	CacheSetSubscriptionChannelUsage(channelID, 96.2)
+	ageSubscriptionChannelUsageEntry(t, channelID, -8*time.Minute)
+
+	parsed := subscriptionChannelUsageOverviewView(t)
+	require.Contains(t, parsed, strconv.Itoa(channelID))
+	assert.True(t, parsed[strconv.Itoa(channelID)].Saturated)
+}
+
+func TestSubscriptionChannelUsageOverview_StaleBeyondWindowNotSaturated(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	channelID := 71002
+	CacheSetSubscriptionChannelUsage(channelID, 96.2)
+	ageSubscriptionChannelUsageEntry(t, channelID, -11*time.Minute)
+
+	parsed := subscriptionChannelUsageOverviewView(t)
+	require.Contains(t, parsed, strconv.Itoa(channelID))
+	assert.False(t, parsed[strconv.Itoa(channelID)].Saturated)
+}
+
+func TestSubscriptionChannelUsageOverview_NeverSaturatedStaleEntryPresent(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+	channelID := 71003
+	CacheSetSubscriptionChannelUsage(channelID, 41)
+	ageSubscriptionChannelUsageEntry(t, channelID, -11*time.Minute)
+
+	parsed := subscriptionChannelUsageOverviewView(t)
+	require.Contains(t, parsed, strconv.Itoa(channelID))
+	assert.False(t, parsed[strconv.Itoa(channelID)].Saturated)
+}
+
+func TestSubscriptionChannelUsageOverview_EmptyCacheProducesEmptyJSONObject(t *testing.T) {
+	resetSubscriptionChannelUsageCache(t)
+
+	data, err := common.Marshal(SubscriptionChannelUsageOverview())
+	require.NoError(t, err)
+	assert.Equal(t, "{}", string(data))
+}
+
+func subscriptionChannelUsageOverviewView(t *testing.T) map[string]subscriptionChannelUsageOverviewEntryView {
+	t.Helper()
+	data, err := common.Marshal(SubscriptionChannelUsageOverview())
+	require.NoError(t, err)
+	var parsed map[string]subscriptionChannelUsageOverviewEntryView
+	require.NoError(t, common.Unmarshal(data, &parsed))
+	return parsed
 }
 
 func resetSubscriptionChannelUsageCache(t *testing.T) {

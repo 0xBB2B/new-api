@@ -29,7 +29,7 @@
 - [frontend-config-ui](claude-subscription/frontend-config-ui.md) — 前端类型下拉含该类型；Key 提示粘贴 Claude Code OAuth JSON；编辑抽屉提供刷新凭据按钮与合规免责声明；隐藏 batch/多 key 入口。
 - [oauth-credential-format](claude-subscription/oauth-credential-format.md) — 渠道 Key 存 Claude Code 原生 OAuth JSON；解析 accessToken/refreshToken/expiresAt，accessToken 必填，expiresAt 为毫秒时间戳。
 - [oauth-request-headers](claude-subscription/oauth-request-headers.md) — 上游鉴权头用 Authorization Bearer + anthropic-beta oauth-2025-04-20 + anthropic-version；禁带 x-api-key。
-- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不提供面向用户/管理端的用量展示。
+- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不提供面向终端用户的用量展示。
 - [single-key-only](claude-subscription/single-key-only.md) — Claude 订阅渠道为单账号单渠道，禁止 batch 创建与多 key；前端拒绝、后台刷新跳过 multi-key。
 
 ## db-compat
@@ -79,6 +79,10 @@
 
 ## subscription-usage
 
+- [admin-list-display](subscription-usage/admin-list-display.md) — 管理端渠道列表为订阅渠道显示阈值配色的使用率（条前数后）与触顶红标；tooltip 展示刷新时间；点击弹对应账户用量弹窗。
+- [admin-usage-endpoint](subscription-usage/admin-usage-endpoint.md) — 管理端只读端点 GET /api/channel/subscription_usage：读本节点用量缓存，返回各订阅渠道瓶颈使用率、刷新时间与触顶判定。
+- [claude-realtime-usage-endpoint](subscription-usage/claude-realtime-usage-endpoint.md) — 管理端实时端点 GET /api/channel/:id/claude/usage：用渠道凭据回源查询用量，401/403 自动刷新凭据重试一次，透传上游数据。
+- [claude-usage-dialog](subscription-usage/claude-usage-dialog.md) — Claude 订阅渠道点击列表用量后的账户和用量弹窗：状态卡 + 动态窗口卡（阈值配色）+ 原始 JSON。
 - [claude-usage-source](subscription-usage/claude-usage-source.md) — Claude 订阅渠道用量数据源：GET /api/oauth/usage，Bearer + oauth beta + claude-code UA，取所有窗口使用率最大值为瓶颈；最小轮询间隔 180 秒。
 - [codex-usage-source](subscription-usage/codex-usage-source.md) — Codex 渠道用量数据源：GET /backend-api/wham/usage，取 primary/secondary 窗口 used_percent 的最大值为瓶颈；最小轮询间隔 60 秒。
 - [polling](subscription-usage/polling.md) — 后台仅 master 按数据源声明间隔轮询启用订阅渠道，缓存瓶颈使用率单值；单渠道失败不阻断；Redis 可用时快照同步至非 master 节点。

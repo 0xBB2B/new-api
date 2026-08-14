@@ -393,6 +393,14 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   59, 60,
 ])
 
+export const SUBSCRIPTION_CHANNEL_TYPES = new Set([57, 61])
+
+export const SUBSCRIPTION_USAGE_POLL_INTERVAL_SECONDS: Record<number, number> =
+  {
+    57: 60,
+    61: 180,
+  }
+
 export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   15: 'Format: APIKey|SecretKey',
   18: 'Format: APPID|APISecret|APIKey',

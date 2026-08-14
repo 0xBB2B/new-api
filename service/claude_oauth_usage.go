@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 )
 
 const claudeUsageUserAgent = "claude-code/2.1.229"
@@ -50,6 +52,45 @@ func FetchClaudeOAuthUsage(
 		return resp.StatusCode, nil, err
 	}
 	return resp.StatusCode, body, nil
+}
+
+func FetchClaudeChannelUsage(ctx context.Context, ch *model.Channel) (statusCode int, body []byte, subscriptionType string, err error) {
+	envelope, err := parseClaudeCredentialEnvelope(strings.TrimSpace(ch.Key))
+	if err != nil {
+		return 0, nil, "", err
+	}
+	accessToken := strings.TrimSpace(envelope.ClaudeAiOauth.AccessToken)
+	if accessToken == "" {
+		return 0, nil, "", fmt.Errorf("claude subscription channel: access_token is required")
+	}
+	subscriptionType = envelope.ClaudeAiOauth.SubscriptionType
+
+	client, err := GetHttpClientWithProxy(ch.GetSetting().Proxy)
+	if err != nil {
+		return 0, nil, "", err
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	statusCode, body, err = FetchClaudeOAuthUsage(fetchCtx, client, ch.GetBaseURL(), accessToken)
+	if err != nil {
+		return 0, nil, "", err
+	}
+
+	if (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) && strings.TrimSpace(envelope.ClaudeAiOauth.RefreshToken) != "" {
+		newCred, _, refreshErr := RefreshClaudeChannelCredential(ctx, ch.Id, ClaudeCredentialRefreshOptions{ResetCaches: true})
+		if refreshErr == nil {
+			subscriptionType = newCred.SubscriptionType
+			retryCtx, retryCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer retryCancel()
+			statusCode, body, err = FetchClaudeOAuthUsage(retryCtx, client, ch.GetBaseURL(), newCred.AccessToken)
+			if err != nil {
+				return 0, nil, "", err
+			}
+		}
+	}
+
+	return statusCode, body, subscriptionType, nil
 }
 
 type claudeOAuthUsageWindow struct {

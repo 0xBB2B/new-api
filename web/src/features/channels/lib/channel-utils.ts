@@ -25,6 +25,7 @@ import {
   MULTI_KEY_STATUS_CONFIG,
   RESPONSE_TIME_CONFIG,
   RESPONSE_TIME_THRESHOLDS,
+  SUBSCRIPTION_USAGE_POLL_INTERVAL_SECONDS,
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
 import type { Channel, ChannelSettings, ChannelOtherSettings } from '../types'
@@ -480,6 +481,36 @@ export function formatTimestamp(timestamp: number): string {
   } catch {
     return 'Invalid date'
   }
+}
+
+const SUBSCRIPTION_USAGE_EXPIRY_MS = 10 * 60_000
+
+export function isSubscriptionUsageExpired(
+  refreshedAt: number,
+  now: number
+): boolean {
+  return now - refreshedAt > SUBSCRIPTION_USAGE_EXPIRY_MS
+}
+
+export function estimateNextSubscriptionRefresh(
+  refreshedAt: number,
+  channelType: number
+): number {
+  return (
+    refreshedAt + SUBSCRIPTION_USAGE_POLL_INTERVAL_SECONDS[channelType] * 1000
+  )
+}
+
+export function getUsagePercentLevel(
+  percent: number
+): 'danger' | 'warning' | 'default' {
+  if (percent >= 95) {
+    return 'danger'
+  }
+  if (percent >= 80) {
+    return 'warning'
+  }
+  return 'default'
 }
 
 // ============================================================================
