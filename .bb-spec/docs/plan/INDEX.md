@@ -6,3 +6,4 @@
 | [claude-subscription](2026-07-06.claude-subscription/INDEX.md) | Claude Max/Pro 订阅渠道（OAuth 凭据 + 自动刷新 + 前端配置） | 已完成 | 2026-07-06 |
 | [codex-usage-balancing](2026-07-08.codex-usage-balancing/INDEX.md) | Codex 订阅渠道用量均衡路由（用量轮询 + 动态权重 + 触顶移出） | 已完成 | 2026-07-08 |
 | [subscription-usage-balancing](2026-08-13.subscription-usage-balancing/INDEX.md) | 订阅渠道用量均衡泛化（瓶颈单值缓存 + 类型分派轮询 + 选择谓词化）+ Claude 订阅接入 | 已完成 | 2026-08-13 |
+| [subscription-usage-admin-visibility](2026-08-14.subscription-usage-admin-visibility/INDEX.md) | 管理端订阅渠道触顶状态与用量展示（只读端点 + 渠道列表打标） | 进行中 | — |
