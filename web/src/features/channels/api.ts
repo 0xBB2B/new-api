@@ -55,6 +55,18 @@ export type CodexUsageResponse = {
   data?: Record<string, unknown>
 }
 
+export type SubscriptionUsageEntry = {
+  bottleneck_percent: number
+  refreshed_at: number
+  saturated: boolean
+}
+
+export type SubscriptionUsageResponse = {
+  success: boolean
+  message?: string
+  data?: Record<string, SubscriptionUsageEntry>
+}
+
 export type CodexResetCreditsResponse = CodexUsageResponse
 
 export type CodexUsageResetResponse = CodexUsageResponse
@@ -328,6 +340,14 @@ export async function refreshClaudeCredential(
   const res = await api.post(
     `/api/channel/${channelId}/claude/refresh`,
     {},
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function getSubscriptionUsage(): Promise<SubscriptionUsageResponse> {
+  const res = await api.get(
+    '/api/channel/subscription_usage',
     channelActionConfig()
   )
   return res.data
