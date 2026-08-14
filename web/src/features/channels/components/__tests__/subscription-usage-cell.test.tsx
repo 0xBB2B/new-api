@@ -73,6 +73,15 @@ type SubscriptionUsage = {
   saturated: boolean
 }
 
+function findLeafByText(root: ParentNode, text: string): Element | null {
+  for (const el of Array.from(root.querySelectorAll('*'))) {
+    if (el.children.length === 0 && el.textContent === text) {
+      return el
+    }
+  }
+  return null
+}
+
 async function renderInto(node: React.ReactElement) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -136,6 +145,111 @@ describe('SubscriptionUsageCell', () => {
 
     assert.equal(container.textContent?.includes('Stale'), true)
     assert.equal(container.textContent?.includes('40%'), true)
+
+    await unmount()
+  })
+
+  test('renders the progress bar before the percent number', async () => {
+    const usage: SubscriptionUsage = {
+      bottleneck_percent: 62.4,
+      refreshed_at: Date.now(),
+      saturated: false,
+    }
+    const { container, unmount } = await renderInto(
+      <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
+    )
+
+    const progressEl = container.querySelector('[data-slot^="progress"]')
+    const percentEl = findLeafByText(container, '62.4%')
+    assert.ok(progressEl, 'expected a progress element to render')
+    assert.ok(percentEl, 'expected a leaf element with the percent text')
+    const position = progressEl!.compareDocumentPosition(percentEl!)
+    assert.equal(
+      Boolean(position & Node.DOCUMENT_POSITION_FOLLOWING),
+      true
+    )
+
+    await unmount()
+  })
+
+  test('colors the percent text rose when usage is at or above 95%', async () => {
+    const usage: SubscriptionUsage = {
+      bottleneck_percent: 96.2,
+      refreshed_at: Date.now(),
+      saturated: false,
+    }
+    const { container, unmount } = await renderInto(
+      <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
+    )
+
+    const percentEl = findLeafByText(container, '96.2%')
+    assert.ok(percentEl, 'expected a leaf element with the percent text')
+    assert.equal(percentEl!.className.includes('rose'), true)
+
+    await unmount()
+  })
+
+  test('colors the percent text amber when usage is at or above 80%', async () => {
+    const usage: SubscriptionUsage = {
+      bottleneck_percent: 88,
+      refreshed_at: Date.now(),
+      saturated: false,
+    }
+    const { container, unmount } = await renderInto(
+      <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
+    )
+
+    const percentEl = findLeafByText(container, '88%')
+    assert.ok(percentEl, 'expected a leaf element with the percent text')
+    assert.equal(percentEl!.className.includes('amber'), true)
+
+    await unmount()
+  })
+
+  test('does not color the percent text rose or amber below 80% usage', async () => {
+    const usage: SubscriptionUsage = {
+      bottleneck_percent: 62.4,
+      refreshed_at: Date.now(),
+      saturated: false,
+    }
+    const { container, unmount } = await renderInto(
+      <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
+    )
+
+    const percentEl = findLeafByText(container, '62.4%')
+    assert.ok(percentEl, 'expected a leaf element with the percent text')
+    assert.equal(percentEl!.className.includes('rose'), false)
+    assert.equal(percentEl!.className.includes('amber'), false)
+
+    await unmount()
+  })
+
+  test('marks a type 61 (Claude Subscription) cell as clickable', async () => {
+    const usage: SubscriptionUsage = {
+      bottleneck_percent: 40,
+      refreshed_at: Date.now(),
+      saturated: false,
+    }
+    const { container, unmount } = await renderInto(
+      <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
+    )
+
+    assert.equal(container.innerHTML.includes('cursor-pointer'), true)
+
+    await unmount()
+  })
+
+  test('marks a type 57 (Codex) cell as clickable', async () => {
+    const usage: SubscriptionUsage = {
+      bottleneck_percent: 40,
+      refreshed_at: Date.now(),
+      saturated: false,
+    }
+    const { container, unmount } = await renderInto(
+      <SubscriptionUsageCell channel={{ id: 1, type: 57 }} usage={usage} />
+    )
+
+    assert.equal(container.innerHTML.includes('cursor-pointer'), true)
 
     await unmount()
   })

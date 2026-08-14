@@ -33,19 +33,42 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
+  getClaudeUsage,
   getCodexUsage,
   getSubscriptionUsage,
+  type ClaudeUsageResponse,
   type SubscriptionUsageEntry,
 } from '../api'
+import { SUBSCRIPTION_CHANNEL_TYPES } from '../constants'
 import {
   estimateNextSubscriptionRefresh,
   formatRelativeTime,
+  getUsagePercentLevel,
   isSubscriptionUsageExpired,
 } from '../lib'
+import { ClaudeUsageDialog } from './dialogs/claude-usage-dialog'
 import {
   CodexUsageDialog,
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
+
+const percentTextClassName: Record<
+  ReturnType<typeof getUsagePercentLevel>,
+  string
+> = {
+  danger: 'text-rose-500',
+  warning: 'text-amber-500',
+  default: '',
+}
+
+const progressIndicatorClassName: Record<
+  ReturnType<typeof getUsagePercentLevel>,
+  string
+> = {
+  danger: '[&_[data-slot=progress-indicator]]:bg-rose-500',
+  warning: '[&_[data-slot=progress-indicator]]:bg-amber-500',
+  default: '',
+}
 
 export function useSubscriptionUsage() {
   return useQuery({
@@ -88,6 +111,8 @@ export function SubscriptionUsageCell({
   const [dialogOpen, setDialogOpen] = useState(false)
   const [codexResponse, setCodexResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [claudeResponse, setClaudeResponse] =
+    useState<ClaudeUsageResponse | null>(null)
 
   if (!usage) {
     return (
@@ -100,12 +125,13 @@ export function SubscriptionUsageCell({
     )
   }
 
-  const isClickable = channel.type === 57
+  const isClickable = SUBSCRIPTION_CHANNEL_TYPES.has(channel.type)
   const expired = isSubscriptionUsageExpired(usage.refreshed_at, Date.now())
   const nextRefresh = estimateNextSubscriptionRefresh(
     usage.refreshed_at,
     channel.type
   )
+  const percentLevel = getUsagePercentLevel(usage.bottleneck_percent)
 
   const handleClick = async () => {
     if (!isClickable || isLoading) {
@@ -113,11 +139,24 @@ export function SubscriptionUsageCell({
     }
     setIsLoading(true)
     try {
-      const res = await getCodexUsage(channel.id)
-      if (!res.success) {
-        throw new Error(res.message || t('Failed to fetch usage'))
+      if (channel.type === 57) {
+        const res = await getCodexUsage(channel.id)
+        if (!res.success) {
+          throw new Error(res.message || t('Failed to fetch usage'))
+        }
+        setCodexResponse(res)
+      } else {
+        const res = await getClaudeUsage(channel.id)
+        if (!res.success) {
+          if (!dialogOpen) {
+            throw new Error(res.message || t('Failed to fetch usage'))
+          }
+          // 弹窗已打开的刷新失败交给弹窗错误横幅展示，不降级为 toast
+          setClaudeResponse(res)
+          return
+        }
+        setClaudeResponse(res)
       }
-      setCodexResponse(res)
       setDialogOpen(true)
     } catch (error) {
       toast.error(
@@ -143,10 +182,21 @@ export function SubscriptionUsageCell({
               />
             }
           >
-            <span className='text-xs font-medium tabular-nums'>
+            <Progress
+              value={usage.bottleneck_percent}
+              className={cn(
+                'h-1.5 w-16',
+                progressIndicatorClassName[percentLevel]
+              )}
+            />
+            <span
+              className={cn(
+                'text-xs font-medium tabular-nums',
+                percentTextClassName[percentLevel]
+              )}
+            >
               {Math.round(usage.bottleneck_percent * 10) / 10}%
             </span>
-            <Progress value={usage.bottleneck_percent} className='h-1.5 w-16' />
           </TooltipTrigger>
           <TooltipContent>
             <div className='space-y-1 text-xs'>
@@ -160,7 +210,12 @@ export function SubscriptionUsageCell({
                 {t('Estimated next refresh (not guaranteed)')}:{' '}
                 {formatTimestampToDate(nextRefresh, 'milliseconds')}
               </div>
-              {isClickable && <div>{t('Click to view Codex usage')}</div>}
+              {isClickable && channel.type === 57 && (
+                <div>{t('Click to view Codex usage')}</div>
+              )}
+              {isClickable && channel.type === 61 && (
+                <div>{t('Click to view Claude usage')}</div>
+              )}
             </div>
           </TooltipContent>
         </Tooltip>
@@ -168,7 +223,7 @@ export function SubscriptionUsageCell({
           <StatusBadge label={t('Stale')} variant='warning' copyable={false} />
         )}
       </div>
-      {isClickable && (
+      {isClickable && channel.type === 57 && (
         <CodexUsageDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
@@ -177,6 +232,19 @@ export function SubscriptionUsageCell({
           channelDisplayName={channelDisplayName}
           channelDisplayId={channelDisplayId}
           response={codexResponse}
+          onRefresh={handleClick}
+          isRefreshing={isLoading}
+        />
+      )}
+      {isClickable && channel.type === 61 && (
+        <ClaudeUsageDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          channelName={channelName}
+          channelId={channel.id}
+          channelDisplayName={channelDisplayName}
+          channelDisplayId={channelDisplayId}
+          response={claudeResponse}
           onRefresh={handleClick}
           isRefreshing={isLoading}
         />

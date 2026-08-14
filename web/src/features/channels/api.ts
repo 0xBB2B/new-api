@@ -67,6 +67,14 @@ export type SubscriptionUsageResponse = {
   data?: Record<string, SubscriptionUsageEntry>
 }
 
+export type ClaudeUsageResponse = {
+  success: boolean
+  message?: string
+  upstream_status?: number
+  subscription_type?: string
+  data?: unknown
+}
+
 export type CodexResetCreditsResponse = CodexUsageResponse
 
 export type CodexUsageResetResponse = CodexUsageResponse
@@ -358,6 +366,16 @@ export async function getCodexUsage(
 ): Promise<CodexUsageResponse> {
   const res = await api.get(
     `/api/channel/${channelId}/codex/usage`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function getClaudeUsage(
+  channelId: number
+): Promise<ClaudeUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/claude/usage`,
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data

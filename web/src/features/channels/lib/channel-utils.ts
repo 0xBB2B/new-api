@@ -501,6 +501,18 @@ export function estimateNextSubscriptionRefresh(
   )
 }
 
+export function getUsagePercentLevel(
+  percent: number
+): 'danger' | 'warning' | 'default' {
+  if (percent >= 95) {
+    return 'danger'
+  }
+  if (percent >= 80) {
+    return 'warning'
+  }
+  return 'default'
+}
+
 // ============================================================================
 // Quota Formatting
 // ============================================================================

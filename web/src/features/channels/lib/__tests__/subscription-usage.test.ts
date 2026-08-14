@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 
 import {
   estimateNextSubscriptionRefresh,
+  getUsagePercentLevel,
   isSubscriptionUsageExpired,
 } from '../channel-utils'
 
@@ -69,4 +70,25 @@ describe('estimateNextSubscriptionRefresh', () => {
       refreshedAt + 180_000
     )
   })
+})
+
+describe('getUsagePercentLevel', () => {
+  const cases: Array<{
+    name: string
+    percent: number
+    expected: 'danger' | 'warning' | 'default'
+  }> = [
+    { name: '79.9 is default', percent: 79.9, expected: 'default' },
+    { name: '80 is warning', percent: 80, expected: 'warning' },
+    { name: '88 is warning', percent: 88, expected: 'warning' },
+    { name: '94.9 is warning', percent: 94.9, expected: 'warning' },
+    { name: '95 is danger', percent: 95, expected: 'danger' },
+    { name: '96.2 is danger', percent: 96.2, expected: 'danger' },
+  ]
+
+  for (const { name, percent, expected } of cases) {
+    test(name, () => {
+      assert.equal(getUsagePercentLevel(percent), expected)
+    })
+  }
 })
