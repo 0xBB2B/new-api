@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"math/rand"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -24,7 +23,6 @@ func TestGetChannel_SaturatedCodexIsExcludedFromDBCandidates(t *testing.T) {
 	insertChannelSelectionCandidate(t, 57001, "gpt-5.4", "default", constant.ChannelTypeCodex, 0, 1_000_000)
 	insertChannelSelectionCandidate(t, 57002, "gpt-5.4", "default", constant.ChannelTypeOpenAI, 0, 0)
 	CacheSetSubscriptionChannelUsage(57001, 95)
-	rand.Seed(1)
 
 	channel, err := GetChannel("default", "gpt-5.4", 0, "")
 

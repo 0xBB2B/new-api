@@ -969,6 +969,88 @@ func TestRunSubscriptionUsagePollOnce_BatchPollsChannelsConcurrently(t *testing.
 	}
 }
 
+func TestRunSubscriptionUsagePollOnce_RedisSetFailureStillUpdatesLocalCacheAndFinishesRound(t *testing.T) {
+	truncate(t)
+	subscriptionUsagePollRunning.Store(false)
+	require.NoError(t, model.CacheLoadSubscriptionChannelUsageSnapshotJSON([]byte(`{}`)))
+	startSubscriptionUsageFakeRedisSetFailure(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":33},"secondary_window":{"used_percent":55}}}`))
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{Id: 65500, Name: "codex-redis-fail", Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Key: `{"access_token":"access-token","account_id":"account-id"}`, BaseURL: &server.URL}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	done := make(chan struct{})
+	go func() {
+		runSubscriptionUsagePollOnce([]int{constant.ChannelTypeCodex})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Redis 写快照失败时轮询未在本轮结束")
+	}
+
+	snapshotJSON, err := model.SubscriptionChannelUsageSnapshotJSON()
+	require.NoError(t, err)
+	var snapshot map[string]struct {
+		BottleneckPercent float64 `json:"bottleneck_percent"`
+	}
+	require.NoError(t, common.Unmarshal(snapshotJSON, &snapshot))
+	entry, ok := snapshot[strconv.Itoa(channel.Id)]
+	require.True(t, ok)
+	assert.Equal(t, 55.0, entry.BottleneckPercent)
+}
+
+func startSubscriptionUsageFakeRedisSetFailure(t *testing.T) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String()})
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+		_ = client.Close()
+		_ = listener.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go serveSubscriptionUsageRedisConnRejectingSets(conn)
+		}
+	}()
+}
+
+func serveSubscriptionUsageRedisConnRejectingSets(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	for {
+		command, err := readRedisCommand(reader)
+		if err != nil {
+			return
+		}
+		if len(command) >= 1 && strings.EqualFold(command[0], "set") {
+			_, _ = conn.Write([]byte("-ERR write rejected\r\n"))
+			continue
+		}
+		_, _ = conn.Write([]byte("+OK\r\n"))
+	}
+}
+
 func TestPollCodexChannelUsage_InvalidKeyDoesNotSendRequest(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

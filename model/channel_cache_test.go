@@ -1,7 +1,6 @@
 package model
 
 import (
-	"math/rand"
 	"testing"
 	"time"
 
@@ -38,7 +37,6 @@ func TestGetRandomSatisfiedChannel_SaturatedCodexIsExcludedFromMemoryCandidates(
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
 	CacheSetSubscriptionChannelUsage(56001, 95)
-	rand.Seed(1)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
 
@@ -73,12 +71,7 @@ func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *test
 	}
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
 	CacheSetSubscriptionChannelUsage(56010, 96)
-	subscriptionChannelUsageCacheLock.Lock()
-	entry := subscriptionChannelUsageCache[56010]
-	entry.refreshedAt = time.Now().Add(-6 * time.Minute)
-	subscriptionChannelUsageCache[56010] = entry
-	subscriptionChannelUsageCacheLock.Unlock()
-	rand.Seed(1)
+	ageSubscriptionChannelUsageEntry(t, 56010, -6*time.Minute)
 
 	channel, err := GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
 
@@ -86,12 +79,7 @@ func TestGetRandomSatisfiedChannel_RecentlySaturatedStaleCodexIsExcluded(t *test
 	require.NotNil(t, channel)
 	assert.Equal(t, 56011, channel.Id)
 
-	subscriptionChannelUsageCacheLock.Lock()
-	entry = subscriptionChannelUsageCache[56010]
-	entry.refreshedAt = time.Now().Add(-11 * time.Minute)
-	subscriptionChannelUsageCache[56010] = entry
-	subscriptionChannelUsageCacheLock.Unlock()
-	rand.Seed(1)
+	ageSubscriptionChannelUsageEntry(t, 56010, -11*time.Minute)
 
 	channel, err = GetRandomSatisfiedChannel("default", "gpt-5.4", 0, "")
 

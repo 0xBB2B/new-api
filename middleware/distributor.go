@@ -419,7 +419,10 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	return &modelRequest, shouldSelectChannel, nil
 }
 
-// 任务查询路径没有请求体模型名，需从任务记录回填后再做 token 模型限制校验。
+// 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
+// 当 token 启用「可用模型限制」时，下游 modelLimitEnable 校验会因
+// modelRequest.Model 为空而误报 "This token has no access to model"。
+// 从已存储的任务记录中回填 OriginModelName 即可让校验走在正确的模型上。
 func getTaskOriginModelName(c *gin.Context) string {
 	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
 		return ""
@@ -483,6 +486,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 
+	// TODO: api_version统一
 	switch channel.Type {
 	case constant.ChannelTypeAzure:
 		c.Set("api_version", channel.Other)
