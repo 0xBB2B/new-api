@@ -1,3 +1,7 @@
+import { createInstance } from 'i18next'
+import React, { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { I18nextProvider, initReactI18next } from 'react-i18next'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,48 +20,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
-import { Window } from 'happy-dom'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { formatTimestampToDate } from '@/lib/format'
 
-const domWindow = new Window()
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'HTMLButtonElement',
-  'SVGElement',
-  'Node',
-  'Element',
-  'Event',
-  'CustomEvent',
-  'MutationObserver',
-  'ResizeObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
-
-const React = await import('react')
-const { act } = React
-const { createRoot } = await import('react-dom/client')
-const { createInstance } = await import('i18next')
-const { I18nextProvider, initReactI18next } = await import('react-i18next')
-const { TooltipProvider } = await import('@/components/ui/tooltip')
-const { formatTimestampToDate } = await import('@/lib/format')
-const { formatRelativeTime } = await import('../../lib')
-const { ClaudeUsageDialog, resolveClaudeUsageWindows } = await import(
-  '../dialogs/claude-usage-dialog'
-)
+import { formatRelativeTime } from '../../lib'
+import {
+  ClaudeUsageDialog,
+  resolveClaudeUsageWindows,
+} from '../dialogs/claude-usage-dialog'
 
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
@@ -105,9 +77,9 @@ describe('resolveClaudeUsageWindows', () => {
       seven_day_opus: { utilization: 41 },
     })
 
-    assert.equal(windows.length, 3)
+    expect(windows.length).toBe(3)
     const percents = windows.map((w) => w.percent).sort((a, b) => a - b)
-    assert.deepEqual(percents, [41, 88, 96.2])
+    expect(percents).toEqual([41, 88, 96.2])
   })
 
   test('reads limits array entries by kind', () => {
@@ -118,9 +90,9 @@ describe('resolveClaudeUsageWindows', () => {
       ],
     })
 
-    assert.equal(windows.length, 2)
+    expect(windows.length).toBe(2)
     const percents = windows.map((w) => w.percent).sort((a, b) => a - b)
-    assert.deepEqual(percents, [40, 85])
+    expect(percents).toEqual([40, 85])
   })
 
   test('excludes non-window objects such as extra_usage', () => {
@@ -129,13 +101,13 @@ describe('resolveClaudeUsageWindows', () => {
       extra_usage: { is_enabled: true, utilization: 99 },
     })
 
-    assert.equal(windows.length, 1)
-    assert.equal(windows[0].percent, 12)
+    expect(windows.length).toBe(1)
+    expect(windows[0].percent).toBe(12)
   })
 
   test('returns an empty array for non-object input', () => {
-    assert.deepEqual(resolveClaudeUsageWindows('not an object'), [])
-    assert.deepEqual(resolveClaudeUsageWindows(null), [])
+    expect(resolveClaudeUsageWindows('not an object')).toEqual([])
+    expect(resolveClaudeUsageWindows(null)).toEqual([])
   })
 
   test('extracts resets_at and ignores other reset field names', () => {
@@ -144,18 +116,14 @@ describe('resolveClaudeUsageWindows', () => {
       seven_day: { utilization: 20, reset_at: 123 },
     })
 
-    assert.equal(windows.length, 2)
+    expect(windows.length).toBe(2)
     const byKey = new Map(windows.map((w) => [w.key, w]))
-    assert.equal(byKey.get('five_hour')?.resetsAt, 1700000000)
-    assert.equal(byKey.get('seven_day')?.resetsAt, undefined)
+    expect(byKey.get('five_hour')?.resetsAt).toBe(1700000000)
+    expect(byKey.get('seven_day')?.resetsAt).toBe(undefined)
   })
 })
 
 describe('ClaudeUsageDialog', () => {
-  after(() => {
-    domWindow.close()
-  })
-
   test('renders each window percent from the top-level object response', async () => {
     const { unmount } = await renderInto(
       <ClaudeUsageDialog
@@ -174,9 +142,9 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(bodyText.includes('96.2%'), true)
-    assert.equal(bodyText.includes('88%'), true)
-    assert.equal(bodyText.includes('41%'), true)
+    expect(bodyText.includes('96.2%')).toBe(true)
+    expect(bodyText.includes('88%')).toBe(true)
+    expect(bodyText.includes('41%')).toBe(true)
 
     await unmount()
   })
@@ -202,11 +170,11 @@ describe('ClaudeUsageDialog', () => {
       [...document.querySelectorAll('div,span')].find(
         (el) => el.textContent?.trim() === text
       )
-    assert.equal(percentEl('96.2%')?.className.includes('text-rose-500'), true)
-    assert.equal(percentEl('88%')?.className.includes('text-amber-500'), true)
+    expect(percentEl('96.2%')?.className.includes('text-rose-500')).toBe(true)
+    expect(percentEl('88%')?.className.includes('text-amber-500')).toBe(true)
     const defaultEl = percentEl('41%')
-    assert.equal(defaultEl?.className.includes('text-rose-500'), false)
-    assert.equal(defaultEl?.className.includes('text-amber-500'), false)
+    expect(defaultEl?.className.includes('text-rose-500')).toBe(false)
+    expect(defaultEl?.className.includes('text-amber-500')).toBe(false)
 
     await unmount()
   })
@@ -228,13 +196,13 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(bodyText.includes('1700000000'), false)
-    assert.equal((bodyText.match(/Reset at:/g) ?? []).length, 2)
+    expect(bodyText.includes('1700000000')).toBe(false)
+    expect((bodyText.match(/Reset at:/g) ?? []).length).toBe(2)
 
     const values = valuesForLabel('Reset at:')
-    assert.equal(values.length, 2)
-    assert.equal(values.includes(formatTimestampToDate(1700000000)), true)
-    assert.equal(values.includes('-'), true)
+    expect(values.length).toBe(2)
+    expect(values.includes(formatTimestampToDate(1700000000))).toBe(true)
+    expect(values.includes('-')).toBe(true)
 
     await unmount()
   })
@@ -253,10 +221,10 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(bodyText.includes('Email'), true)
-    assert.equal(bodyText.includes('User ID'), true)
-    assert.equal(valuesForLabel('Email').includes('-'), true)
-    assert.equal(valuesForLabel('User ID').includes('-'), true)
+    expect(bodyText.includes('Email')).toBe(true)
+    expect(bodyText.includes('User ID')).toBe(true)
+    expect(valuesForLabel('Email').includes('-')).toBe(true)
+    expect(valuesForLabel('User ID').includes('-')).toBe(true)
 
     await unmount()
   })
@@ -275,10 +243,10 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(bodyText.includes('a@b.c'), true)
-    assert.equal(bodyText.includes('u_123'), true)
-    assert.equal(valuesForLabel('Email').includes('a@b.c'), true)
-    assert.equal(valuesForLabel('User ID').includes('u_123'), true)
+    expect(bodyText.includes('a@b.c')).toBe(true)
+    expect(bodyText.includes('u_123')).toBe(true)
+    expect(valuesForLabel('Email').includes('a@b.c')).toBe(true)
+    expect(valuesForLabel('User ID').includes('u_123')).toBe(true)
 
     await unmount()
   })
@@ -297,16 +265,16 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(/Window:/.test(bodyText), true)
-    assert.equal(/Used/.test(bodyText), true)
-    assert.equal(/Reset at:/.test(bodyText), true)
-    assert.equal(/Resets in:/.test(bodyText), true)
+    expect(/Window:/.test(bodyText)).toBe(true)
+    expect(/Used/.test(bodyText)).toBe(true)
+    expect(/Reset at:/.test(bodyText)).toBe(true)
+    expect(/Resets in:/.test(bodyText)).toBe(true)
 
     const windowRow = [...document.querySelectorAll('div')].find((el) =>
       el.textContent?.trim().startsWith('Window:')
     )
-    assert.equal(windowRow?.textContent?.trim(), 'Window: -')
-    assert.equal(valuesForLabel('Resets in:').includes('-'), true)
+    expect(windowRow?.textContent?.trim()).toBe('Window: -')
+    expect(valuesForLabel('Resets in:').includes('-')).toBe(true)
 
     await unmount()
   })
@@ -324,8 +292,8 @@ describe('ClaudeUsageDialog', () => {
       />
     )
 
-    assert.equal(valuesForLabel('Email').includes('-'), true)
-    assert.equal(valuesForLabel('User ID').includes('-'), true)
+    expect(valuesForLabel('Email').includes('-')).toBe(true)
+    expect(valuesForLabel('User ID').includes('-')).toBe(true)
 
     await unmount()
   })
@@ -345,7 +313,7 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const values = valuesForLabel('Resets in:')
-    assert.equal(values.includes(formatRelativeTime(resetsAt, 'en')), true)
+    expect(values.includes(formatRelativeTime(resetsAt, 'en'))).toBe(true)
 
     await unmount()
   })
@@ -368,8 +336,8 @@ describe('ClaudeUsageDialog', () => {
     )
 
     const bodyText = document.body.textContent ?? ''
-    assert.equal(bodyText.includes('•••• (#••••)'), true)
-    assert.equal(bodyText.includes('Claude 订阅 C'), false)
+    expect(bodyText.includes('•••• (#••••)')).toBe(true)
+    expect(bodyText.includes('Claude 订阅 C')).toBe(false)
 
     await unmount()
   })
@@ -388,7 +356,7 @@ describe('ClaudeUsageDialog', () => {
       />
     )
 
-    assert.equal(document.body.textContent?.includes('max'), true)
+    expect(document.body.textContent?.includes('max')).toBe(true)
 
     await unmount()
   })
@@ -406,7 +374,7 @@ describe('ClaudeUsageDialog', () => {
       />
     )
 
-    assert.equal(document.body.textContent?.includes('max'), false)
+    expect(document.body.textContent?.includes('max')).toBe(false)
 
     await unmount()
   })
@@ -423,8 +391,7 @@ describe('ClaudeUsageDialog', () => {
       />
     )
 
-    assert.equal(
-      document.body.textContent?.includes('upstream status: 401'),
+    expect(document.body.textContent?.includes('upstream status: 401')).toBe(
       true
     )
 

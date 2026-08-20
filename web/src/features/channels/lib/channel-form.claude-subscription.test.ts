@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
 import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema } from './channel-form'
 
@@ -30,7 +29,7 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
     const keyIssues = result.success
       ? []
       : result.error.issues.filter((issue) => issue.path[0] === 'key')
-    assert.equal(keyIssues.length, 0)
+    expect(keyIssues.length).toBe(0)
   })
 
   test('rejects a non-JSON key', () => {
@@ -41,9 +40,9 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
       key: 'plain-not-json',
     })
 
-    assert.equal(result.success, false)
+    expect(result.success).toBe(false)
     if (!result.success) {
-      assert.equal(hasIssueForField(result.error.issues, 'key'), true)
+      expect(hasIssueForField(result.error.issues, 'key')).toBe(true)
     }
   })
 
@@ -55,9 +54,9 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
       key: JSON.stringify({ claudeAiOauth: { refreshToken: 'r' } }),
     })
 
-    assert.equal(result.success, false)
+    expect(result.success).toBe(false)
     if (!result.success) {
-      assert.equal(hasIssueForField(result.error.issues, 'key'), true)
+      expect(hasIssueForField(result.error.issues, 'key')).toBe(true)
     }
   })
 
@@ -71,12 +70,9 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
       }),
     })
 
-    assert.equal(result.success, false)
+    expect(result.success).toBe(false)
     if (!result.success) {
-      assert.equal(
-        hasIssueForField(result.error.issues, 'multi_key_mode'),
-        true
-      )
+      expect(hasIssueForField(result.error.issues, 'multi_key_mode')).toBe(true)
     }
   })
 })

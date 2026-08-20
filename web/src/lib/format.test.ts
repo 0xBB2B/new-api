@@ -16,8 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { afterEach, beforeEach, describe, test } from 'node:test'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -52,17 +51,17 @@ describe('USD display', () => {
   })
 
   test('parses dollar amounts into quota units', () => {
-    assert.equal(parseQuotaFromDollars(0.2), 100000)
-    assert.equal(parseQuotaFromDollars(2), 1000000)
+    expect(parseQuotaFromDollars(0.2)).toBe(100000)
+    expect(parseQuotaFromDollars(2)).toBe(1000000)
   })
 
   test('converts quota units back into dollar amounts', () => {
-    assert.equal(quotaUnitsToDollars(100000), 0.2)
+    expect(quotaUnitsToDollars(100000)).toBe(0.2)
   })
 
   test('round-trips integer quota values', () => {
     for (const units of [0, 100000, 500000, 123457]) {
-      assert.equal(parseQuotaFromDollars(quotaUnitsToDollars(units)), units)
+      expect(parseQuotaFromDollars(quotaUnitsToDollars(units))).toBe(units)
     }
   })
 })
@@ -77,11 +76,11 @@ describe('currency display with exchange rate', () => {
   })
 
   test('parses local currency amount through exchange rate into quota units', () => {
-    assert.equal(parseQuotaFromDollars(1.4), 100000)
+    expect(parseQuotaFromDollars(1.4)).toBe(100000)
   })
 
   test('converts quota units back into local currency amount', () => {
-    assert.ok(Math.abs(quotaUnitsToDollars(100000) - 1.4) < 1e-9)
+    expect(Math.abs(quotaUnitsToDollars(100000) - 1.4) < 1e-9).toBeTruthy()
   })
 })
 
@@ -95,8 +94,8 @@ describe('tokens display', () => {
   })
 
   test('parse and convert are identity operations', () => {
-    assert.equal(parseQuotaFromDollars(100000), 100000)
-    assert.equal(quotaUnitsToDollars(100000), 100000)
+    expect(parseQuotaFromDollars(100000)).toBe(100000)
+    expect(quotaUnitsToDollars(100000)).toBe(100000)
   })
 })
 
@@ -110,10 +109,10 @@ describe('boundary inputs', () => {
   })
 
   test('NaN amount parses to zero quota units', () => {
-    assert.equal(parseQuotaFromDollars(NaN), 0)
+    expect(parseQuotaFromDollars(NaN)).toBe(0)
   })
 
   test('negative amount parses to negative quota units', () => {
-    assert.equal(parseQuotaFromDollars(-2), -1000000)
+    expect(parseQuotaFromDollars(-2)).toBe(-1000000)
   })
 })
