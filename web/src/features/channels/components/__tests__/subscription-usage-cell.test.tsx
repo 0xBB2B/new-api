@@ -1,3 +1,7 @@
+import { createInstance } from 'i18next'
+import React, { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { I18nextProvider, initReactI18next } from 'react-i18next'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,45 +20,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
-import { Window } from 'happy-dom'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
-const domWindow = new Window()
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'HTMLButtonElement',
-  'SVGElement',
-  'Node',
-  'Element',
-  'Event',
-  'CustomEvent',
-  'MutationObserver',
-  'ResizeObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
-
-const React = await import('react')
-const { act } = React
-const { createRoot } = await import('react-dom/client')
-const { createInstance } = await import('i18next')
-const { I18nextProvider, initReactI18next } = await import('react-i18next')
-const { TooltipProvider } = await import('@/components/ui/tooltip')
-const { SubscriptionSaturationBadge, SubscriptionUsageCell } =
-  await import('../subscription-usage-cell')
+import {
+  SubscriptionSaturationBadge,
+  SubscriptionUsageCell,
+} from '../subscription-usage-cell'
 
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
@@ -103,10 +76,6 @@ async function renderInto(node: React.ReactElement) {
 }
 
 describe('SubscriptionUsageCell', () => {
-  after(() => {
-    domWindow.close()
-  })
-
   test('renders the bottleneck percent for fresh usage data', async () => {
     const usage: SubscriptionUsage = {
       bottleneck_percent: 62.4,
@@ -117,8 +86,8 @@ describe('SubscriptionUsageCell', () => {
       <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
     )
 
-    assert.equal(container.textContent?.includes('62.4%'), true)
-    assert.equal(container.textContent?.includes('No data yet'), false)
+    expect(container.textContent?.includes('62.4%')).toBe(true)
+    expect(container.textContent?.includes('No data yet')).toBe(false)
 
     await unmount()
   })
@@ -128,7 +97,7 @@ describe('SubscriptionUsageCell', () => {
       <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={undefined} />
     )
 
-    assert.equal(container.textContent?.includes('No data yet'), true)
+    expect(container.textContent?.includes('No data yet')).toBe(true)
 
     await unmount()
   })
@@ -143,8 +112,8 @@ describe('SubscriptionUsageCell', () => {
       <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
     )
 
-    assert.equal(container.textContent?.includes('Stale'), true)
-    assert.equal(container.textContent?.includes('40%'), true)
+    expect(container.textContent?.includes('Stale')).toBe(true)
+    expect(container.textContent?.includes('40%')).toBe(true)
 
     await unmount()
   })
@@ -161,12 +130,10 @@ describe('SubscriptionUsageCell', () => {
 
     const progressEl = container.querySelector('[data-slot^="progress"]')
     const percentEl = findLeafByText(container, '62.4%')
-    assert.ok(progressEl, 'expected a progress element to render')
-    assert.ok(percentEl, 'expected a leaf element with the percent text')
-    const position =
-      percentEl && progressEl?.compareDocumentPosition(percentEl)
-    assert.equal(
-      Boolean((position ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING),
+    expect(progressEl).toBeTruthy()
+    expect(percentEl).toBeTruthy()
+    const position = percentEl && progressEl?.compareDocumentPosition(percentEl)
+    expect(Boolean((position ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
       true
     )
 
@@ -184,8 +151,8 @@ describe('SubscriptionUsageCell', () => {
     )
 
     const percentEl = findLeafByText(container, '96.2%')
-    assert.ok(percentEl, 'expected a leaf element with the percent text')
-    assert.equal(percentEl?.className.includes('rose'), true)
+    expect(percentEl).toBeTruthy()
+    expect(percentEl?.className.includes('rose')).toBe(true)
 
     await unmount()
   })
@@ -201,8 +168,8 @@ describe('SubscriptionUsageCell', () => {
     )
 
     const percentEl = findLeafByText(container, '88%')
-    assert.ok(percentEl, 'expected a leaf element with the percent text')
-    assert.equal(percentEl?.className.includes('amber'), true)
+    expect(percentEl).toBeTruthy()
+    expect(percentEl?.className.includes('amber')).toBe(true)
 
     await unmount()
   })
@@ -218,9 +185,9 @@ describe('SubscriptionUsageCell', () => {
     )
 
     const percentEl = findLeafByText(container, '62.4%')
-    assert.ok(percentEl, 'expected a leaf element with the percent text')
-    assert.equal(percentEl?.className.includes('rose'), false)
-    assert.equal(percentEl?.className.includes('amber'), false)
+    expect(percentEl).toBeTruthy()
+    expect(percentEl?.className.includes('rose')).toBe(false)
+    expect(percentEl?.className.includes('amber')).toBe(false)
 
     await unmount()
   })
@@ -235,7 +202,7 @@ describe('SubscriptionUsageCell', () => {
       <SubscriptionUsageCell channel={{ id: 1, type: 61 }} usage={usage} />
     )
 
-    assert.equal(container.innerHTML.includes('cursor-pointer'), true)
+    expect(container.innerHTML.includes('cursor-pointer')).toBe(true)
 
     await unmount()
   })
@@ -250,7 +217,7 @@ describe('SubscriptionUsageCell', () => {
       <SubscriptionUsageCell channel={{ id: 1, type: 57 }} usage={usage} />
     )
 
-    assert.equal(container.innerHTML.includes('cursor-pointer'), true)
+    expect(container.innerHTML.includes('cursor-pointer')).toBe(true)
 
     await unmount()
   })
@@ -267,7 +234,7 @@ describe('SubscriptionSaturationBadge', () => {
       <SubscriptionSaturationBadge usage={usage} channelType={61} />
     )
 
-    assert.equal(container.textContent?.includes('Saturated'), true)
+    expect(container.textContent?.includes('Saturated')).toBe(true)
 
     await unmount()
   })
@@ -282,7 +249,7 @@ describe('SubscriptionSaturationBadge', () => {
       <SubscriptionSaturationBadge usage={usage} channelType={61} />
     )
 
-    assert.equal(container.textContent?.includes('Saturated'), false)
+    expect(container.textContent?.includes('Saturated')).toBe(false)
 
     await unmount()
   })
@@ -292,7 +259,7 @@ describe('SubscriptionSaturationBadge', () => {
       <SubscriptionSaturationBadge usage={undefined} channelType={61} />
     )
 
-    assert.equal(container.textContent?.includes('Saturated'), false)
+    expect(container.textContent?.includes('Saturated')).toBe(false)
 
     await unmount()
   })
@@ -307,7 +274,7 @@ describe('SubscriptionSaturationBadge', () => {
       <SubscriptionSaturationBadge usage={usage} channelType={61} />
     )
 
-    assert.equal(container.textContent?.includes('Saturated'), false)
+    expect(container.textContent?.includes('Saturated')).toBe(false)
 
     await unmount()
   })

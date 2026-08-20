@@ -16,8 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
 import {
   estimateNextSubscriptionRefresh,
@@ -49,7 +48,7 @@ describe('isSubscriptionUsageExpired', () => {
 
   for (const { name, refreshedAt, expected } of cases) {
     test(name, () => {
-      assert.equal(isSubscriptionUsageExpired(refreshedAt, now), expected)
+      expect(isSubscriptionUsageExpired(refreshedAt, now)).toBe(expected)
     })
   }
 })
@@ -58,15 +57,13 @@ describe('estimateNextSubscriptionRefresh', () => {
   const refreshedAt = 1_700_000_000_000
 
   test('type 57 (Codex) adds a 60 second period', () => {
-    assert.equal(
-      estimateNextSubscriptionRefresh(refreshedAt, 57),
+    expect(estimateNextSubscriptionRefresh(refreshedAt, 57)).toBe(
       refreshedAt + 60_000
     )
   })
 
   test('type 61 (Claude Subscription) adds a 180 second period', () => {
-    assert.equal(
-      estimateNextSubscriptionRefresh(refreshedAt, 61),
+    expect(estimateNextSubscriptionRefresh(refreshedAt, 61)).toBe(
       refreshedAt + 180_000
     )
   })
@@ -88,7 +85,7 @@ describe('getUsagePercentLevel', () => {
 
   for (const { name, percent, expected } of cases) {
     test(name, () => {
-      assert.equal(getUsagePercentLevel(percent), expected)
+      expect(getUsagePercentLevel(percent)).toBe(expected)
     })
   }
 })
