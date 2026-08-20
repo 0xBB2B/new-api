@@ -4652,7 +4652,9 @@ export function ChannelMutateDrawer({
                                   currentType
                                 ) && (
                                   <>
-                                    {currentType === 14 && (
+                                    {!OPENAI_FIELD_PASSTHROUGH_TYPES.has(
+                                      currentType
+                                    ) && (
                                       <FormField
                                         control={form.control}
                                         name='allow_inference_geo'
