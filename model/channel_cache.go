@@ -133,11 +133,6 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, nil
 	}
 
-	channels = filterSaturatedSubscriptionChannels(channels)
-	if len(channels) == 0 {
-		return nil, nil
-	}
-
 	if len(channels) == 1 {
 		if channel, ok := channelsIDM[channels[0]]; ok {
 			return channel, nil
@@ -179,7 +174,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 
 	if len(targetChannels) == 0 {
-		return nil, nil
+		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
 	}
 
 	// smoothing factor and adjustment
@@ -196,52 +191,21 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		smoothingFactor = 100
 	}
 
-	totalWeight := 0
-	effectiveWeights := make(map[int]int, len(targetChannels))
-	for _, channel := range targetChannels {
-		effectiveWeight := subscriptionEffectiveWeight(channel.Id, channel.Type, channel.GetWeight()*smoothingFactor+smoothingAdjustment)
-		effectiveWeights[channel.Id] = effectiveWeight
-		totalWeight += effectiveWeight
-	}
+	// Calculate the total weight of all channels up to endIdx
+	totalWeight := sumWeight * smoothingFactor
 
 	// Generate a random value in the range [0, totalWeight)
 	randomWeight := rand.Intn(totalWeight)
 
 	// Find a channel based on its weight
 	for _, channel := range targetChannels {
-		randomWeight -= effectiveWeights[channel.Id]
+		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
 		if randomWeight < 0 {
 			return channel, nil
 		}
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
-}
-
-func filterSaturatedSubscriptionChannels(channels []int) []int {
-	filtered := make([]int, 0, len(channels))
-	for _, channelId := range channels {
-		channel, ok := channelsIDM[channelId]
-		if !ok || !constant.IsSubscriptionChannel(channel.Type) || !CacheIsSubscriptionChannelSaturated(channelId) {
-			filtered = append(filtered, channelId)
-		}
-	}
-	return filtered
-}
-
-func subscriptionEffectiveWeight(channelID int, channelType int, weight int) int {
-	if !constant.IsSubscriptionChannel(channelType) {
-		return weight
-	}
-	remainingRatio, ok := subscriptionChannelRemainingRatio(channelID)
-	if !ok {
-		return weight
-	}
-	effectiveWeight := int(float64(weight) * remainingRatio)
-	if effectiveWeight < 1 {
-		return 1
-	}
-	return effectiveWeight
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and

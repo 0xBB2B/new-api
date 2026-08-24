@@ -393,14 +393,6 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   59, 60,
 ])
 
-export const SUBSCRIPTION_CHANNEL_TYPES = new Set([57, 61])
-
-export const SUBSCRIPTION_USAGE_POLL_INTERVAL_SECONDS: Record<number, number> =
-  {
-    57: 60,
-    61: 180,
-  }
-
 export const FIELD_PASSTHROUGH_TYPES = new Set([
   1,
   14,

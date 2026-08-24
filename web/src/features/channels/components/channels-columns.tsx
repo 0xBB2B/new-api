@@ -55,12 +55,8 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { truncateText } from '@/lib/utils'
 
-import { updateChannelBalance } from '../api'
-import {
-  CHANNEL_STATUS_CONFIG,
-  MODEL_FETCHABLE_TYPES,
-  SUBSCRIPTION_CHANNEL_TYPES,
-} from '../constants'
+import { getCodexUsage, updateChannelBalance } from '../api'
+import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   formatRelativeTime,
   formatResponseTime,
@@ -86,12 +82,11 @@ import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
-import { NumericSpinnerInput } from './numeric-spinner-input'
 import {
-  SubscriptionSaturationBadge,
-  SubscriptionUsageCell,
-  useSubscriptionUsage,
-} from './subscription-usage-cell'
+  CodexUsageDialog,
+  type CodexUsageDialogData,
+} from './dialogs/codex-usage-dialog'
+import { NumericSpinnerInput } from './numeric-spinner-input'
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
@@ -343,6 +338,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [rawBalanceResponse, setRawBalanceResponse] = useState<string | null>(
     null
   )
+  const [codexUsageOpen, setCodexUsageOpen] = useState(false)
+  const [codexUsageResponse, setCodexUsageResponse] =
+    useState<CodexUsageDialogData | null>(null)
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -430,6 +428,24 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     }
 
     setIsUpdating(true)
+    if (channel.type === 57) {
+      try {
+        const res = await getCodexUsage(channel.id)
+        if (!res.success) {
+          throw new Error(res.message || t('Failed to fetch usage'))
+        }
+        setCodexUsageResponse(res)
+        setCodexUsageOpen(true)
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t('Failed to fetch usage')
+        )
+      } finally {
+        setIsUpdating(false)
+      }
+      return
+    }
+
     try {
       const response = await updateChannelBalance(channel.id)
       if (response.success && response.balance !== undefined) {
@@ -462,13 +478,21 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
     remainingBadgeLabel = t('Updating...')
+  } else if (sensitiveVisible && channel.type === 57) {
+    remainingBadgeLabel = t('Account Info')
   }
-  const remainingTooltipLabel = sensitiveVisible
-    ? remainingLabel
-    : maskedRemainingLabel
-  const remainingBadgeVariant: StatusBadgeProps['variant'] = isUpdating
-    ? 'neutral'
-    : variant
+  let remainingTooltipLabel = remainingLabel
+  if (!sensitiveVisible) {
+    remainingTooltipLabel = maskedRemainingLabel
+  } else if (channel.type === 57) {
+    remainingTooltipLabel = t('Click to view Codex usage')
+  }
+  let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
+  if (channel.type === 57) {
+    remainingBadgeVariant = 'info'
+  } else if (isUpdating) {
+    remainingBadgeVariant = 'neutral'
+  }
 
   return (
     <TooltipProvider>
@@ -506,11 +530,42 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            <p>{t('Click to update balance')}</p>
+            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
       </div>
 
+      <CodexUsageDialog
+        open={codexUsageOpen}
+        onOpenChange={setCodexUsageOpen}
+        channelName={channel.name}
+        channelId={channel.id}
+        channelDisplayName={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        channelDisplayId={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        response={codexUsageResponse}
+        onRefresh={async () => {
+          if (isUpdating) {
+            return
+          }
+          setIsUpdating(true)
+          try {
+            const res = await getCodexUsage(channel.id)
+            if (!res.success) {
+              throw new Error(res.message || t('Failed to fetch usage'))
+            }
+            setCodexUsageResponse(res)
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : t('Failed to fetch usage')
+            )
+          } finally {
+            setIsUpdating(false)
+          }
+        }}
+        isRefreshing={isUpdating}
+      />
       {rawBalanceResponse !== null && (
         <BalanceQueryDialog
           initialRawResponse={rawBalanceResponse}
@@ -523,30 +578,6 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         />
       )}
     </TooltipProvider>
-  )
-}
-
-function SubscriptionUsageColumnCell({ channel }: { channel: Channel }) {
-  const { sensitiveVisible } = useChannels()
-  const { data: usageByChannel } = useSubscriptionUsage()
-  return (
-    <SubscriptionUsageCell
-      channel={channel}
-      usage={usageByChannel?.[String(channel.id)]}
-      channelName={channel.name}
-      channelDisplayName={sensitiveVisible ? undefined : SENSITIVE_MASK}
-      channelDisplayId={sensitiveVisible ? undefined : SENSITIVE_MASK}
-    />
-  )
-}
-
-function SubscriptionSaturationColumnBadge({ channel }: { channel: Channel }) {
-  const { data: usageByChannel } = useSubscriptionUsage()
-  return (
-    <SubscriptionSaturationBadge
-      usage={usageByChannel?.[String(channel.id)]}
-      channelType={channel.type}
-    />
   )
 }
 
@@ -919,8 +950,6 @@ export function useChannelsColumns(
             isMultiKey && keySize > 0
               ? `${t(config.label)} (${enabledCount}/${keySize})`
               : t(config.label)
-          const showSaturationBadge =
-            SUBSCRIPTION_CHANNEL_TYPES.has(channel.type) && status === 1
 
           // Auto-disabled: show reason and time tooltip
           if (status === 3) {
@@ -970,20 +999,6 @@ export function useChannelsColumns(
                 </TooltipProvider>
               )
             }
-          }
-
-          if (showSaturationBadge) {
-            return (
-              <div className='flex items-center gap-1'>
-                <StatusBadge
-                  label={label}
-                  variant={config.variant}
-                  size='sm'
-                  copyable={false}
-                />
-                <SubscriptionSaturationColumnBadge channel={channel} />
-              </div>
-            )
           }
 
           return (
@@ -1118,13 +1133,7 @@ export function useChannelsColumns(
       {
         accessorKey: 'balance',
         header: t('Used / Remaining'),
-        cell: ({ row }) => {
-          const channel = row.original
-          if (SUBSCRIPTION_CHANNEL_TYPES.has(channel.type)) {
-            return <SubscriptionUsageColumnCell channel={channel} />
-          }
-          return <BalanceCell channel={channel} />
-        },
+        cell: ({ row }) => <BalanceCell channel={row.original} />,
         size: 180,
       },
 
