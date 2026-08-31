@@ -21,4 +21,5 @@ func TestChannelBaseURLs_ClaudeSubscriptionDefault(t *testing.T) {
 func TestChannelTypeClaudeSubscription_IsDistinctType(t *testing.T) {
 	assert.NotEqual(t, ChannelTypeAnthropic, ChannelTypeClaudeSubscription)
 	assert.NotEqual(t, ChannelTypeCodex, ChannelTypeClaudeSubscription)
+	assert.NotEqual(t, ChannelTypeTaskPlugin, ChannelTypeClaudeSubscription)
 }

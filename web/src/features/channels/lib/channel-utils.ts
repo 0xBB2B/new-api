@@ -21,6 +21,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import {
   CHANNEL_STATUS_CONFIG,
+  CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
   CHANNEL_TYPES,
   MULTI_KEY_STATUS_CONFIG,
   RESPONSE_TIME_CONFIG,
@@ -58,7 +59,7 @@ export function getChannelTypeIcon(type: number): string {
 
     // Anthropic
     14: 'Claude', // Anthropic
-    61: 'Claude', // Claude Subscription
+    [CHANNEL_TYPE_CLAUDE_SUBSCRIPTION]: 'Claude', // Claude Subscription
 
     // Google family
     24: 'Gemini', // Gemini

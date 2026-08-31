@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
+import { CHANNEL_TYPE_CLAUDE_SUBSCRIPTION } from '../constants'
 import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema } from './channel-form'
-
-const CLAUDE_SUBSCRIPTION_TYPE = 61
 
 function hasIssueForField(
   issues: readonly { path: PropertyKey[] }[],
@@ -11,11 +10,11 @@ function hasIssueForField(
   return issues.some((issue) => issue.path[0] === field)
 }
 
-describe('channelFormSchema for Claude subscription channel (type 61)', () => {
+describe('channelFormSchema for Claude subscription channel', () => {
   test('accepts a valid Claude Code OAuth credential', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
-      type: CLAUDE_SUBSCRIPTION_TYPE,
+      type: CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
       multi_key_mode: 'single',
       key: JSON.stringify({
         claudeAiOauth: {
@@ -35,7 +34,7 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
   test('rejects a non-JSON key', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
-      type: CLAUDE_SUBSCRIPTION_TYPE,
+      type: CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
       multi_key_mode: 'single',
       key: 'plain-not-json',
     })
@@ -49,7 +48,7 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
   test('rejects JSON missing claudeAiOauth.accessToken', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
-      type: CLAUDE_SUBSCRIPTION_TYPE,
+      type: CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
       multi_key_mode: 'single',
       key: JSON.stringify({ claudeAiOauth: { refreshToken: 'r' } }),
     })
@@ -63,7 +62,7 @@ describe('channelFormSchema for Claude subscription channel (type 61)', () => {
   test('rejects batch/multi-key creation', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
-      type: CLAUDE_SUBSCRIPTION_TYPE,
+      type: CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
       multi_key_mode: 'batch',
       key: JSON.stringify({
         claudeAiOauth: { accessToken: 'sk-ant-oat01-x' },

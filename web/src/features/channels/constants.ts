@@ -23,6 +23,10 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const CHANNEL_TYPE_NEW_API = 60
 
+export const CHANNEL_TYPE_TASK_PLUGIN = 61
+
+export const CHANNEL_TYPE_CLAUDE_SUBSCRIPTION = 62
+
 export const CHANNEL_TYPES = {
   0: 'Unknown',
   1: 'OpenAI',
@@ -81,13 +85,14 @@ export const CHANNEL_TYPES = {
   58: 'Advanced Custom',
   59: 'Sub2API',
   60: 'New API',
-  61: 'Claude Subscription',
+  61: 'Task Plugin',
+  62: 'Claude Subscription',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 61, 33, 24, 43, 3, 41, 48, 60, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26,
-  15, 46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 59, 22, 21, 44,
-  2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
+  1, 14, 62, 33, 24, 43, 3, 41, 48, 60, 58, 61, 42, 34, 20, 4, 40, 27, 25, 17,
+  26, 15, 46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 59, 22, 21,
+  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -108,6 +113,17 @@ export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
   }
   return ordered
 })()
+
+export function channelTypeOptionsForTaskPluginBind(
+  canBindTaskPlugin: boolean
+): { value: number; label: string }[] {
+  if (canBindTaskPlugin) {
+    return CHANNEL_TYPE_OPTIONS
+  }
+  return CHANNEL_TYPE_OPTIONS.filter(
+    (option) => option.value !== CHANNEL_TYPE_TASK_PLUGIN
+  )
+}
 
 // ============================================================================
 // Channel Status (label values are i18n keys; use t(config.label) in components)
@@ -399,7 +415,7 @@ export const FIELD_PASSTHROUGH_TYPES = new Set([
   57,
   58,
   59,
-  61,
+  CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
   CHANNEL_TYPE_NEW_API,
 ])
 
@@ -415,7 +431,7 @@ export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
   14,
   58,
   59,
-  61,
+  CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
   CHANNEL_TYPE_NEW_API,
 ])
 
@@ -430,7 +446,8 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   57: 'Paste Codex OAuth JSON credential (access_token / refresh_token / account_id)',
   59: 'Enter API key for this channel',
   60: 'Enter API key for this channel',
-  61: 'Paste Claude Code OAuth JSON credential (claudeAiOauth with accessToken / refreshToken)',
+  [CHANNEL_TYPE_CLAUDE_SUBSCRIPTION]:
+    'Paste Claude Code OAuth JSON credential (claudeAiOauth with accessToken / refreshToken)',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

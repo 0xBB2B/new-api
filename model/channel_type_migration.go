@@ -9,7 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// 上游先后把渠道类型 59 分配给 Sub2API、60 分配给 New API，本仓库的 Claude 订阅渠道相应从 59 迁到 60、再迁到 61。
+// 上游先后把渠道类型 59、60、61 分配给 Sub2API、New API、Task Plugin，
+// 本仓库的 Claude 订阅渠道相应逐次迁到下一个可用编号。
 // 每个阶段必须一次性执行：重复执行会把此后新建的同号上游渠道一并改号。
 var claudeSubscriptionRenumberStages = []struct {
 	markerOptionKey string
@@ -17,6 +18,7 @@ var claudeSubscriptionRenumberStages = []struct {
 }{
 	{markerOptionKey: "migration.channel_type.claude_subscription_60", supersededType: 59},
 	{markerOptionKey: "migration.channel_type.claude_subscription_61", supersededType: 60},
+	{markerOptionKey: "migration.channel_type.claude_subscription_62", supersededType: 61},
 }
 
 // MigrateClaudeSubscriptionChannelType 把存量 Claude 订阅渠道逐阶段改号到当前的 ChannelTypeClaudeSubscription。
