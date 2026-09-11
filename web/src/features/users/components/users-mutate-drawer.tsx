@@ -264,6 +264,8 @@ export function UsersMutateDrawer({
               toast.error(
                 ruleResult.message || t('Failed to update quota reset rule')
               )
+              triggerRefresh()
+              return
             }
           }
         }

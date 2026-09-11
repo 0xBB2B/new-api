@@ -1460,7 +1460,7 @@ func DeltaUpdateUserQuota(id int, delta int) (err error) {
 func ResetUserQuota(id int, value int) (oldQuota int, err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var user User
-		if err := tx.Where("id = ?", id).First(&user).Error; err != nil {
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&user).Error; err != nil {
 			return err
 		}
 		oldQuota = user.Quota
