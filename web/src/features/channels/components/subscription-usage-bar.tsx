@@ -31,7 +31,6 @@ import {
   parseSubscriptionUsageSnapshot,
   resolveRateLimitWindows,
   windowLabel,
-  type CodexRateLimitWindow,
   type UsageVariant,
 } from '../lib/subscription-usage'
 import type { Channel } from '../types'
@@ -52,23 +51,6 @@ const usageVariantClassName: Record<
     text: 'text-destructive',
     indicator: '[&_[data-slot=progress-indicator]]:bg-destructive',
   },
-}
-
-function windowSummary(
-  title: string,
-  window: CodexRateLimitWindow | null,
-  resetAtLabel: string
-): string | null {
-  if (!window) {
-    return null
-  }
-  const { percent } = windowLabel(window)
-  const resetAt = Number(window.reset_at)
-  const reset =
-    Number.isFinite(resetAt) && resetAt > 0
-      ? ` · ${resetAtLabel} ${formatTimestampToDate(resetAt)}`
-      : ''
-  return `${title}: ${Math.round(percent)}%${reset}`
 }
 
 export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
@@ -96,10 +78,6 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
 
   const { percent, variant } = windowLabel(primary)
   const classes = usageVariantClassName[variant]
-  const lines = [
-    windowSummary(t('5-Hour Window'), fiveHourWindow, t('Reset at:')),
-    windowSummary(t('Weekly Window'), weeklyWindow, t('Reset at:')),
-  ].filter(Boolean) as string[]
   const updatedAt = Number(snapshot?.updated_at)
 
   return (
@@ -119,9 +97,6 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
         }
       />
       <TooltipContent>
-        {lines.map((line) => (
-          <p key={line}>{line}</p>
-        ))}
         {Number.isFinite(updatedAt) && updatedAt > 0 && (
           <p>
             {t('Updated at:')} {formatTimestampToDate(updatedAt)}
