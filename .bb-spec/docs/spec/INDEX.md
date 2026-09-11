@@ -29,7 +29,7 @@
 - [frontend-config-ui](claude-subscription/frontend-config-ui.md) — 前端类型下拉含该类型；Key 提示粘贴 Claude Code OAuth JSON；编辑抽屉提供刷新凭据按钮与合规免责声明；隐藏 batch/多 key 入口。
 - [oauth-credential-format](claude-subscription/oauth-credential-format.md) — 渠道 Key 存 Claude Code 原生 OAuth JSON；解析 accessToken/refreshToken/expiresAt，accessToken 必填，expiresAt 为毫秒时间戳。
 - [oauth-request-headers](claude-subscription/oauth-request-headers.md) — 上游鉴权头用 Authorization Bearer + anthropic-beta oauth-2025-04-20 + anthropic-version；禁带 x-api-key。
-- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不实现 usage 用量查询。
+- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率。
 - [single-key-only](claude-subscription/single-key-only.md) — Claude 订阅渠道为单账号单渠道，禁止 batch 创建与多 key；前端拒绝、后台刷新跳过 multi-key。
 
 ## db-compat
@@ -76,3 +76,7 @@
 
 - [optional-scalar-nullable-forwarding](relay-request-shape/optional-scalar-nullable-forwarding.md) — 顶层主请求 DTO 的可选数值/布尔字段用指针 + omitempty，保留显式零值；嵌套结构不受此约束。
 - [unparsed-passthrough-raw-message](relay-request-shape/unparsed-passthrough-raw-message.md) — 网关不理解的 provider 扩展字段用原始 JSON 字节容器承载；逐字节透传到上游。
+
+## subscription-usage
+
+- [poll-schedule](subscription-usage/poll-schedule.md) — 订阅用量后台轮询按渠道独立计时：下次自动拉取 = 上次成功拉取（手动或自动）+ 1 小时；1 分钟 tick；同一渠道两次尝试间隔 ≥ 1 小时；仅 master、跳过 multi-key。
