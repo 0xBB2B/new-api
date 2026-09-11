@@ -751,10 +751,15 @@ export function processUserChartData(
   if (!data || data.length === 0) return emptyResult
 
   const userQuotaTotal = new Map<string, number>()
+  const userLabels = new Map<string, string>()
   data.forEach((item) => {
     const username = item.username || 'unknown'
     const prev = userQuotaTotal.get(username) || 0
     userQuotaTotal.set(username, prev + (Number(item.quota) || 0))
+    const displayName = item.display_name?.trim()
+    if (displayName && displayName !== username) {
+      userLabels.set(username, `${username} (${displayName})`)
+    }
   })
 
   const sorted = Array.from(userQuotaTotal.entries()).sort(
@@ -766,6 +771,7 @@ export function processUserChartData(
 
   const rankValues = sorted.slice(0, limit).map(([username, quota]) => ({
     User: username,
+    Label: userLabels.get(username) ?? username,
     rawQuota: quota,
     Usage: Number((quota / quotaPerUnit).toFixed(4)),
   }))
@@ -796,6 +802,7 @@ export function processUserChartData(
   const trendValues: Array<{
     Time: string
     User: string
+    Label: string
     rawQuota: number
     Usage: number
   }> = []
@@ -806,6 +813,7 @@ export function processUserChartData(
       trendValues.push({
         Time: time,
         User: user,
+        Label: userLabels.get(user) ?? user,
         rawQuota: q,
         Usage: Number((q / quotaPerUnit).toFixed(4)),
       })
@@ -843,7 +851,7 @@ export function processUserChartData(
         mark: {
           content: [
             {
-              key: (datum: Record<string, unknown>) => datum?.User,
+              key: (datum: Record<string, unknown>) => datum?.Label,
               value: (datum: Record<string, unknown>) =>
                 formatVal(Number(datum?.rawQuota) || 0),
             },
@@ -896,7 +904,7 @@ export function processUserChartData(
         mark: {
           content: [
             {
-              key: (datum: Record<string, unknown>) => datum?.User,
+              key: (datum: Record<string, unknown>) => datum?.Label,
               value: (datum: Record<string, unknown>) =>
                 formatVal(Number(datum?.rawQuota) || 0),
             },
@@ -905,7 +913,7 @@ export function processUserChartData(
         dimension: {
           content: [
             {
-              key: (datum: Record<string, unknown>) => datum?.User,
+              key: (datum: Record<string, unknown>) => datum?.Label,
               value: (datum: Record<string, unknown>) =>
                 Number(datum?.rawQuota) || 0,
             },

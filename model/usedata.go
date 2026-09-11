@@ -160,14 +160,58 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData
 	return quotaDatas, err
 }
 
-func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
-	var quotaDatas []*QuotaData
-	err = DB.Table("quota_data").
-		Select("username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+type UserQuotaData struct {
+	UserID      int    `json:"user_id" gorm:"column:user_id"`
+	Username    string `json:"username" gorm:"column:username"`
+	DisplayName string `json:"display_name" gorm:"-"`
+	CreatedAt   int64  `json:"created_at" gorm:"column:created_at"`
+	Count       int    `json:"count" gorm:"column:count"`
+	Quota       int    `json:"quota" gorm:"column:quota"`
+	TokenUsed   int    `json:"token_used" gorm:"column:token_used"`
+}
+
+func GetQuotaDataGroupByUser(startTime int64, endTime int64) ([]*UserQuotaData, error) {
+	rows := make([]*UserQuotaData, 0)
+	err := DB.Table("quota_data").
+		Select("user_id, username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
 		Where("created_at >= ? and created_at <= ?", startTime, endTime).
-		Group("username, created_at").
-		Find(&quotaDatas).Error
-	return quotaDatas, err
+		Group("user_id, username, created_at").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	userIDSet := make(map[int]struct{})
+	userIDs := make([]int, 0)
+	for _, row := range rows {
+		if row.UserID == 0 {
+			continue
+		}
+		if _, ok := userIDSet[row.UserID]; ok {
+			continue
+		}
+		userIDSet[row.UserID] = struct{}{}
+		userIDs = append(userIDs, row.UserID)
+	}
+	if len(userIDs) == 0 {
+		return rows, nil
+	}
+
+	var users []struct {
+		Id          int    `gorm:"column:id"`
+		DisplayName string `gorm:"column:display_name"`
+	}
+	if err := DB.Table("users").Select("id, display_name").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	displayNameByID := make(map[int]string, len(users))
+	for _, user := range users {
+		displayNameByID[user.Id] = user.DisplayName
+	}
+	for _, row := range rows {
+		row.DisplayName = displayNameByID[row.UserID]
+	}
+	return rows, nil
 }
 
 func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaData []*QuotaData, err error) {
