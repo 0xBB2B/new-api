@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -15,12 +16,35 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 )
 
-const subscriptionUsagePollInterval = time.Hour
+const (
+	subscriptionUsagePollInterval    = time.Minute
+	subscriptionUsageMinPollInterval = time.Hour
+)
 
 var (
 	subscriptionUsagePollOnce    sync.Once
 	subscriptionUsagePollRunning atomic.Bool
+	subscriptionUsageLastAttempt = make(map[int]time.Time)
 )
+
+func shouldPollSubscriptionUsage(otherInfo string, lastAttempt time.Time, now time.Time) bool {
+	var updatedAt int64
+	var raw map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(otherInfo, &raw); err == nil {
+		if data, ok := raw[subscriptionUsageOtherInfoKey]; ok {
+			var snapshot SubscriptionUsageSnapshot
+			if common.Unmarshal(data, &snapshot) == nil {
+				updatedAt = snapshot.UpdatedAt
+			}
+		}
+	}
+
+	snapshotStale := updatedAt == 0 || now.Sub(time.Unix(updatedAt, 0)) >= subscriptionUsageMinPollInterval
+	if !snapshotStale {
+		return false
+	}
+	return lastAttempt.IsZero() || now.Sub(lastAttempt) >= subscriptionUsageMinPollInterval
+}
 
 func StartSubscriptionUsagePollTask() {
 	subscriptionUsagePollOnce.Do(func() {
@@ -61,11 +85,16 @@ func runSubscriptionUsagePollOnce() {
 		return
 	}
 
+	now := time.Now()
 	synced := 0
 	for _, ch := range channels {
 		if ch.ChannelInfo.IsMultiKey {
 			continue
 		}
+		if !shouldPollSubscriptionUsage(ch.OtherInfo, subscriptionUsageLastAttempt[ch.Id], now) {
+			continue
+		}
+		subscriptionUsageLastAttempt[ch.Id] = time.Now()
 		statusCode, err := syncSubscriptionChannelUsage(ctx, ch)
 		if err != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("subscription usage poll: channel_id=%d name=%s fetch failed: %v", ch.Id, ch.Name, err))

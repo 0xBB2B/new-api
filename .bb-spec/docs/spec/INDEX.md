@@ -29,7 +29,7 @@
 - [frontend-config-ui](claude-subscription/frontend-config-ui.md) — 前端类型下拉含该类型；Key 提示粘贴 Claude Code OAuth JSON；编辑抽屉提供刷新凭据按钮与合规免责声明；隐藏 batch/多 key 入口。
 - [oauth-credential-format](claude-subscription/oauth-credential-format.md) — 渠道 Key 存 Claude Code 原生 OAuth JSON；解析 accessToken/refreshToken/expiresAt，accessToken 必填，expiresAt 为毫秒时间戳。
 - [oauth-request-headers](claude-subscription/oauth-request-headers.md) — 上游鉴权头用 Authorization Bearer + anthropic-beta oauth-2025-04-20 + anthropic-version；禁带 x-api-key。
-- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率；不实现 usage 用量查询。
+- [request-billing-passthrough](claude-subscription/request-billing-passthrough.md) — 上游 /v1/messages，复用标准 Claude 请求转换与 token 计费；无固定订阅倍率。
 - [single-key-only](claude-subscription/single-key-only.md) — Claude 订阅渠道为单账号单渠道，禁止 batch 创建与多 key；前端拒绝、后台刷新跳过 multi-key。
 
 ## db-compat
@@ -65,6 +65,10 @@
 - [rule-resolution](quota-reset/rule-resolution.md) — 额度重置规则的生效解析：全局默认 + 每用户专属完全覆盖；退出标记最优先；仅启用状态用户参与。
 - [schedule-trigger](quota-reset/schedule-trigger.md) — 额度重置的定时触发：每天/每周/每月三种周期的触发时点按服务器本地时区计算；错过不追赶。
 - [user-visibility](quota-reset/user-visibility.md) — 有生效重置规则的用户在个人页可见下次重置时间与重置值；无生效规则的用户不展示。
+
+## subscription-usage
+
+- [poll-schedule](subscription-usage/poll-schedule.md) — 订阅用量后台轮询按渠道独立计时：下次自动拉取 = 上次成功拉取（手动或自动）+ 1 小时；1 分钟 tick；同一渠道两次尝试间隔 ≥ 1 小时；仅 master、跳过 multi-key。
 
 ## relay-adapter-pattern
 
