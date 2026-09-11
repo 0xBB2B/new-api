@@ -20,6 +20,8 @@ import { getGroups as getUserGroups } from '@/features/users/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
+import type { SubscriptionUsageSnapshot } from './lib/subscription-usage'
+
 import type {
   AddChannelRequest,
   BatchDeleteParams,
@@ -73,6 +75,10 @@ export type CodexUsageResponse = {
   message?: string
   upstream_status?: number
   data?: Record<string, unknown>
+}
+
+export type ClaudeUsageResponse = CodexUsageResponse & {
+  usage?: SubscriptionUsageSnapshot | null
 }
 
 export type CodexResetCreditsResponse = CodexUsageResponse
@@ -360,6 +366,16 @@ export async function getCodexUsage(
 ): Promise<CodexUsageResponse> {
   const res = await api.get(
     `/api/channel/${channelId}/codex/usage`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function getClaudeUsage(
+  channelId: number
+): Promise<ClaudeUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/claude/usage`,
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data

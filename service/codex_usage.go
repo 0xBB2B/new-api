@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -11,22 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
-
-const codexUsageOtherInfoKey = "codex_usage"
-
-type CodexUsageWindow struct {
-	UsedPercent        float64 `json:"used_percent"`
-	ResetAt            int64   `json:"reset_at,omitempty"`
-	LimitWindowSeconds int64   `json:"limit_window_seconds,omitempty"`
-}
-
-type CodexUsageSnapshot struct {
-	PlanType        string            `json:"plan_type,omitempty"`
-	LimitReached    bool              `json:"limit_reached"`
-	PrimaryWindow   *CodexUsageWindow `json:"primary_window,omitempty"`
-	SecondaryWindow *CodexUsageWindow `json:"secondary_window,omitempty"`
-	UpdatedAt       int64             `json:"updated_at"`
-}
 
 type CodexWhamFetchFunc func(
 	ctx context.Context,
@@ -87,23 +70,21 @@ func SyncCodexChannelUsage(ctx context.Context, ch *model.Channel, oauthKey *Cod
 	if statusCode < 200 || statusCode >= 300 {
 		return statusCode, body, nil
 	}
-	snapshot, err := parseCodexUsageSnapshot(body, time.Now())
+	snapshot, err := parseSubscriptionUsageSnapshot(body, time.Now())
 	if err != nil {
 		return statusCode, body, nil
 	}
-	if err := model.SetChannelOtherInfoEntry(ch.Id, codexUsageOtherInfoKey, snapshot); err != nil {
-		common.SysError(fmt.Sprintf("codex usage: save snapshot failed: channel_id=%d err=%v", ch.Id, err))
-	}
+	saveSubscriptionUsageSnapshot(ch.Id, snapshot)
 	return statusCode, body, nil
 }
 
-func parseCodexUsageSnapshot(body []byte, now time.Time) (*CodexUsageSnapshot, error) {
+func parseSubscriptionUsageSnapshot(body []byte, now time.Time) (*SubscriptionUsageSnapshot, error) {
 	var payload struct {
 		PlanType  string `json:"plan_type"`
 		RateLimit struct {
-			LimitReached    bool              `json:"limit_reached"`
-			PrimaryWindow   *CodexUsageWindow `json:"primary_window"`
-			SecondaryWindow *CodexUsageWindow `json:"secondary_window"`
+			LimitReached    bool                     `json:"limit_reached"`
+			PrimaryWindow   *SubscriptionUsageWindow `json:"primary_window"`
+			SecondaryWindow *SubscriptionUsageWindow `json:"secondary_window"`
 		} `json:"rate_limit"`
 	}
 	if err := common.Unmarshal(body, &payload); err != nil {
@@ -112,12 +93,12 @@ func parseCodexUsageSnapshot(body []byte, now time.Time) (*CodexUsageSnapshot, e
 	if payload.RateLimit.PrimaryWindow == nil && payload.RateLimit.SecondaryWindow == nil {
 		return nil, errors.New("codex usage: no rate limit window in payload")
 	}
-	for _, w := range []*CodexUsageWindow{payload.RateLimit.PrimaryWindow, payload.RateLimit.SecondaryWindow} {
+	for _, w := range []*SubscriptionUsageWindow{payload.RateLimit.PrimaryWindow, payload.RateLimit.SecondaryWindow} {
 		if w != nil {
-			w.UsedPercent = min(max(w.UsedPercent, 0), 100)
+			w.UsedPercent = clampUsagePercent(w.UsedPercent)
 		}
 	}
-	return &CodexUsageSnapshot{
+	return &SubscriptionUsageSnapshot{
 		PlanType:        payload.PlanType,
 		LimitReached:    payload.RateLimit.LimitReached,
 		PrimaryWindow:   payload.RateLimit.PrimaryWindow,

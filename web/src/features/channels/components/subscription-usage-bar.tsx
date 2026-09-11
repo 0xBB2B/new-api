@@ -28,16 +28,16 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
-  parseCodexUsageSnapshot,
+  parseSubscriptionUsageSnapshot,
   resolveRateLimitWindows,
   windowLabel,
   type CodexRateLimitWindow,
-  type CodexUsageVariant,
-} from '../lib/codex-usage'
+  type UsageVariant,
+} from '../lib/subscription-usage'
 import type { Channel } from '../types'
 
 const usageVariantClassName: Record<
-  CodexUsageVariant,
+  UsageVariant,
   { text: string; indicator: string }
 > = {
   info: {
@@ -71,9 +71,9 @@ function windowSummary(
   return `${title}: ${Math.round(percent)}%${reset}`
 }
 
-export function CodexUsageBar({ channel }: { channel: Channel }) {
+export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
-  const snapshot = parseCodexUsageSnapshot(channel.other_info)
+  const snapshot = parseSubscriptionUsageSnapshot(channel.other_info)
   const { fiveHourWindow, weeklyWindow } = resolveRateLimitWindows(
     snapshot ? { plan_type: snapshot.plan_type, rate_limit: snapshot } : null
   )

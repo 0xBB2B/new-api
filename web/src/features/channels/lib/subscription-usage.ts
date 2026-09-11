@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { formatTimestampToDate } from '@/lib/format'
+
 export type CodexRateLimitWindow = {
   used_percent?: number
   reset_at?: number
@@ -34,7 +36,7 @@ export type RateLimitSource = {
   rate_limit?: CodexRateLimitWindows
 }
 
-export type CodexUsageSnapshot = CodexRateLimitWindows & {
+export type SubscriptionUsageSnapshot = CodexRateLimitWindows & {
   limit_reached?: boolean
   updated_at?: number
 }
@@ -106,14 +108,14 @@ export function resolveRateLimitWindows(data: RateLimitSource | null): {
   return { fiveHourWindow, weeklyWindow }
 }
 
-export type CodexUsageVariant = 'info' | 'warning' | 'danger'
+export type UsageVariant = 'info' | 'warning' | 'danger'
 
 export function windowLabel(windowData?: CodexRateLimitWindow | null): {
   percent: number
-  variant: CodexUsageVariant
+  variant: UsageVariant
 } {
   const percent = clampPercent(windowData?.used_percent)
-  let variant: CodexUsageVariant = 'info'
+  let variant: UsageVariant = 'info'
   if (percent >= 95) {
     variant = 'danger'
   } else if (percent >= 80) {
@@ -122,20 +124,48 @@ export function windowLabel(windowData?: CodexRateLimitWindow | null): {
   return { percent, variant }
 }
 
-export function parseCodexUsageSnapshot(
+export function parseSubscriptionUsageSnapshot(
   otherInfo: string | null | undefined
-): CodexUsageSnapshot | null {
+): SubscriptionUsageSnapshot | null {
   if (!otherInfo) {
     return null
   }
   try {
     const parsed = JSON.parse(otherInfo)
-    const snapshot = parsed?.codex_usage
+    const snapshot = parsed?.subscription_usage
     if (snapshot && typeof snapshot === 'object') {
-      return snapshot as CodexUsageSnapshot
+      return snapshot as SubscriptionUsageSnapshot
     }
   } catch {
     return null
   }
   return null
+}
+
+export function formatUnixSeconds(unixSeconds: unknown): string {
+  const v = Number(unixSeconds)
+  return Number.isFinite(v) && v > 0 ? formatTimestampToDate(v) : '-'
+}
+
+export function formatDurationSeconds(
+  seconds: unknown,
+  t: (key: string) => string
+): string {
+  const s = Number(seconds)
+  if (!Number.isFinite(s) || s <= 0) {
+    return '-'
+  }
+
+  const total = Math.floor(s)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+
+  if (hours > 0) {
+    return `${hours}${t('h')} ${minutes}${t('m')}`
+  }
+  if (minutes > 0) {
+    return `${minutes}${t('m')} ${secs}${t('s')}`
+  }
+  return `${secs}${t('s')}`
 }

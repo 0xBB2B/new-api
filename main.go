@@ -130,8 +130,8 @@ func main() {
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
 
-	// Codex subscription usage snapshot refreshed hourly for the channel list
-	service.StartCodexUsagePollTask()
+	// Codex / Claude subscription usage snapshots refreshed hourly for the channel list
+	service.StartSubscriptionUsagePollTask()
 
 	// Claude subscription credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartClaudeCredentialAutoRefreshTask()

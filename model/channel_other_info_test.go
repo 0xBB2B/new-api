@@ -26,19 +26,19 @@ func TestSetChannelOtherInfoEntryPreservesExistingKeys(t *testing.T) {
 	channel := &Channel{Name: "codex", OtherInfo: `{"status_reason":"quota","status_time":123}`}
 	require.NoError(t, db.Create(channel).Error)
 
-	require.NoError(t, SetChannelOtherInfoEntry(channel.Id, "codex_usage", map[string]any{"plan_type": "plus"}))
+	require.NoError(t, SetChannelOtherInfoEntry(channel.Id, "subscription_usage", map[string]any{"plan_type": "plus"}))
 
 	var stored Channel
 	require.NoError(t, db.First(&stored, channel.Id).Error)
 	otherInfo := stored.GetOtherInfo()
 	assert.Equal(t, "quota", otherInfo["status_reason"])
 	assert.Equal(t, float64(123), otherInfo["status_time"])
-	assert.Equal(t, map[string]any{"plan_type": "plus"}, otherInfo["codex_usage"])
+	assert.Equal(t, map[string]any{"plan_type": "plus"}, otherInfo["subscription_usage"])
 
-	require.NoError(t, SetChannelOtherInfoEntry(channel.Id, "codex_usage", map[string]any{"plan_type": "pro"}))
+	require.NoError(t, SetChannelOtherInfoEntry(channel.Id, "subscription_usage", map[string]any{"plan_type": "pro"}))
 	require.NoError(t, db.First(&stored, channel.Id).Error)
-	assert.Equal(t, map[string]any{"plan_type": "pro"}, stored.GetOtherInfo()["codex_usage"])
+	assert.Equal(t, map[string]any{"plan_type": "pro"}, stored.GetOtherInfo()["subscription_usage"])
 	assert.Equal(t, "quota", stored.GetOtherInfo()["status_reason"])
 
-	assert.Error(t, SetChannelOtherInfoEntry(channel.Id+100, "codex_usage", "x"))
+	assert.Error(t, SetChannelOtherInfoEntry(channel.Id+100, "subscription_usage", "x"))
 }

@@ -57,11 +57,17 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
 
-import { getCodexUsage, updateChannelBalance } from '../api'
+import {
+  getClaudeUsage,
+  getCodexUsage,
+  updateChannelBalance,
+  type ClaudeUsageResponse,
+} from '../api'
 import {
   CHANNEL_STATUS_CONFIG,
   CHANNEL_TYPE_TASK_PLUGIN,
   MODEL_FETCHABLE_TYPES,
+  CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
 } from '../constants'
 import {
   formatRelativeTime,
@@ -86,7 +92,8 @@ import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { TaskPluginChannelBadge } from './channel-type-badge'
 import { useChannels } from './channels-provider'
-import { CodexUsageBar } from './codex-usage-bar'
+import { ClaudeUsageDialog } from './dialogs/claude-usage-dialog'
+import { SubscriptionUsageBar } from './subscription-usage-bar'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
@@ -349,6 +356,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [claudeUsageOpen, setClaudeUsageOpen] = useState(false)
+  const [claudeUsageResponse, setClaudeUsageResponse] =
+    useState<ClaudeUsageResponse | null>(null)
+  const isClaudeSubscription = channel.type === CHANNEL_TYPE_CLAUDE_SUBSCRIPTION
+  const isSubscriptionChannel = channel.type === 57 || isClaudeSubscription
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -436,6 +448,24 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     }
 
     setIsUpdating(true)
+    if (isClaudeSubscription) {
+      try {
+        const res = await getClaudeUsage(channel.id)
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setClaudeUsageResponse(res)
+        setClaudeUsageOpen(true)
+        void queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        })
+      } catch (error) {
+        handleServerError(error, t('Failed to fetch usage'))
+      } finally {
+        setIsUpdating(false)
+      }
+      return
+    }
     if (channel.type === 57) {
       try {
         const res = await getCodexUsage(channel.id)
@@ -485,17 +515,19 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
     remainingBadgeLabel = t('Updating...')
-  } else if (sensitiveVisible && channel.type === 57) {
+  } else if (sensitiveVisible && isSubscriptionChannel) {
     remainingBadgeLabel = t('Account Info')
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
+  } else if (isClaudeSubscription) {
+    remainingTooltipLabel = t('Click to view Claude usage')
   } else if (channel.type === 57) {
     remainingTooltipLabel = t('Click to view Codex usage')
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57) {
+  if (isSubscriptionChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -504,8 +536,8 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   return (
     <TooltipProvider>
       <div className='-ml-1.5 flex items-center gap-1'>
-        {channel.type === 57 && sensitiveVisible ? (
-          <CodexUsageBar channel={channel} />
+        {isSubscriptionChannel && sensitiveVisible ? (
+          <SubscriptionUsageBar channel={channel} />
         ) : (
           <Tooltip>
             <TooltipTrigger
@@ -541,7 +573,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {!isSubscriptionChannel && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
       </div>
@@ -565,6 +597,34 @@ export function BalanceCell({ channel }: { channel: Channel }) {
               throw createServerError(res, t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
+            void queryClient.invalidateQueries({
+              queryKey: channelsQueryKeys.lists(),
+            })
+          } catch (error) {
+            handleServerError(error, t('Failed to fetch usage'))
+          } finally {
+            setIsUpdating(false)
+          }
+        }}
+        isRefreshing={isUpdating}
+      />
+      <ClaudeUsageDialog
+        open={claudeUsageOpen}
+        onOpenChange={setClaudeUsageOpen}
+        channelName={sensitiveVisible ? channel.name : SENSITIVE_MASK}
+        channelId={channel.id}
+        response={claudeUsageResponse}
+        onRefresh={async () => {
+          if (isUpdating) {
+            return
+          }
+          setIsUpdating(true)
+          try {
+            const res = await getClaudeUsage(channel.id)
+            if (!res.success) {
+              throw createServerError(res, t('Failed to fetch usage'))
+            }
+            setClaudeUsageResponse(res)
             void queryClient.invalidateQueries({
               queryKey: channelsQueryKeys.lists(),
             })

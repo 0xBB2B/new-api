@@ -21,25 +21,25 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
 
 import {
-  parseCodexUsageSnapshot,
+  parseSubscriptionUsageSnapshot,
   resolveRateLimitWindows,
   windowLabel,
-} from '../codex-usage'
+} from '../subscription-usage'
 
-describe('parseCodexUsageSnapshot', () => {
-  test('returns null when other_info is empty, malformed, or lacks codex_usage', () => {
-    assert.equal(parseCodexUsageSnapshot(''), null)
-    assert.equal(parseCodexUsageSnapshot(undefined), null)
-    assert.equal(parseCodexUsageSnapshot('{oops'), null)
-    assert.equal(parseCodexUsageSnapshot('{"status_reason":"x"}'), null)
-    assert.equal(parseCodexUsageSnapshot('{"codex_usage":"nope"}'), null)
+describe('parseSubscriptionUsageSnapshot', () => {
+  test('returns null when other_info is empty, malformed, or lacks subscription_usage', () => {
+    assert.equal(parseSubscriptionUsageSnapshot(''), null)
+    assert.equal(parseSubscriptionUsageSnapshot(undefined), null)
+    assert.equal(parseSubscriptionUsageSnapshot('{oops'), null)
+    assert.equal(parseSubscriptionUsageSnapshot('{"status_reason":"x"}'), null)
+    assert.equal(parseSubscriptionUsageSnapshot('{"subscription_usage":"nope"}'), null)
   })
 
   test('reads the snapshot next to other keys', () => {
-    const snapshot = parseCodexUsageSnapshot(
+    const snapshot = parseSubscriptionUsageSnapshot(
       JSON.stringify({
         status_reason: 'x',
-        codex_usage: {
+        subscription_usage: {
           plan_type: 'plus',
           limit_reached: false,
           primary_window: { used_percent: 12.5, limit_window_seconds: 18000 },
