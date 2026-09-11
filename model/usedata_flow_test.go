@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -190,4 +191,27 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	require.Equal(t, 60, rows[0].TokenUsed)
 	require.Equal(t, "default", rows[1].UseGroup)
 	require.Equal(t, 25, rows[1].Quota)
+}
+
+func TestGetQuotaDataGroupByUserFillsDisplayName(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&User{Id: 1, Username: "oidc_1", DisplayName: "Alice Liddell", Password: "password", AffCode: "aff-1"}).Error)
+	require.NoError(t, DB.Create(&User{Id: 2, Username: "bob", DisplayName: "bob", Password: "password", AffCode: "aff-2"}).Error)
+
+	seedFlowQuotaData(t, QuotaData{UserID: 1, Username: "oidc_1", ModelName: "gpt-a", CreatedAt: 1000, Count: 2, Quota: 100, TokenUsed: 40})
+	seedFlowQuotaData(t, QuotaData{UserID: 1, Username: "oidc_1", ModelName: "gpt-b", CreatedAt: 1000, Count: 1, Quota: 50, TokenUsed: 20})
+	seedFlowQuotaData(t, QuotaData{UserID: 2, Username: "bob", ModelName: "gpt-a", CreatedAt: 1000, Count: 3, Quota: 70, TokenUsed: 30})
+	seedFlowQuotaData(t, QuotaData{UserID: 9, Username: "ghost", ModelName: "gpt-a", CreatedAt: 1000, Count: 1, Quota: 10, TokenUsed: 5})
+
+	rows, err := GetQuotaDataGroupByUser(900, 2000)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+
+	byUser := make(map[string]UserQuotaData, len(rows))
+	for _, row := range rows {
+		byUser[row.Username] = *row
+	}
+	assert.Equal(t, UserQuotaData{UserID: 1, Username: "oidc_1", DisplayName: "Alice Liddell", CreatedAt: 1000, Count: 3, Quota: 150, TokenUsed: 60}, byUser["oidc_1"])
+	assert.Equal(t, "bob", byUser["bob"].DisplayName)
+	assert.Equal(t, UserQuotaData{UserID: 9, Username: "ghost", CreatedAt: 1000, Count: 1, Quota: 10, TokenUsed: 5}, byUser["ghost"])
 }
