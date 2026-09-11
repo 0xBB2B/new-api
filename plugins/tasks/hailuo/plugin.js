@@ -7,7 +7,7 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.1.1",
+  version: "1.1.3",
   author: { name: "QuantumNous" },
   channelTypes: [35],
   models: [
@@ -24,33 +24,35 @@ export const meta = {
   ],
   fetchMode: "per_task",
   usageSchema: {
+    // Requested video duration in seconds. MiniMax-H3 allows 4 to 15; Hailuo 2.3/02/2.3-Fast allow 6 or 10; 01-series allow 6.
     seconds: {
       type: "number",
       unit: "second",
-      description: {
-        en: "Requested video duration in seconds. MiniMax-H3 allows 4 to 15; Hailuo 2.3/02/2.3-Fast allow 6 or 10; 01-series allow 6.",
-        zh: "请求的视频时长，单位为秒。MiniMax-H3 允许 4 到 15；Hailuo 2.3/02/2.3-Fast 允许 6 或 10；01 系列允许 6。",
-      },
+      description: { en: "Video generation unit price", zh: "视频生成单价" },
     },
+    // Requested output video resolution.
     resolution: {
       enum: ["512P", "768P", "720P", "1080P", "2K"],
-      description: { en: "Requested output video resolution.", zh: "请求的输出视频分辨率。" },
+      enumLabels: {
+        "512P": { en: "512P", zh: "512P" },
+        "768P": { en: "768P", zh: "768P" },
+        "720P": { en: "720P", zh: "720P" },
+        "1080P": { en: "1080P", zh: "1080P" },
+        "2K": { en: "2K", zh: "2K" },
+      },
+      description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
+    // H3 input image count (estimated at submit, actual on completion).
     input_images: {
       type: "number",
       unit: "count",
-      description: {
-        en: "H3 input image count (estimated at submit, actual on completion).",
-        zh: "H3 输入图片数量（提交时预估，完成后按实际值）。",
-      },
+      description: { en: "Input image unit price", zh: "输入图片单价" },
     },
+    // H3 input video duration in seconds (reserved at the request maximum, actual on completion).
     input_video_seconds: {
       type: "number",
       unit: "second",
-      description: {
-        en: "H3 input video duration in seconds (reserved at the request maximum, actual on completion).",
-        zh: "H3 输入视频时长，单位为秒（提交时按请求上限预留，完成后按实际值）。",
-      },
+      description: { en: "Input video unit price", zh: "输入视频单价" },
     },
   },
   usageExamples: [
@@ -465,8 +467,6 @@ export function buildQueryRequest(ctx) {
 }
 
 export function parseTaskResult(ctx, body) {
-  // The host calls this hook with an empty context, so the response envelope is
-  // the only way to tell a /v2 result from a /v1 one.
   const apiError = h3APIError(body);
   if (apiError) {
     if (apiError.statusCode === 408 || apiError.statusCode === 429 || apiError.statusCode >= 500) throw new Error(apiError.message);
@@ -475,7 +475,10 @@ export function parseTaskResult(ctx, body) {
   const h3Task = h3QueryTask(body);
   if (h3Task) {
     const h3Statuses = { queued: "QUEUED", running: "IN_PROGRESS", succeeded: "SUCCESS", failed: "FAILURE", cancelled: "FAILURE" };
-    const h3Status = h3Statuses[h3Task.status] || "IN_PROGRESS";
+    const h3Status = h3Statuses[h3Task.status];
+    if (!h3Status) {
+      return { status: "UNKNOWN", reason: "unrecognized status: " + String(h3Task.status || "") };
+    }
     const h3Result = { code: 0, status: h3Status, progress: h3Status === "QUEUED" ? "30%" : h3Status === "IN_PROGRESS" ? "50%" : "100%" };
     if (h3Status === "SUCCESS") {
       const url = trimmed(h3Task.content && h3Task.content.url);
@@ -486,11 +489,17 @@ export function parseTaskResult(ctx, body) {
     }
     return h3Result;
   }
+  if (body.base_resp && body.base_resp.status_code !== 0) {
+    return { code: body.base_resp.status_code || 0, status: "FAILURE", progress: "100%", reason: body.base_resp.status_msg || "" };
+  }
   const base = body.base_resp || {};
   const statuses = { Preparing: "IN_PROGRESS", Queueing: "IN_PROGRESS", Processing: "IN_PROGRESS", Success: "SUCCESS", Fail: "FAILURE" };
-  const status = statuses[body.status] || "IN_PROGRESS";
+  const status = statuses[body.status];
+  if (!status) {
+    return { status: "UNKNOWN", reason: "unrecognized status: " + String(body.status || "") };
+  }
   const progress = status === "SUCCESS" || status === "FAILURE" ? "100%" : body.status === "Processing" ? "50%" : "30%";
-  const reason = base.status_code !== 0 ? base.status_msg || "" : status === "FAILURE" ? "task failed" : "";
+  const reason = status === "FAILURE" ? "task failed" : "";
   return { code: base.status_code || 0, status: status, progress: progress, reason: reason };
 }
 

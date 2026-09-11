@@ -163,13 +163,6 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 	}
 }
 
-func taskBillingOtherMap(t *testing.T, other *model.LogOther) map[string]interface{} {
-	t.Helper()
-	var values map[string]interface{}
-	require.NoError(t, common.UnmarshalJsonStr(other.JSONString(), &values))
-	return values
-}
-
 func TestPriceDataOtherRatiosFilterAndSnapshot(t *testing.T) {
 	priceData := types.PriceData{}
 
@@ -234,7 +227,7 @@ func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 		"inf":      math.Inf(1),
 	}
 
-	other := taskBillingOtherMap(t, taskBillingOther(task))
+	other := taskBillingOther(task).Snapshot()
 
 	assert.Equal(t, 2.0, other["seconds"])
 	assert.Equal(t, 1.0, other["identity"])
@@ -260,7 +253,7 @@ func TestTaskBillingOtherIncludesTieredSnapshotAndKeepsUsageFactsNested(t *testi
 		},
 	}
 
-	other := taskBillingOtherMap(t, taskBillingOther(task))
+	other := taskBillingOther(task).Snapshot()
 
 	assert.Equal(t, "tiered_expr", other["billing_mode"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte(expression)), other["expr_b64"])
@@ -269,7 +262,7 @@ func TestTaskBillingOtherIncludesTieredSnapshotAndKeepsUsageFactsNested(t *testi
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{
 		"resolution": "720P",
-		"seconds":    float64(5),
+		"seconds":    5,
 	}, facts)
 	assert.NotContains(t, other, "resolution")
 	assert.NotContains(t, other, "seconds")
@@ -284,7 +277,7 @@ func TestTaskBillingOtherOmitsEmptyUsageFacts(t *testing.T) {
 		UsageFacts:    map[string]any{},
 	}
 
-	other := taskBillingOtherMap(t, taskBillingOther(task))
+	other := taskBillingOther(task).Snapshot()
 
 	assert.Equal(t, "tiered_expr", other["billing_mode"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte(expression)), other["expr_b64"])
@@ -408,27 +401,27 @@ func TestTaskBillingOtherSeparatesPluginAndRootDiagnostics(t *testing.T) {
 		},
 	}
 
-	other := taskBillingOtherMap(t, taskBillingOther(task))
+	other := taskBillingOther(task).Snapshot()
 
 	assert.Equal(t, "task_public", other["task_id"])
-	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	adminInfo, ok := other["admin_info"].(map[string]any)
 	require.True(t, ok)
-	pluginInfo, ok := adminInfo["task_plugin"].(map[string]interface{})
+	pluginInfo, ok := adminInfo["task_plugin"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "document-parser", pluginInfo["key"])
 	assert.Equal(t, "1.2.3", pluginInfo["version"])
-	assert.Equal(t, map[string]interface{}{
+	assert.Equal(t, map[string]any{
 		"name": "Community Author",
 		"url":  "https://plugins.example/author",
 	}, pluginInfo["author"])
 
-	rootInfo, ok := other["root_info"].(map[string]interface{})
+	rootInfo, ok := other["root_info"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "upstream-private", rootInfo["upstream_task_id"])
 	assert.Equal(t, "node-a", rootInfo["node_name"])
-	runtimeInfo, ok := rootInfo["task_plugin"].(map[string]interface{})
+	runtimeInfo, ok := rootInfo["task_plugin"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, float64(42), runtimeInfo["generation"])
+	assert.Equal(t, uint64(42), runtimeInfo["generation"])
 	assert.NotContains(t, runtimeInfo, "author")
 }
 
@@ -1350,10 +1343,12 @@ type mockAdaptor struct {
 }
 
 func (m *mockAdaptor) Init(_ *relaycommon.RelayInfo) {}
-func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+func (m *mockAdaptor) FetchTask(string, string, *model.Task, string) (*http.Response, error) {
 	return nil, nil
 }
-func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
+func (m *mockAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return m.adjustReturn
 }
