@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -131,7 +132,7 @@ func TestShouldPollSubscriptionUsage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := shouldPollSubscriptionUsage(tc.otherInfo(t), tc.lastAttempt, now)
-			require.Equal(t, tc.want, got)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

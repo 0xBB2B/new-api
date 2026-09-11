@@ -66,10 +66,6 @@
 - [schedule-trigger](quota-reset/schedule-trigger.md) — 额度重置的定时触发：每天/每周/每月三种周期的触发时点按服务器本地时区计算；错过不追赶。
 - [user-visibility](quota-reset/user-visibility.md) — 有生效重置规则的用户在个人页可见下次重置时间与重置值；无生效规则的用户不展示。
 
-## subscription-usage
-
-- [poll-schedule](subscription-usage/poll-schedule.md) — 订阅用量后台轮询按渠道独立计时：下次自动拉取 = 上次成功拉取（手动或自动）+ 1 小时；1 分钟 tick；同一渠道两次尝试间隔 ≥ 1 小时；仅 master、跳过 multi-key。
-
 ## relay-adapter-pattern
 
 - [adaptor-interface-total-method-set](relay-adapter-pattern/adaptor-interface-total-method-set.md) — 每个 provider adapter 实现同一套完整接口方法集；不支持的模态返回 not implemented，不裁剪接口。
@@ -80,3 +76,7 @@
 
 - [optional-scalar-nullable-forwarding](relay-request-shape/optional-scalar-nullable-forwarding.md) — 顶层主请求 DTO 的可选数值/布尔字段用指针 + omitempty，保留显式零值；嵌套结构不受此约束。
 - [unparsed-passthrough-raw-message](relay-request-shape/unparsed-passthrough-raw-message.md) — 网关不理解的 provider 扩展字段用原始 JSON 字节容器承载；逐字节透传到上游。
+
+## subscription-usage
+
+- [poll-schedule](subscription-usage/poll-schedule.md) — 订阅用量后台轮询按渠道独立计时：下次自动拉取 = 上次成功拉取（手动或自动）+ 1 小时；1 分钟 tick；同一渠道两次尝试间隔 ≥ 1 小时；仅 master、跳过 multi-key。

@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -28,16 +27,11 @@ var (
 )
 
 func shouldPollSubscriptionUsage(otherInfo string, lastAttempt time.Time, now time.Time) bool {
-	var updatedAt int64
-	var raw map[string]json.RawMessage
-	if err := common.UnmarshalJsonStr(otherInfo, &raw); err == nil {
-		if data, ok := raw[subscriptionUsageOtherInfoKey]; ok {
-			var snapshot SubscriptionUsageSnapshot
-			if common.Unmarshal(data, &snapshot) == nil {
-				updatedAt = snapshot.UpdatedAt
-			}
-		}
+	var otherInfoData struct {
+		SubscriptionUsage SubscriptionUsageSnapshot `json:"subscription_usage"`
 	}
+	_ = common.UnmarshalJsonStr(otherInfo, &otherInfoData)
+	updatedAt := otherInfoData.SubscriptionUsage.UpdatedAt
 
 	snapshotStale := updatedAt == 0 || now.Sub(time.Unix(updatedAt, 0)) >= subscriptionUsageMinPollInterval
 	if !snapshotStale {
