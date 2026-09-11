@@ -84,13 +84,13 @@ import {
   resetCodexUsage,
   type CodexResetCreditsResponse,
 } from '../../api'
-
-type CodexRateLimitWindow = {
-  used_percent?: number
-  reset_at?: number
-  reset_after_seconds?: number
-  limit_window_seconds?: number
-}
+import {
+  normalizePlanType,
+  resolveRateLimitWindows,
+  windowLabel,
+  type CodexRateLimitWindow,
+  type RateLimitSource,
+} from '../../lib/codex-usage'
 
 type CodexRateLimit = {
   plan_type?: string
@@ -165,11 +165,6 @@ type CodexUsageDialogProps = {
   isRefreshing?: boolean
 }
 
-function clampPercent(value: unknown): number {
-  const v = Number(value)
-  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0
-}
-
 function formatUnixSeconds(unixSeconds: unknown): string {
   const v = Number(unixSeconds)
   return Number.isFinite(v) && v > 0 ? formatTimestampToDate(v) : '-'
@@ -236,13 +231,6 @@ function formatTimeLeftUntil(
   return formatDurationSeconds(secondsLeft, t)
 }
 
-function normalizePlanType(value: unknown): string {
-  if (value == null) {
-    return ''
-  }
-  return String(value).trim().toLowerCase()
-}
-
 function parseTimeValue(value: unknown): number {
   if (typeof value !== 'string' || value.trim() === '') {
     return Number.POSITIVE_INFINITY
@@ -279,66 +267,6 @@ function sortResetCredits(credits: CodexResetCredit[]): CodexResetCredit[] {
 
     return String(a.id || '').localeCompare(String(b.id || ''))
   })
-}
-
-function classifyWindowByDuration(
-  windowData?: CodexRateLimitWindow | null
-): 'weekly' | 'fiveHour' | null {
-  const seconds = Number(windowData?.limit_window_seconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return null
-  }
-  return seconds >= 24 * 60 * 60 ? 'weekly' : 'fiveHour'
-}
-
-type RateLimitSource = {
-  plan_type?: string
-  rate_limit?: CodexRateLimit
-}
-
-function resolveRateLimitWindows(data: RateLimitSource | null): {
-  fiveHourWindow: CodexRateLimitWindow | null
-  weeklyWindow: CodexRateLimitWindow | null
-} {
-  const rateLimit = data?.rate_limit ?? {}
-  const primary = rateLimit?.primary_window ?? null
-  const secondary = rateLimit?.secondary_window ?? null
-  const windows = [primary, secondary].filter(Boolean) as CodexRateLimitWindow[]
-  const planType = normalizePlanType(data?.plan_type ?? rateLimit?.plan_type)
-
-  let fiveHourWindow: CodexRateLimitWindow | null = null
-  let weeklyWindow: CodexRateLimitWindow | null = null
-
-  for (const w of windows) {
-    const bucket = classifyWindowByDuration(w)
-    if (bucket === 'fiveHour' && !fiveHourWindow) {
-      fiveHourWindow = w
-      continue
-    }
-    if (bucket === 'weekly' && !weeklyWindow) {
-      weeklyWindow = w
-    }
-  }
-
-  if (planType === 'free') {
-    if (!weeklyWindow) {
-      weeklyWindow = primary ?? secondary ?? null
-    }
-    return { fiveHourWindow: null, weeklyWindow }
-  }
-
-  if (!fiveHourWindow && !weeklyWindow) {
-    return { fiveHourWindow: primary, weeklyWindow: secondary }
-  }
-
-  if (!fiveHourWindow) {
-    fiveHourWindow = windows.find((w) => w !== weeklyWindow) ?? null
-  }
-  if (!weeklyWindow) {
-    weeklyWindow = windows.find((w) => w !== fiveHourWindow) ?? null
-  }
-
-  return { fiveHourWindow, weeklyWindow }
 }
 
 const PLAN_TYPE_BADGE: Record<
@@ -385,17 +313,6 @@ function getResetCreditStatusBadge(
       variant: 'neutral' as const,
     }
   )
-}
-
-function windowLabel(windowData?: CodexRateLimitWindow | null) {
-  const percent = clampPercent(windowData?.used_percent)
-  let variant: StatusBadgeProps['variant'] = 'info'
-  if (percent >= 95) {
-    variant = 'danger'
-  } else if (percent >= 80) {
-    variant = 'warning'
-  }
-  return { percent, variant }
 }
 
 function getUsageStatusBadge(

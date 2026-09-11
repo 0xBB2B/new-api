@@ -86,6 +86,7 @@ import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { TaskPluginChannelBadge } from './channel-type-badge'
 import { useChannels } from './channels-provider'
+import { CodexUsageBar } from './codex-usage-bar'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
@@ -443,6 +444,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         }
         setCodexUsageResponse(res)
         setCodexUsageOpen(true)
+        void queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        })
       } catch (error) {
         handleServerError(error, t('Failed to fetch usage'))
       } finally {
@@ -500,23 +504,27 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   return (
     <TooltipProvider>
       <div className='-ml-1.5 flex items-center gap-1'>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <StatusBadge
-                label={sensitiveVisible ? usedDisplay : SENSITIVE_MASK}
-                variant='neutral'
-                size='sm'
-                copyable={false}
-                showDot={false}
-                className='cursor-help'
-              />
-            }
-          />
-          <TooltipContent>
-            <p>{sensitiveVisible ? usedLabel : maskedUsedLabel}</p>
-          </TooltipContent>
-        </Tooltip>
+        {channel.type === 57 && sensitiveVisible ? (
+          <CodexUsageBar channel={channel} />
+        ) : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <StatusBadge
+                  label={sensitiveVisible ? usedDisplay : SENSITIVE_MASK}
+                  variant='neutral'
+                  size='sm'
+                  copyable={false}
+                  showDot={false}
+                  className='cursor-help'
+                />
+              }
+            />
+            <TooltipContent>
+              <p>{sensitiveVisible ? usedLabel : maskedUsedLabel}</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -557,6 +565,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
               throw createServerError(res, t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
+            void queryClient.invalidateQueries({
+              queryKey: channelsQueryKeys.lists(),
+            })
           } catch (error) {
             handleServerError(error, t('Failed to fetch usage'))
           } finally {
