@@ -38,7 +38,7 @@ description: 前端共享的用户名称解析函数与 UserIdentityLabel 组件
 
 | 组件 / props | 职责 |
 |---|---|
-| `UserIdentityLabel` | props：`user: UserIdentity`、`masked?: boolean`、`className?`、`onClick?`。渲染主文本 span（`truncate`），包在项目 `Tooltip`/`TooltipTrigger`/`TooltipContent`（`@/components/ui/tooltip`）中，tip 内容为 `describeUserTooltip` 的行；`masked` 为真时只渲染 `••••`、不渲染 Tooltip；`onClick` 存在时主文本可点击（沿用现有用户列 `hover:underline` 样式） |
+| `UserIdentityLabel` | props：`user: UserIdentity`、`masked?: boolean`、`className?`。渲染主文本 span（`truncate`），包在项目 `Tooltip`/`TooltipTrigger`/`TooltipContent`（`@/components/ui/tooltip`）中，tip 内容为 `describeUserTooltip` 的行；`masked` 为真时只渲染 `••••`、不渲染 Tooltip；组件不接管点击，点击弹用户信息由调用方外层 button 承担 |
 
 ## 协作关系
 
