@@ -63,6 +63,7 @@ type Log struct {
 	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
 	Content           string `json:"content"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	DisplayName       string `json:"display_name,omitempty" gorm:"-"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
 	ModelName         string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
 	Quota             int    `json:"quota" gorm:"default:0"`
@@ -550,6 +551,18 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		for i := range logs {
 			logs[i].ChannelName = channelMap[logs[i].ChannelId]
 		}
+	}
+
+	userIds := make([]int, len(logs))
+	for i, log := range logs {
+		userIds[i] = log.UserId
+	}
+	userNames, err := GetUserNamesByIds(userIds)
+	if err != nil {
+		return logs, total, err
+	}
+	for i := range logs {
+		logs[i].DisplayName = userNames[logs[i].UserId].DisplayName
 	}
 
 	return logs, total, err
