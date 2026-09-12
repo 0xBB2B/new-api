@@ -25,8 +25,10 @@ import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { UserIdentityLabel } from '@/components/user-identity-label'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
+import { resolveUserName } from '@/lib/user-identity'
 import { cn } from '@/lib/utils'
 
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
@@ -125,7 +127,7 @@ export function useTaskLogsColumns(
           const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
             useUsageLogsContext()
           const log = row.original
-          const displayName = log.username || String(log.user_id || '?')
+          const avatarName = log.username || resolveUserName(log, t)
 
           return (
             <button
@@ -145,16 +147,18 @@ export function useTaskLogsColumns(
                   )}
                   style={
                     sensitiveVisible
-                      ? getUserAvatarStyle(displayName)
+                      ? getUserAvatarStyle(avatarName)
                       : undefined
                   }
                 >
-                  {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
+                  {sensitiveVisible ? getUserAvatarFallback(avatarName) : '•'}
                 </AvatarFallback>
               </Avatar>
-              <span className='text-muted-foreground truncate text-sm hover:underline'>
-                {sensitiveVisible ? displayName : '••••'}
-              </span>
+              <UserIdentityLabel
+                user={log}
+                masked={!sensitiveVisible}
+                className='text-muted-foreground truncate text-sm hover:underline'
+              />
             </button>
           )
         },

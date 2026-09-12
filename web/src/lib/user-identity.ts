@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { TFunction } from 'i18next'
+type Translate = (key: string, options?: Record<string, unknown>) => string
 
 interface UserIdentity {
   user_id: number
@@ -24,14 +24,14 @@ interface UserIdentity {
   display_name?: string
 }
 
-function resolveUserName(user: UserIdentity, t: TFunction): string {
+function resolveUserName(user: UserIdentity, t: Translate): string {
   const displayName = user.display_name?.trim()
   if (displayName) return displayName
   if (user.username) return user.username
   return t('User {{id}}', { id: user.user_id })
 }
 
-function describeUserTooltip(user: UserIdentity, t: TFunction): string[] {
+function describeUserTooltip(user: UserIdentity, t: Translate): string[] {
   const lines: string[] = []
   if (user.username) {
     lines.push(t('Username: {{name}}', { name: user.username }))

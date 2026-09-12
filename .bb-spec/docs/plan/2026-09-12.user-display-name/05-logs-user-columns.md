@@ -33,14 +33,14 @@ description: 使用日志与任务日志的用户列、移动端卡片、任务�
 
 | 函数 | 职责 |
 |---|---|
-| `UserCell`（既有 cell 组件，改渲染） | 头像 fallback 改用主文本首字符；名称部分替换为 `UserIdentityLabel`，`masked={!sensitiveVisible}`，`onClick` 仍打开用户信息对话框；删除原「超长才显示的 username tip」 |
+| `UserCell`（既有 cell 组件，改渲染） | 头像取色与首字母仍按 username（无 username 时用解析后名称）；名称部分替换为 `UserIdentityLabel`，`masked={!sensitiveVisible}`，`onClick` 仍打开用户信息对话框；删除原「超长才显示的 username tip」 |
 
 ### common-log-mobile-card.tsx（修改）
 
 | 位置 | 职责 |
 |---|---|
 | `user` 字段定义 | `value` 改为 `resolveUserName(log, t)`；`visible` 条件改为 `cells.has('user') && (log.username || log.user_id)` |
-| 用户字段展开区 | 主文本旁增加 `UserIdentityLabel`（`masked={!context.sensitiveVisible}`）；头像 fallback 用主文本 |
+| 用户字段展开区 | 主文本改为 `UserIdentityLabel`（该处只在 `sensitiveVisible` 为真时渲染，无需 masked）；头像仍按 username |
 
 ### task-logs-columns.tsx（修改）
 
