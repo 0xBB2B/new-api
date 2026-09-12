@@ -773,4 +773,28 @@ describe('dashboard flow data', () => {
     expect(linkOpacity(dimmedLink)).toBe(0.08)
     expect(highlightedLink.zIndex > dimmedLink.zIndex).toBe(true)
   })
+
+  test('labels user nodes and filter options with the display name when present', () => {
+    const displayNameRows: FlowQuotaDataItem[] = [
+      { ...rows[0], username: 'oidc_1', display_name: 'Alice Liddell' },
+    ]
+    const result = buildDashboardFlowData(displayNameRows, 'quota', {
+      role: 'admin',
+    })
+    const userNode = result.flow.nodes.find((node) => node.kind === 'user')
+    const options = buildFlowFilterOptions(displayNameRows, 'quota')
+
+    expect(userNode?.id).toBe('user:1')
+    expect(userNode?.label).toBe('Alice Liddell')
+    expect(options.users[0].label).toBe('Alice Liddell')
+  })
+
+  test('falls back to the username when a user node has no display name', () => {
+    const result = buildDashboardFlowData(rows.slice(0, 1), 'quota', {
+      role: 'admin',
+    })
+    const userNode = result.flow.nodes.find((node) => node.kind === 'user')
+
+    expect(userNode?.label).toBe('alice')
+  })
 })

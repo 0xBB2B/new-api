@@ -30,7 +30,7 @@ description: 看板用户排行/趋势图坐标轴与图例显示名称、toolti
 
 | 函数 | 职责 |
 |---|---|
-| `processUserChartData`（既有，改逻辑） | 遍历数据时为每个 username 记录 `user_id` 与解析后的名称，构建 `userLabels`（tooltip 标签，格式见业务规则）与 `userNames`（坐标轴/图例名称）两个 map；数据值对象增加 `Name` 字段；`spec_user_rank` 的 band 轴与 `spec_user_trend` 的 `legends` 通过 VChart `label.formatMethod`（axes）/ `legends.item.label.formatMethod` 把 username 映射为名称；tooltip `key` 仍取 `Label` |
+| `processUserChartData`（既有，改逻辑） | 遍历数据时为每个 username 记录 `user_id` 与解析后的名称，构建 `userLabels`（tooltip 标签，格式见业务规则）与 `userNames`（坐标轴/图例名称）两个 map；`spec_user_rank` 的 band 轴与 `spec_user_trend` 的 `legends` 通过 VChart `label.formatMethod`（axes）/ `legends.item.label.formatMethod` 把 username 映射为名称；tooltip `key` 仍取 `Label` |
 
 `resolveUserName` 来自 04 的 `@/lib/user-identity`；`processUserChartData` 不在 React 上下文中，`t` 用 i18next 单例（与项目 `i18n` 非组件用法一致）。
 
@@ -51,7 +51,7 @@ description: 看板用户排行/趋势图坐标轴与图例显示名称、toolti
 - 测试入口：vitest 直接调用 `processUserChartData`、`buildFlowPaths`（flow.ts 既有测试入口）。
 - 测试输入（沿用既有 `charts.test.ts` 数据）：`{1, oidc_1, 'Alice Liddell'}`、`{2, bob, 'bob'}`、`{9, ghost, 无 display_name}`。
 - 预期结果：
-  - 排行值的 `User` 仍为 `['oidc_1', 'bob', 'ghost']`；`Name` 为 `['Alice Liddell', 'bob', 'ghost']`。
+  - 排行值的 `User` 仍为 `['oidc_1', 'bob', 'ghost']`。
   - tooltip `key` 依次为 `Alice Liddell · oidc_1 · ID:1`、`bob · ID:2`、`ghost · ID:9`。
   - 排行图 band 轴 `label.formatMethod('oidc_1')` 返回 `Alice Liddell`；趋势图图例 `formatMethod('oidc_1')` 返回 `Alice Liddell`。
   - 流向图：行 `{user_id: 1, username: 'oidc_1', display_name: 'Alice Liddell'}` 生成用户节点 `id='user:1'`、`label='Alice Liddell'`；无 display_name 的行 label 为 username。
