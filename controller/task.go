@@ -17,7 +17,6 @@ import (
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -378,7 +377,12 @@ func GetAllTask(c *gin.Context) {
 	queryParams := model.SyncTaskQueryParams{Platform: constant.TaskPlatform(c.Query("platform")), TaskID: c.Query("task_id"), Status: c.Query("status"), Action: c.Query("action"), StartTimestamp: startTimestamp, EndTimestamp: endTimestamp, ChannelID: c.Query("channel_id")}
 	items := model.TaskGetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	pageInfo.SetTotal(int(model.TaskCountAllTasks(queryParams)))
-	pageInfo.SetItems(tasksToDto(items, true, c.GetInt("role")))
+	dtos, err := tasksToDto(items, true, c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetItems(dtos)
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -390,29 +394,34 @@ func GetUserTask(c *gin.Context) {
 	queryParams := model.SyncTaskQueryParams{Platform: constant.TaskPlatform(c.Query("platform")), TaskID: c.Query("task_id"), Status: c.Query("status"), Action: c.Query("action"), StartTimestamp: startTimestamp, EndTimestamp: endTimestamp}
 	items := model.TaskGetAllUserTask(userID, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	pageInfo.SetTotal(int(model.TaskCountAllUserTask(userID, queryParams)))
-	pageInfo.SetItems(tasksToDto(items, false, common.RoleCommonUser))
+	dtos, err := tasksToDto(items, false, common.RoleCommonUser)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetItems(dtos)
 	common.ApiSuccess(c, pageInfo)
 }
 
-func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskDto {
-	var userIDMap map[int]*model.UserBase
+func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) ([]*dto.TaskDto, error) {
+	var userNames map[int]model.UserNames
 	if fillUser {
-		userIDMap = make(map[int]*model.UserBase)
-		userIDs := types.NewSet[int]()
-		for _, task := range tasks {
-			userIDs.Add(task.UserId)
+		userIds := make([]int, len(tasks))
+		for i, task := range tasks {
+			userIds[i] = task.UserId
 		}
-		for _, userID := range userIDs.Items() {
-			if cacheUser, err := model.GetUserCache(userID); err == nil {
-				userIDMap[userID] = cacheUser
-			}
+		names, err := model.GetUserNamesByIds(userIds)
+		if err != nil {
+			return nil, err
 		}
+		userNames = names
 	}
 	result := make([]*dto.TaskDto, len(tasks))
 	for i, task := range tasks {
 		if fillUser {
-			if user, ok := userIDMap[task.UserId]; ok {
-				task.Username = user.Username
+			if names, ok := userNames[task.UserId]; ok {
+				task.Username = names.Username
+				task.DisplayName = names.DisplayName
 			}
 		}
 		item := relay.TaskModel2Dto(task)
@@ -467,7 +476,7 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		}
 		result[i] = item
 	}
-	return result
+	return result, nil
 }
 
 func taskFailReasonIsLegacyResultURL(value string) bool {
