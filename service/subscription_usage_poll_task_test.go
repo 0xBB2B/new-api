@@ -1,13 +1,19 @@
 package service
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func buildSubscriptionUsageOtherInfo(t *testing.T, updatedAt int64) string {
@@ -135,4 +141,48 @@ func TestShouldPollSubscriptionUsage(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestRunSubscriptionUsagePollOnceOnlyAttemptsEnabledChannels(t *testing.T) {
+	originalDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			require.NoError(t, sqlDB.Close())
+		}
+	})
+
+	enabledCodex := &model.Channel{Type: constant.ChannelTypeCodex, Status: common.ChannelStatusEnabled, Name: "enabled-codex", Key: ""}
+	manuallyDisabledClaude := &model.Channel{Type: constant.ChannelTypeClaudeSubscription, Status: common.ChannelStatusManuallyDisabled, Name: "manually-disabled-claude", Key: ""}
+	autoDisabledCodex := &model.Channel{Type: constant.ChannelTypeCodex, Status: common.ChannelStatusAutoDisabled, Name: "auto-disabled-codex", Key: ""}
+	enabledOpenAI := &model.Channel{Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "enabled-openai", Key: ""}
+
+	for _, ch := range []*model.Channel{enabledCodex, manuallyDisabledClaude, autoDisabledCodex, enabledOpenAI} {
+		require.NoError(t, db.Create(ch).Error)
+	}
+
+	subscriptionUsageLastAttempt = make(map[int]time.Time)
+	t.Cleanup(func() {
+		subscriptionUsageLastAttempt = make(map[int]time.Time)
+	})
+
+	runSubscriptionUsagePollOnce()
+
+	_, attempted := subscriptionUsageLastAttempt[enabledCodex.Id]
+	assert.True(t, attempted, "enabled codex channel without a snapshot should be attempted")
+
+	_, attempted = subscriptionUsageLastAttempt[manuallyDisabledClaude.Id]
+	assert.False(t, attempted, "manually disabled channel should not be attempted")
+
+	_, attempted = subscriptionUsageLastAttempt[autoDisabledCodex.Id]
+	assert.False(t, attempted, "auto disabled channel should not be attempted")
+
+	_, attempted = subscriptionUsageLastAttempt[enabledOpenAI.Id]
+	assert.False(t, attempted, "enabled channel of an unrelated type should not be attempted")
 }

@@ -67,10 +67,9 @@ func runSubscriptionUsagePollOnce() {
 	ctx := context.Background()
 	var channels []*model.Channel
 	err := model.DB.
-		Where("type IN ? AND (status = ? OR status = ?)",
+		Where("type IN ? AND status = ?",
 			[]int{constant.ChannelTypeCodex, constant.ChannelTypeClaudeSubscription},
 			common.ChannelStatusEnabled,
-			common.ChannelStatusAutoDisabled,
 		).
 		Order("id asc").
 		Find(&channels).Error
