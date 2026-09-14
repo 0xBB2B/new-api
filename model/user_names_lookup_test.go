@@ -234,25 +234,26 @@ func TestDisplayNameFillOnRealDatabases(t *testing.T) {
 			assert.Equal(t, UserNames{Username: "zhangsan", DisplayName: "张三"}, names[7])
 			assert.Equal(t, UserNames{Username: "lisi", DisplayName: ""}, names[8])
 
+			wantDisplayName := map[int]string{7: "张三", 8: "", 9: "", 0: ""}
 			logs, total, err := GetAllLogs(0, 0, 0, "", "", "", 0, 10, 0, "", "", "")
 			require.NoError(t, err)
 			require.EqualValues(t, 4, total)
 			for _, log := range logs {
-				assert.Equal(t, names[log.UserId].DisplayName, log.DisplayName, "log user %d", log.UserId)
+				assert.Equal(t, wantDisplayName[log.UserId], log.DisplayName, "log user %d", log.UserId)
 			}
 
 			audits, _, err := GetAuditLogs(AuditLogFilter{}, 0, 20, common.RoleAdminUser)
 			require.NoError(t, err)
 			require.Len(t, audits, 3)
 			for _, entry := range audits {
-				assert.Equal(t, names[entry.UserId].DisplayName, entry.DisplayName, "audit user %d", entry.UserId)
+				assert.Equal(t, wantDisplayName[entry.UserId], entry.DisplayName, "audit user %d", entry.UserId)
 			}
 
 			flows, err := GetFlowQuotaData(0, 2000, "", 0, common.RoleAdminUser)
 			require.NoError(t, err)
 			require.Len(t, flows, 2)
 			for _, row := range flows {
-				assert.Equal(t, names[row.UserID].DisplayName, row.DisplayName, "flow user %d", row.UserID)
+				assert.Equal(t, wantDisplayName[row.UserID], row.DisplayName, "flow user %d", row.UserID)
 			}
 		})
 	}
