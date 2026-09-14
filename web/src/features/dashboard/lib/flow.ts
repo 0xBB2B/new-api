@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import type {
   DashboardFlowGraph,
   DashboardFlowLink,
@@ -32,6 +34,7 @@ import type {
   FlowSummary,
   ProcessedFlowData,
 } from '@/features/dashboard/types'
+import { resolveUserName } from '@/lib/user-identity'
 
 import { getDashboardChartColors } from './charts'
 
@@ -171,7 +174,14 @@ function userNode(row: FlowQuotaDataItem): FlowPathNode {
   const userID = numberValue(row.user_id)
   return {
     id: userID > 0 ? `user:${userID}` : `user:${row.username || 'unknown'}`,
-    label: row.username || (userID > 0 ? `user-${userID}` : 'Unknown User'),
+    label: resolveUserName(
+      {
+        user_id: userID,
+        username: row.username,
+        display_name: row.display_name,
+      },
+      t
+    ),
     kind: 'user',
   }
 }

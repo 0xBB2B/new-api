@@ -518,6 +518,43 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	return users, total, nil
 }
 
+type UserNames struct {
+	Username    string
+	DisplayName string
+}
+
+func GetUserNamesByIds(ids []int) (map[int]UserNames, error) {
+	idSet := make(map[int]struct{}, len(ids))
+	uniqueIds := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, ok := idSet[id]; ok {
+			continue
+		}
+		idSet[id] = struct{}{}
+		uniqueIds = append(uniqueIds, id)
+	}
+	result := make(map[int]UserNames, len(uniqueIds))
+	if len(uniqueIds) == 0 {
+		return result, nil
+	}
+
+	var users []struct {
+		Id          int
+		Username    string
+		DisplayName string
+	}
+	if err := DB.Model(&User{}).Select("id, username, display_name").Where("id IN ?", uniqueIds).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		result[user.Id] = UserNames{Username: user.Username, DisplayName: user.DisplayName}
+	}
+	return result, nil
+}
+
 func GetUserById(id int, selectAll bool) (*User, error) {
 	if id == 0 {
 		return nil, errors.New("id 为空！")

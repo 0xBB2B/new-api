@@ -80,3 +80,9 @@
 ## subscription-usage
 
 - [poll-schedule](subscription-usage/poll-schedule.md) — 订阅用量后台轮询按渠道独立计时：下次自动拉取 = 上次成功拉取（手动或自动）+ 1 小时；1 分钟 tick；同一渠道两次尝试间隔 ≥ 1 小时；仅 master、跳过 multi-key。
+
+## user-identity-display
+
+- [id-in-tooltip](user-identity-display/id-in-tooltip.md) — 看板/使用日志/任务日志/审计日志的用户主文本只显示名称；用户名与用户 ID 放悬浮 tip；敏感隐藏模式下不显示 tip。
+- [list-payload-display-name](user-identity-display/list-payload-display-name.md) — 管理端使用日志/任务日志/审计日志/看板流向接口每条记录附带 display_name；按页内去重用户 ID 批量查一次 users 表；缺失用户时该键缺席。
+- [name-resolution](user-identity-display/name-resolution.md) — 用户名称解析：显示名非空取显示名，否则用户名，再否则「用户 {id}」；显示名与用户名相同时只显示一次。

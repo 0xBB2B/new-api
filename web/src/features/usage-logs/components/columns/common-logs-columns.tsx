@@ -35,6 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { UserIdentityLabel } from '@/components/user-identity-label'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import {
   normalizeTierLabel,
@@ -48,6 +49,7 @@ import type { BillingUsageSchema } from '@/features/pricing/types'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
+import { resolveUserName } from '@/lib/user-identity'
 import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
@@ -539,7 +541,9 @@ export function useCommonLogsColumns(
             useUsageLogsContext()
           const log = row.original
 
-          if (!log.username) return null
+          if (!log.user_id) return null
+
+          const avatarName = log.username || resolveUserName(log, t)
 
           return (
             <button
@@ -559,27 +563,18 @@ export function useCommonLogsColumns(
                   )}
                   style={
                     sensitiveVisible
-                      ? getUserAvatarStyle(log.username)
+                      ? getUserAvatarStyle(avatarName)
                       : undefined
                   }
                 >
-                  {sensitiveVisible ? getUserAvatarFallback(log.username) : '•'}
+                  {sensitiveVisible ? getUserAvatarFallback(avatarName) : '•'}
                 </AvatarFallback>
               </Avatar>
-              <TooltipProvider delay={300}>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className='text-muted-foreground max-w-[100px] truncate text-sm hover:underline' />
-                    }
-                  >
-                    {sensitiveVisible ? log.username : '••••'}
-                  </TooltipTrigger>
-                  {sensitiveVisible && log.username.length > 12 && (
-                    <TooltipContent side='top'>{log.username}</TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
+              <UserIdentityLabel
+                user={log}
+                masked={!sensitiveVisible}
+                className='text-muted-foreground max-w-[100px] text-sm hover:underline'
+              />
             </button>
           )
         },

@@ -27,9 +27,11 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { UserIdentityLabel } from '@/components/user-identity-label'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
+import { resolveUserName } from '@/lib/user-identity'
 
 import type { UsageLog } from '../data/schema'
 import { formatModelName, parseLogOther } from '../lib/format'
@@ -94,8 +96,8 @@ export function CommonLogMobileCard<TData>(props: {
     },
     user: {
       label: t('User'),
-      value: log.username,
-      visible: props.cells.has('user') && !!log.username,
+      value: resolveUserName(log, t),
+      visible: props.cells.has('user') && !!log.user_id,
       sensitive: true,
     },
     channel: {
@@ -237,6 +239,10 @@ export function CommonLogMobileCard<TData>(props: {
                   className='border-border/60 bg-muted/30 text-foreground max-w-full rounded-md border px-1.5 py-0.5 text-sm'
                 />
               )
+            } else if (id === 'user') {
+              fieldContent = (
+                <UserIdentityLabel user={log} className='truncate' />
+              )
             }
             return (
               <div key={id} className='flex min-w-0 items-center gap-2'>
@@ -247,12 +253,12 @@ export function CommonLogMobileCard<TData>(props: {
                         className='text-[11px] font-semibold'
                         style={
                           context.sensitiveVisible
-                            ? getUserAvatarStyle(log.username)
+                            ? getUserAvatarStyle(log.username || field.value)
                             : undefined
                         }
                       >
                         {context.sensitiveVisible
-                          ? getUserAvatarFallback(log.username)
+                          ? getUserAvatarFallback(log.username || field.value)
                           : '•'}
                       </AvatarFallback>
                     </Avatar>

@@ -28,6 +28,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { TooltipProvider } from '@/components/ui/tooltip'
 import zh from '@/i18n/locales/zh.json'
 
 import type { AuditLog } from '../api'
@@ -84,7 +85,11 @@ it.each([
     ...entry,
     actor_role: role,
     other: {
-      admin_info: { admin_username: 'literal-name', admin_role: role },
+      admin_info: {
+        admin_id: 1,
+        admin_username: 'literal-name',
+        admin_role: role,
+      },
       op: { action: 'channel.update', params: { id: 42, name: 'batch' } },
     },
   }
@@ -96,7 +101,71 @@ it.each([
   await userEvent.click(screen.getByRole('button', { name: '详情' }))
   const dialog = await screen.findByRole('dialog', { name: '日志详情' })
   expect(within(dialog).getByText(label)).toBeVisible()
-  expect(within(dialog).getByText('literal-name (ID: 1)')).toBeVisible()
+  expect(within(dialog).getByText('literal-name')).toBeVisible()
+  expect(dialog).not.toHaveTextContent('(ID: 1)')
+})
+
+it('resolves the operator from admin_info when present, otherwise from the record, and omits it when neither identifies a user', async () => {
+  const i18n = createInstance()
+  await i18n.init({ lng: 'en' })
+  const own = buildAuditDetails(
+    {
+      ...entry,
+      user_id: 7,
+      username: 'zhangsan',
+      display_name: '张三',
+      other: null,
+    } as AuditLog,
+    i18n.t
+  )
+  expect(own.actor).toEqual({
+    user_id: 7,
+    username: 'zhangsan',
+    display_name: '张三',
+  })
+  const overridden = buildAuditDetails(
+    {
+      ...entry,
+      user_id: 7,
+      username: 'zhangsan',
+      display_name: '张三',
+      other: { admin_info: { admin_id: 1, admin_username: 'root' } },
+    } as AuditLog,
+    i18n.t
+  )
+  expect(overridden.actor).toEqual({ user_id: 1, username: 'root' })
+  const none = buildAuditDetails(
+    { ...entry, user_id: 0, username: '', other: null },
+    i18n.t
+  )
+  expect(none.actor).toBeNull()
+})
+
+it('shows the operator display name and reveals username/user id only on hover', async () => {
+  const i18n = createInstance()
+  await i18n.init({ lng: 'zh', resources: { zh } })
+  const user = userEvent.setup()
+  const log = {
+    ...entry,
+    user_id: 7,
+    username: 'zhangsan',
+    display_name: '张三',
+    other: null,
+  } as AuditLog
+  render(
+    <I18nextProvider i18n={i18n}>
+      <TooltipProvider>
+        <AuditLogDetailsDialog entry={log} />
+      </TooltipProvider>
+    </I18nextProvider>
+  )
+  await user.click(screen.getByRole('button', { name: '详情' }))
+  const dialog = await screen.findByRole('dialog', { name: '日志详情' })
+  const operator = within(dialog).getByText('张三')
+  expect(document.body).not.toHaveTextContent('(ID: 7)')
+  await user.hover(operator)
+  expect(await screen.findByText('用户名：zhangsan')).toBeVisible()
+  expect(await screen.findByText('用户 ID：7')).toBeVisible()
 })
 
 it('uses the returned authentication method for personal access records', async () => {
@@ -337,7 +406,12 @@ it('renders the channel update as a readable summary and compact operation rows 
   expect(
     within(dialog).getByText('Field change details were not recorded')
   ).toBeVisible()
-  expect(within(dialog).getByText('root')).toBeVisible()
+  expect(within(dialog).getByText('Operator').parentElement).toHaveTextContent(
+    'root'
+  )
+  expect(within(dialog).getByText('Role').parentElement).toHaveTextContent(
+    'root'
+  )
   expect(within(dialog).getByText('Session')).toBeVisible()
   expect(within(dialog).getByText(userAgent)).toBeVisible()
   expect(within(dialog).queryByText('Token identifier')).not.toBeInTheDocument()
@@ -494,8 +568,9 @@ it.each([
     expect(within(dialog).getAllByText(summary).length).toBeGreaterThan(0)
     expect(within(dialog).getByText('Failed')).toBeVisible()
     expect(within(dialog).getByText('403')).toBeVisible()
-    expect(within(dialog).queryByText('root')).not.toBeInTheDocument()
-    expect(within(dialog).getByText('user')).toBeVisible()
+    const roleRow = within(dialog).getByText('Role').parentElement
+    expect(roleRow).toHaveTextContent('user')
+    expect(roleRow).not.toHaveTextContent('root')
   }
 )
 

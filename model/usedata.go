@@ -181,35 +181,16 @@ func GetQuotaDataGroupByUser(startTime int64, endTime int64) ([]*UserQuotaData, 
 		return nil, err
 	}
 
-	userIDSet := make(map[int]struct{})
-	userIDs := make([]int, 0)
-	for _, row := range rows {
-		if row.UserID == 0 {
-			continue
-		}
-		if _, ok := userIDSet[row.UserID]; ok {
-			continue
-		}
-		userIDSet[row.UserID] = struct{}{}
-		userIDs = append(userIDs, row.UserID)
+	userIds := make([]int, len(rows))
+	for i, row := range rows {
+		userIds[i] = row.UserID
 	}
-	if len(userIDs) == 0 {
-		return rows, nil
-	}
-
-	var users []struct {
-		Id          int    `gorm:"column:id"`
-		DisplayName string `gorm:"column:display_name"`
-	}
-	if err := DB.Table("users").Select("id, display_name").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+	userNames, err := GetUserNamesByIds(userIds)
+	if err != nil {
 		return nil, err
 	}
-	displayNameByID := make(map[int]string, len(users))
-	for _, user := range users {
-		displayNameByID[user.Id] = user.DisplayName
-	}
 	for _, row := range rows {
-		row.DisplayName = displayNameByID[row.UserID]
+		row.DisplayName = userNames[row.UserID].DisplayName
 	}
 	return rows, nil
 }

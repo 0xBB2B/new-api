@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  flexRender,
   getCoreRowModel,
   useReactTable,
   type VisibilityState,
@@ -25,6 +26,8 @@ import {
 import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
+
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
@@ -53,6 +56,30 @@ const log = usageLogSchema.parse({
     cache_creation_tokens_5m: 200,
     model_ratio: 1,
   }),
+})
+
+const displayNameLog = usageLogSchema.parse({
+  ...log,
+  id: 2,
+  user_id: 7,
+  username: 'zhangsan',
+  display_name: '张三',
+})
+
+const idOnlyLog = usageLogSchema.parse({
+  ...log,
+  id: 3,
+  user_id: 8,
+  username: '',
+  display_name: '',
+})
+
+const noUserLog = usageLogSchema.parse({
+  ...log,
+  id: 4,
+  user_id: 0,
+  username: '',
+  display_name: '',
 })
 
 function Fixture(props: {
@@ -265,4 +292,107 @@ it('shows loading placeholders without displaying stale log fields', () => {
   expect(
     screen.queryByRole('button', { name: /^Model:/ })
   ).not.toBeInTheDocument()
+})
+
+it('defaults display_name to an empty string and preserves an explicit value', () => {
+  const minimal = { id: 10, user_id: 1, created_at: 0, type: 2, content: '' }
+  expect(usageLogSchema.parse(minimal).display_name).toBe('')
+  expect(
+    usageLogSchema.parse({ ...minimal, display_name: '张三' }).display_name
+  ).toBe('张三')
+})
+
+it('shows the resolved display name in the mobile user field', () => {
+  renderLogs({ logs: [displayNameLog] })
+  expect(screen.getByRole('button', { name: 'User: 张三' })).toBeVisible()
+  expect(screen.queryByText('zhangsan')).not.toBeInTheDocument()
+})
+
+it('renders the id fallback name in the mobile user field when no username exists', () => {
+  renderLogs({ logs: [idOnlyLog] })
+  expect(screen.getByRole('button', { name: 'User: User 8' })).toBeVisible()
+})
+
+function DesktopUserCellFixture(props: { logs: UsageLog[] }) {
+  const columns = useCommonLogsColumns(true, false)
+  const context = useUsageLogsContext()
+  const table = useReactTable({
+    data: props.logs,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  })
+  const userCell = table
+    .getRowModel()
+    .rows[0]?.getVisibleCells()
+    .find((cell) => cell.column.id === 'user')
+  return (
+    <>
+      <button type='button' onClick={() => context.setSensitiveVisible(false)}>
+        Hide sensitive data
+      </button>
+      <span data-testid='selected-user-id'>{String(context.selectedUserId)}</span>
+      <span data-testid='dialog-open'>{String(context.userInfoDialogOpen)}</span>
+      <div data-testid='user-cell-slot'>
+        {userCell
+          ? flexRender(userCell.column.columnDef.cell, userCell.getContext())
+          : null}
+      </div>
+    </>
+  )
+}
+
+function renderUserCell(logs: UsageLog[]) {
+  return render(
+    <TooltipProvider delay={0}>
+      <UsageLogsProvider>
+        <DesktopUserCellFixture logs={logs} />
+      </UsageLogsProvider>
+    </TooltipProvider>
+  )
+}
+
+it('shows the resolved display name as the user column primary text without leaking the username', async () => {
+  const user = userEvent.setup()
+  renderUserCell([displayNameLog])
+  const slot = screen.getByTestId('user-cell-slot')
+  expect(within(slot).getByText('张三')).toBeVisible()
+  expect(within(slot).queryByText('zhangsan')).not.toBeInTheDocument()
+  await user.hover(within(slot).getByText('张三'))
+  expect(await screen.findByText('Username: zhangsan')).toBeVisible()
+  expect(await screen.findByText('User ID: 7')).toBeVisible()
+})
+
+it('falls back to the localized id name for the user column when username and display_name are empty', () => {
+  renderUserCell([idOnlyLog])
+  expect(
+    within(screen.getByTestId('user-cell-slot')).getByText('User 8')
+  ).toBeVisible()
+})
+
+it('keeps the user column empty when the row has no user id', () => {
+  renderUserCell([noUserLog])
+  expect(screen.getByTestId('user-cell-slot')).toBeEmptyDOMElement()
+})
+
+it('masks the user column and exposes no identity details while sensitive data is hidden', async () => {
+  const user = userEvent.setup()
+  renderUserCell([displayNameLog])
+  await user.click(screen.getByRole('button', { name: 'Hide sensitive data' }))
+  const slot = screen.getByTestId('user-cell-slot')
+  expect(within(slot).getByText('••••')).toBeVisible()
+  await user.hover(within(slot).getByText('••••'))
+  await waitFor(() => {
+    expect(screen.queryByText('User ID: 7')).not.toBeInTheDocument()
+  })
+  expect(document.body.textContent).not.toContain('zhangsan')
+})
+
+it('opens the user info dialog with the row user id when the user column is clicked', async () => {
+  const user = userEvent.setup()
+  renderUserCell([displayNameLog])
+  await user.click(
+    within(screen.getByTestId('user-cell-slot')).getByRole('button')
+  )
+  expect(screen.getByTestId('selected-user-id')).toHaveTextContent('7')
+  expect(screen.getByTestId('dialog-open')).toHaveTextContent('true')
 })

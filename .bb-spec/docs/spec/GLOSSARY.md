@@ -11,3 +11,5 @@
 | Claude Subscription channel | 用 Claude Max/Pro 订阅的 OAuth 凭据（而非 API key）作上游鉴权的渠道类型，上游为 api.anthropic.com | 简体「Claude 订阅渠道」 |
 | claudeAiOauth credential | Claude Code 存储于 ~/.claude/.credentials.json 的 OAuth 凭据 JSON，含 accessToken/refreshToken/expiresAt（毫秒时间戳） | 简体「OAuth 凭据」 |
 | Claude Code system prompt | OAuth 鉴权硬要求置于首条 system 的身份串 `You are Claude Code, Anthropic's official CLI for Claude.` | 简体「Claude Code 身份 system」 |
+| username | 用户登录名，全站唯一，日志与审计记录中持久保存的用户标识文本，对应 users.username | 简体「用户名」 |
+| display name | 用户可自行修改的展示用名称，允许为空与重名，对应 users.display_name | 简体「显示名」 |

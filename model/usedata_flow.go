@@ -10,6 +10,7 @@ import (
 type FlowQuotaData struct {
 	UserID      int    `json:"user_id,omitempty" gorm:"column:user_id"`
 	Username    string `json:"username,omitempty" gorm:"column:username"`
+	DisplayName string `json:"display_name,omitempty" gorm:"-"`
 	NodeName    string `json:"node_name,omitempty" gorm:"column:node_name"`
 	TokenID     int    `json:"token_id,omitempty" gorm:"column:token_id"`
 	TokenName   string `json:"token_name,omitempty" gorm:"-"`
@@ -68,7 +69,10 @@ func getAdminFlowQuotaData(startTime int64, endTime int64, username string) ([]*
 	if err != nil {
 		return nil, err
 	}
-	return rows, fillFlowChannelNames(rows)
+	if err := fillFlowChannelNames(rows); err != nil {
+		return rows, err
+	}
+	return rows, fillFlowDisplayNames(rows)
 }
 
 func getRootFlowQuotaData(startTime int64, endTime int64, username string) ([]*FlowQuotaData, error) {
@@ -88,7 +92,10 @@ func getRootFlowQuotaData(startTime int64, endTime int64, username string) ([]*F
 	if err := fillFlowTokenNames(rows); err != nil {
 		return rows, err
 	}
-	return rows, fillFlowChannelNames(rows)
+	if err := fillFlowChannelNames(rows); err != nil {
+		return rows, err
+	}
+	return rows, fillFlowDisplayNames(rows)
 }
 
 func fillFlowTokenNames(rows []*FlowQuotaData) error {
@@ -173,6 +180,21 @@ func fillFlowChannelNames(rows []*FlowQuotaData) error {
 		if row.ChannelID > 0 {
 			row.ChannelName = fmt.Sprintf("channel-%d", row.ChannelID)
 		}
+	}
+	return nil
+}
+
+func fillFlowDisplayNames(rows []*FlowQuotaData) error {
+	userIDs := make([]int, len(rows))
+	for i, row := range rows {
+		userIDs[i] = row.UserID
+	}
+	userNames, err := GetUserNamesByIds(userIDs)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		row.DisplayName = userNames[row.UserID].DisplayName
 	}
 	return nil
 }

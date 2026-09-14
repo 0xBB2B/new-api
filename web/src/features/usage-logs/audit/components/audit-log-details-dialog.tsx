@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { UserIdentityLabel } from '@/components/user-identity-label'
 import dayjs from '@/lib/dayjs'
 
 import {
@@ -104,7 +105,10 @@ export function AuditLogDetailsDialog(props: { entry: AuditLog }) {
       {hasOperation && (
         <DetailSection label={t('Operation Audit Info')}>
           {detail.actor && (
-            <DetailRow label={t('Operator')} value={detail.actor} />
+            <DetailRow
+              label={t('Operator')}
+              value={<UserIdentityLabel user={detail.actor} />}
+            />
           )}
           {detail.actorRole && (
             <DetailRow label={t('Role')} value={detail.actorRole} />

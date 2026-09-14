@@ -26,6 +26,7 @@ export interface AuditLog {
   event_id: string
   user_id: number
   username: string
+  display_name?: string
   actor_role: number
   created_at: number
   category: string

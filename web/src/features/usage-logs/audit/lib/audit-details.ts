@@ -20,6 +20,7 @@ import type { TFunction } from 'i18next'
 
 import { loginMethodLabel } from '@/features/security/components/login-session-utils'
 import { ROLE } from '@/lib/roles'
+import type { UserIdentity } from '@/lib/user-identity'
 
 import { renderAuditContent } from '../../lib/format'
 import { buildQuotaAuditOperation } from '../../lib/quota-audit-operation'
@@ -387,17 +388,18 @@ export function buildAuditDetails(entry: AuditLog, t: TFunction) {
   const admin = isAuditDetailObject(metadata.admin_info)
     ? metadata.admin_info
     : {}
-  const actorName =
+  let actor: UserIdentity | null = null
+  if (
+    typeof admin.admin_id === 'number' &&
     typeof admin.admin_username === 'string'
-      ? admin.admin_username
-      : entry.username
-  const actorId =
-    typeof admin.admin_id === 'number' || typeof admin.admin_id === 'string'
-      ? admin.admin_id
-      : entry.user_id
-  let actor = actorName
-  if (actorId) {
-    actor = actorName ? `${actorName} (ID: ${actorId})` : `ID: ${actorId}`
+  ) {
+    actor = { user_id: admin.admin_id, username: admin.admin_username }
+  } else if (entry.user_id !== 0 || entry.username) {
+    actor = {
+      user_id: entry.user_id,
+      username: entry.username || undefined,
+      display_name: entry.display_name,
+    }
   }
   let actorRole = ''
   if ([1, 10, 100].includes(entry.actor_role)) {

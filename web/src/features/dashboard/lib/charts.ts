@@ -26,6 +26,7 @@ import type {
 } from '@/features/dashboard/types'
 import { getCurrencyDisplay } from '@/lib/currency'
 import { formatChartTime, type TimeGranularity } from '@/lib/time'
+import { resolveUserName } from '@/lib/user-identity'
 
 type TFunction = (key: string) => string
 type TooltipLineItem = {
@@ -751,15 +752,28 @@ export function processUserChartData(
   if (!data || data.length === 0) return emptyResult
 
   const userQuotaTotal = new Map<string, number>()
+  const userNames = new Map<string, string>()
   const userLabels = new Map<string, string>()
   data.forEach((item) => {
     const username = item.username || 'unknown'
     const prev = userQuotaTotal.get(username) || 0
     userQuotaTotal.set(username, prev + (Number(item.quota) || 0))
-    const displayName = item.display_name?.trim()
-    if (displayName && displayName !== username) {
-      userLabels.set(username, `${username} (${displayName})`)
-    }
+    const userId = Number(item.user_id) || 0
+    const name = resolveUserName(
+      {
+        user_id: userId,
+        username: item.username,
+        display_name: item.display_name,
+      },
+      tt
+    )
+    userNames.set(username, name)
+    userLabels.set(
+      username,
+      !item.username || name === item.username
+        ? `${name} · ID:${userId}`
+        : `${name} · ${item.username} · ID:${userId}`
+    )
   })
 
   const sorted = Array.from(userQuotaTotal.entries()).sort(
@@ -844,7 +858,13 @@ export function processUserChartData(
         style: { fontSize: 11 },
       },
       axes: [
-        { orient: 'left', type: 'band' },
+        {
+          orient: 'left',
+          type: 'band',
+          label: {
+            formatMethod: (value: string) => userNames.get(value) ?? value,
+          },
+        },
         { orient: 'bottom', type: 'linear', visible: false },
       ],
       tooltip: {
@@ -889,7 +909,15 @@ export function processUserChartData(
         text: tt('User Consumption Trend'),
         subtext: `${tt('Total:')} ${formatVal(totalQuota)}`,
       },
-      legends: { visible: true, selectMode: 'single' },
+      legends: {
+        visible: true,
+        selectMode: 'single',
+        item: {
+          label: {
+            formatMethod: (value: string) => userNames.get(value) ?? value,
+          },
+        },
+      },
       axes: [
         { orient: 'bottom', type: 'band' },
         {
