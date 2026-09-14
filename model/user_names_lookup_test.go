@@ -1,11 +1,15 @@
 package model
 
 import (
+	"os"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func seedUserNamesLookupUsers(t *testing.T) {
@@ -182,4 +186,74 @@ func TestLogJSONOmitsDisplayNameWhenEmptyIncludesWhenSet(t *testing.T) {
 	filled, err := common.Marshal(&Log{UserId: 7, DisplayName: "张三"})
 	require.NoError(t, err)
 	assert.Contains(t, string(filled), `"display_name":"张三"`)
+}
+
+func TestDisplayNameFillOnRealDatabases(t *testing.T) {
+	cases := []struct {
+		dialect string
+		env     string
+		dbType  common.DatabaseType
+		open    func(string) gorm.Dialector
+	}{
+		{dialect: "mysql", env: "TEST_MYSQL_DSN", dbType: common.DatabaseTypeMySQL, open: mysql.Open},
+		{dialect: "postgres", env: "TEST_POSTGRES_DSN", dbType: common.DatabaseTypePostgreSQL, open: postgres.Open},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dialect, func(t *testing.T) {
+			dsn := os.Getenv(tc.env)
+			if dsn == "" {
+				t.Skipf("%s is not configured", tc.env)
+			}
+			db, err := gorm.Open(tc.open(dsn), &gorm.Config{})
+			require.NoError(t, err)
+			tables := []any{&User{}, &Log{}, &AuditLog{}, &QuotaData{}, &Channel{}, &Token{}}
+			require.NoError(t, db.Migrator().DropTable(tables...))
+			require.NoError(t, db.AutoMigrate(tables...))
+
+			previousDB, previousLogDB := DB, LOG_DB
+			previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+			DB, LOG_DB = db, db
+			common.SetDatabaseTypes(tc.dbType, tc.dbType)
+			t.Cleanup(func() {
+				DB, LOG_DB = previousDB, previousLogDB
+				common.SetDatabaseTypes(previousMainType, previousLogType)
+				_ = db.Migrator().DropTable(tables...)
+				if sqlDB, err := db.DB(); err == nil {
+					_ = sqlDB.Close()
+				}
+			})
+
+			seedUserNamesLookupUsers(t)
+			seedDisplayNameLogs(t)
+			seedDisplayNameAuditLogs(t)
+			seedDisplayNameQuotaData(t)
+
+			names, err := GetUserNamesByIds([]int{7, 8, 9, 7, 0})
+			require.NoError(t, err)
+			require.Len(t, names, 2)
+			assert.Equal(t, UserNames{Username: "zhangsan", DisplayName: "张三"}, names[7])
+			assert.Equal(t, UserNames{Username: "lisi", DisplayName: ""}, names[8])
+
+			logs, total, err := GetAllLogs(0, 0, 0, "", "", "", 0, 10, 0, "", "", "")
+			require.NoError(t, err)
+			require.EqualValues(t, 4, total)
+			for _, log := range logs {
+				assert.Equal(t, names[log.UserId].DisplayName, log.DisplayName, "log user %d", log.UserId)
+			}
+
+			audits, _, err := GetAuditLogs(AuditLogFilter{}, 0, 20, common.RoleAdminUser)
+			require.NoError(t, err)
+			require.Len(t, audits, 3)
+			for _, entry := range audits {
+				assert.Equal(t, names[entry.UserId].DisplayName, entry.DisplayName, "audit user %d", entry.UserId)
+			}
+
+			flows, err := GetFlowQuotaData(0, 2000, "", 0, common.RoleAdminUser)
+			require.NoError(t, err)
+			require.Len(t, flows, 2)
+			for _, row := range flows {
+				assert.Equal(t, names[row.UserID].DisplayName, row.DisplayName, "flow user %d", row.UserID)
+			}
+		})
+	}
 }
