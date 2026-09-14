@@ -394,6 +394,63 @@ it.each([
   }
 )
 
+it('shows the record display_name in the user column, never the admin override, and hides the raw username', async () => {
+  const i18n = createInstance()
+  await i18n.init({ lng: 'zh', resources: { zh } })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        total: 2,
+        items: [
+          {
+            event_id: 'user-own',
+            created_at: 1788600600,
+            user_id: 7,
+            username: 'zhangsan',
+            display_name: '张三',
+            actor_role: 1,
+            category: 'operation',
+            action: 'channel.update',
+            success: true,
+            status: 200,
+            other: null,
+          },
+          {
+            event_id: 'user-overridden',
+            created_at: 1788600600,
+            user_id: 7,
+            username: 'zhangsan',
+            display_name: '张三',
+            actor_role: 1,
+            category: 'operation',
+            action: 'channel.update',
+            success: true,
+            status: 200,
+            other: { admin_info: { admin_id: 1, admin_username: 'root' } },
+          },
+        ],
+      },
+    },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>
+        <AuditLogViewer scope='self' />
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  expect(
+    await screen.findByRole('columnheader', { name: '用户' })
+  ).toBeVisible()
+  expect(await screen.findAllByText('张三')).toHaveLength(2)
+  expect(screen.queryByText('zhangsan')).not.toBeInTheDocument()
+  expect(screen.queryByText('root')).not.toBeInTheDocument()
+})
+
 beforeEach(() => {
   vi.stubGlobal('localStorage', {
     getItem: () => null,

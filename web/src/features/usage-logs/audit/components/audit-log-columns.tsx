@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { TruncatedCell } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
+import { UserIdentityLabel } from '@/components/user-identity-label'
 import dayjs from '@/lib/dayjs'
 
 import type { AuditLog } from '../api'
@@ -50,9 +51,10 @@ export function useAuditLogColumns(
       columns.push(
         {
           accessorKey: 'username',
-          header: t('Username'),
+          header: t('User'),
           size: 100,
-          meta: { label: t('Username') },
+          cell: ({ row }) => <UserIdentityLabel user={row.original} />,
+          meta: { label: t('User') },
         },
         {
           id: 'event',

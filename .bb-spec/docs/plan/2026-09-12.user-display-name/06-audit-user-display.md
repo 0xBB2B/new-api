@@ -40,7 +40,7 @@ description: 审计日志用户名列与详情「操作者」行改为名称主�
 | 函数 / 类型 | 职责 |
 |---|---|
 | `AuditDetails.actor`（类型改） | 由 `string` 改为 `UserIdentity | null`（`{ user_id, username, display_name }`） |
-| `buildAuditDetails`（既有，改逻辑） | 保留 admin_info 优先取值逻辑；组装 `actor` 对象而非拼字符串：`user_id` 取 `admin_id` 或 `entry.user_id`，`username` 取 `admin_username` 或 `entry.username`，`display_name` 仅当取自记录本身（无 admin_info 覆盖）时为 `entry.display_name`；三者都空时 `actor` 为 null |
+| `buildAuditDetails`（既有，改逻辑） | 组装 `actor` 对象而非拼字符串：`admin_info` 同时含 number 型 `admin_id` 与 `admin_username` 时整体取管理员身份（无显示名）；否则取记录本身的 `user_id`、`username`、`display_name`；记录 `user_id` 为 0 且 `username` 为空时 `actor` 为 null |
 
 ### audit-log-details-dialog.tsx（修改）
 
