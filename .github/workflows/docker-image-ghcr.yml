@@ -6,9 +6,15 @@ on:
       - main
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to build (e.g. feat/user-display-name)"
+        required: true
+        type: string
 
 concurrency:
-  group: docker-image-ghcr-${{ github.ref }}
+  group: docker-image-ghcr-${{ inputs.branch || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -17,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      publish_latest: ${{ steps.version.outputs.publish_latest }}
     permissions:
       contents: read
     steps:
@@ -24,17 +32,36 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
+          ref: ${{ inputs.branch || github.ref }}
 
       - name: Resolve Docker tags
         id: version
+        env:
+          BRANCH_INPUT: ${{ inputs.branch }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          PUBLISH_LATEST=false
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            PREFIX=$(printf '%s' "$BRANCH_INPUT" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+            PREFIX=${PREFIX:0:96}
+            PREFIX=$(printf '%s' "$PREFIX" | sed -E 's/[.-]+$//')
+            if [ -z "$PREFIX" ]; then
+              echo "::error::Branch '$BRANCH_INPUT' cannot be converted to a valid Docker tag"
+              exit 1
+            fi
+            VERSION="${PREFIX}-$(date +'%Y%m%d')-${SHORT_SHA}"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
             VERSION="$GITHUB_REF_NAME"
           else
-            VERSION="main-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
+            VERSION="main-$(date +'%Y%m%d')-${SHORT_SHA}"
+            PUBLISH_LATEST=true
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Prepared Docker tags: $VERSION"
+          {
+            echo "version=$VERSION"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "publish_latest=$PUBLISH_LATEST"
+          } >> "$GITHUB_OUTPUT"
+          echo "Prepared Docker tags: $VERSION (latest: $PUBLISH_LATEST)"
 
   build_single_arch:
     name: Build & push (${{ matrix.arch }}) [native]
@@ -58,6 +85,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - name: Write VERSION
         run: |
@@ -89,7 +117,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/0xbb2b/new-api:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
-            ${{ github.ref_type == 'branch' && format('ghcr.io/0xbb2b/new-api:latest-{0}', matrix.arch) || '' }}
+            ${{ needs.prepare.outputs.publish_latest == 'true' && format('ghcr.io/0xbb2b/new-api:latest-{0}', matrix.arch) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -119,7 +147,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create & push manifest (latest)
-        if: github.ref_type == 'branch'
+        if: needs.prepare.outputs.publish_latest == 'true'
         run: |
           docker buildx imagetools create \
             -t ghcr.io/0xbb2b/new-api:latest \
