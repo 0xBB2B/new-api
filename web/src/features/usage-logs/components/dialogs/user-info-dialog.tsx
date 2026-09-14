@@ -54,6 +54,7 @@ export function UserInfoDialog({
 
   const fetchUserInfo = useCallback(
     async (id: number) => {
+      setUserInfo(null)
       setIsLoading(true)
       try {
         const result = await getUserInfo(id)
