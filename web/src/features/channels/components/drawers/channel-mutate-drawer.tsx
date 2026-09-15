@@ -2201,7 +2201,7 @@ export function ChannelMutateDrawer({
                         <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
                           <fieldset
                             disabled={sensitiveLocked}
-                            className='space-y-4 disabled:opacity-60'
+                            className='min-w-0 space-y-4 disabled:opacity-60'
                           >
                             {/* Azure (type 3) */}
                             {currentType === 3 && (
