@@ -53,15 +53,43 @@ const usageVariantClassName: Record<
   },
 }
 
+function UsageRow({
+  label,
+  percent,
+  variant,
+  ariaLabel,
+}: {
+  label?: string
+  percent: number
+  variant: UsageVariant
+  ariaLabel: string
+}) {
+  const classes = usageVariantClassName[variant]
+  return (
+    <>
+      {label !== undefined && (
+        <span className='text-muted-foreground w-4 text-[10px]'>{label}</span>
+      )}
+      <Progress
+        value={percent}
+        aria-label={ariaLabel}
+        className={cn('w-14 gap-0', classes.indicator)}
+      />
+      <span className={cn('text-xs tabular-nums', classes.text)}>
+        {Math.round(percent)}%
+      </span>
+    </>
+  )
+}
+
 export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
   const snapshot = parseSubscriptionUsageSnapshot(channel.other_info)
   const { fiveHourWindow, weeklyWindow } = resolveRateLimitWindows(
     snapshot ? { plan_type: snapshot.plan_type, rate_limit: snapshot } : null
   )
-  const primary = weeklyWindow ?? fiveHourWindow
 
-  if (!primary) {
+  if (!fiveHourWindow && !weeklyWindow) {
     return (
       <Tooltip>
         <TooltipTrigger
@@ -76,26 +104,42 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
     )
   }
 
-  const { percent, variant } = windowLabel(primary)
-  const classes = usageVariantClassName[variant]
   const updatedAt = Number(snapshot?.updated_at)
+
+  let content
+  if (fiveHourWindow && weeklyWindow) {
+    const fiveHour = windowLabel(fiveHourWindow)
+    const weekly = windowLabel(weeklyWindow)
+    content = (
+      <div className='grid cursor-help grid-cols-[auto_auto_auto] items-center gap-x-1.5 gap-y-0.5'>
+        <UsageRow
+          label='5h'
+          {...fiveHour}
+          ariaLabel={`${t('5-Hour Window')}: ${Math.round(fiveHour.percent)}%`}
+        />
+        <UsageRow
+          label='7d'
+          {...weekly}
+          ariaLabel={`${t('Weekly Window')}: ${Math.round(weekly.percent)}%`}
+        />
+      </div>
+    )
+  } else {
+    const single = windowLabel(fiveHourWindow ?? weeklyWindow)
+    const labelKey = fiveHourWindow ? '5-Hour Window' : 'Weekly Window'
+    content = (
+      <div className='flex cursor-help items-center gap-1.5'>
+        <UsageRow
+          {...single}
+          ariaLabel={`${t(labelKey)}: ${Math.round(single.percent)}%`}
+        />
+      </div>
+    )
+  }
 
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <div className='flex cursor-help items-center gap-1.5'>
-            <Progress
-              value={percent}
-              aria-label={`${t('Weekly Window')}: ${Math.round(percent)}%`}
-              className={cn('w-14 gap-0', classes.indicator)}
-            />
-            <span className={cn('text-xs tabular-nums', classes.text)}>
-              {Math.round(percent)}%
-            </span>
-          </div>
-        }
-      />
+      <TooltipTrigger render={content} />
       <TooltipContent>
         {Number.isFinite(updatedAt) && updatedAt > 0 && (
           <p>
