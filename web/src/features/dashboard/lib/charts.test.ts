@@ -31,6 +31,7 @@ interface UserChartSpecShape {
   label?: { formatMethod?: (value: number) => string }
   axes?: Array<{
     orient: string
+    max?: number
     label?: { formatMethod?: (value: string | number) => string }
   }>
   legends: {
@@ -161,6 +162,14 @@ describe('processUserChartData', () => {
     expect(rank.tooltip.mark.content[0].value(rank.data[0].values[0])).toBe(
       '2,100,000,000'
     )
+  })
+
+  test('reserves headroom past the longest bar so its outside label is not pushed inside', () => {
+    const result = processUserChartData(rows, 'day', undefined, 10, 'tokens')
+    const rank = result.spec_user_rank as unknown as UserChartSpecShape
+    const bottomAxis = rank.axes?.find((axis) => axis.orient === 'bottom')
+
+    expect(bottomAxis?.max).toBeCloseTo(5_000 * 1.15)
   })
 
   test('resolves the band axis and legend labels from the username to the display name', () => {
