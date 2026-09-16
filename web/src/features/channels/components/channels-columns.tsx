@@ -55,7 +55,7 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
-import { truncateText } from '@/lib/utils'
+import { cn, truncateText } from '@/lib/utils'
 
 import {
   getClaudeUsage,
@@ -533,10 +533,14 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeVariant = 'neutral'
   }
 
+  const showUsageBar = isSubscriptionChannel && sensitiveVisible
+
   return (
     <TooltipProvider>
-      <div className='-ml-1.5 flex items-center gap-1'>
-        {isSubscriptionChannel && sensitiveVisible ? (
+      <div
+        className={cn('flex items-center gap-1', !showUsageBar && '-ml-1.5')}
+      >
+        {showUsageBar ? (
           <SubscriptionUsageBar channel={channel} />
         ) : (
           <Tooltip>

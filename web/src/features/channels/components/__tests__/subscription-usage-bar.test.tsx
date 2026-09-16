@@ -1,0 +1,163 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { render, screen } from '@testing-library/react'
+import { describe, expect, test } from 'vitest'
+
+import { TooltipProvider } from '@/components/ui/tooltip'
+
+import type { Channel } from '../../types'
+import { SubscriptionUsageBar } from '../subscription-usage-bar'
+
+function channelWithOtherInfo(otherInfo: string): Channel {
+  return { id: 1, type: 1, other_info: otherInfo } as unknown as Channel
+}
+
+function channelWithUsage(subscriptionUsage: object): Channel {
+  return channelWithOtherInfo(
+    JSON.stringify({ subscription_usage: subscriptionUsage })
+  )
+}
+
+function renderBar(channel: Channel) {
+  return render(
+    <TooltipProvider>
+      <SubscriptionUsageBar channel={channel} />
+    </TooltipProvider>
+  )
+}
+
+describe('SubscriptionUsageBar', () => {
+  test('renders 5h row above 7d row with labels, percentages and per-window aria-labels when both windows exist', () => {
+    renderBar(
+      channelWithUsage({
+        plan_type: 'team',
+        primary_window: { used_percent: 29, limit_window_seconds: 18000 },
+        secondary_window: { used_percent: 31, limit_window_seconds: 604800 },
+        updated_at: 1700000000,
+      })
+    )
+
+    const fiveHLabel = screen.getByText('5h')
+    const sevenDLabel = screen.getByText('7d')
+    expect(
+      fiveHLabel.compareDocumentPosition(sevenDLabel) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(screen.getByText('29%')).toBeInTheDocument()
+    expect(screen.getByText('31%')).toBeInTheDocument()
+
+    const progressBars = screen.getAllByRole('progressbar')
+    expect(progressBars).toHaveLength(2)
+    expect(progressBars[0]).toHaveAttribute('aria-label', '5-Hour Window: 29%')
+    expect(progressBars[1]).toHaveAttribute('aria-label', 'Weekly Window: 31%')
+  })
+
+  test('colors each row independently: >=95% destructive, <80% info', () => {
+    renderBar(
+      channelWithUsage({
+        plan_type: 'team',
+        primary_window: { used_percent: 96, limit_window_seconds: 18000 },
+        secondary_window: { used_percent: 40, limit_window_seconds: 604800 },
+      })
+    )
+
+    const ninetySix = screen.getByText('96%')
+    const forty = screen.getByText('40%')
+    expect(ninetySix.className).toContain('text-destructive')
+    expect(forty.className).toContain('text-info')
+
+    const progressBars = screen.getAllByRole('progressbar')
+    expect(progressBars[0].className).toContain('bg-destructive')
+    expect(progressBars[1].className).toContain('bg-info')
+  })
+
+  test.each([
+    [79, 'text-info', 'bg-info'],
+    [80, 'text-warning', 'bg-warning'],
+    [94, 'text-warning', 'bg-warning'],
+    [95, 'text-destructive', 'bg-destructive'],
+  ])(
+    'grades a single-window row at %s%% with %s / %s',
+    (usedPercent, textClass, barClass) => {
+      renderBar(
+        channelWithUsage({
+          plan_type: 'free',
+          primary_window: {
+            used_percent: usedPercent,
+            limit_window_seconds: 604800,
+          },
+        })
+      )
+
+      const percentText = screen.getByText(`${usedPercent}%`)
+      expect(percentText.className).toContain(textClass)
+      expect(screen.getByRole('progressbar').className).toContain(barClass)
+    }
+  )
+
+  test('renders a single row without 5h/7d labels when only one window exists', () => {
+    renderBar(
+      channelWithUsage({
+        plan_type: 'free',
+        primary_window: { used_percent: 31, limit_window_seconds: 604800 },
+      })
+    )
+
+    expect(screen.getByText('31%')).toBeInTheDocument()
+    expect(screen.queryByText('5h')).not.toBeInTheDocument()
+    expect(screen.queryByText('7d')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('progressbar')).toHaveLength(1)
+  })
+
+  test('labels the single remaining progressbar as the 5-hour window when only that window exists', () => {
+    renderBar(
+      channelWithUsage({
+        plan_type: 'team',
+        primary_window: { used_percent: 50, limit_window_seconds: 18000 },
+      })
+    )
+
+    expect(screen.queryByText('5h')).not.toBeInTheDocument()
+    expect(screen.queryByText('7d')).not.toBeInTheDocument()
+    const progressBars = screen.getAllByRole('progressbar')
+    expect(progressBars).toHaveLength(1)
+    expect(progressBars[0]).toHaveAttribute('aria-label', '5-Hour Window: 50%')
+  })
+
+  test('shows "-" when other_info is empty', () => {
+    renderBar(channelWithOtherInfo(''))
+
+    expect(screen.getByText('-')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
+  test('shows "-" when the snapshot has neither window', () => {
+    renderBar(channelWithUsage({ plan_type: 'team', updated_at: 1700000000 }))
+
+    expect(screen.getByText('-')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
+  test('shows "-" when other_info is not valid JSON', () => {
+    renderBar(channelWithOtherInfo('{not valid json'))
+
+    expect(screen.getByText('-')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+})
