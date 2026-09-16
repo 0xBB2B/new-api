@@ -59,7 +59,7 @@ function UsageRow({
   variant,
   ariaLabel,
 }: {
-  label?: string
+  label: string
   percent: number
   variant: UsageVariant
   ariaLabel: string
@@ -67,9 +67,7 @@ function UsageRow({
   const classes = usageVariantClassName[variant]
   return (
     <>
-      {label !== undefined && (
-        <span className='text-muted-foreground w-4 text-[10px]'>{label}</span>
-      )}
+      <span className='text-muted-foreground w-4 text-[10px]'>{label}</span>
       <Progress
         value={percent}
         aria-label={ariaLabel}
@@ -105,37 +103,27 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
   }
 
   const updatedAt = Number(snapshot?.updated_at)
+  const fiveHour = windowLabel(fiveHourWindow)
+  const weekly = windowLabel(weeklyWindow)
 
-  let content
-  if (fiveHourWindow && weeklyWindow) {
-    const fiveHour = windowLabel(fiveHourWindow)
-    const weekly = windowLabel(weeklyWindow)
-    content = (
-      <div className='grid cursor-help grid-cols-[auto_auto_auto] items-center gap-x-1.5 gap-y-0.5'>
+  const content = (
+    <div className='grid cursor-help grid-cols-[auto_auto_auto] items-center gap-x-1.5 gap-y-0.5'>
+      {fiveHourWindow && (
         <UsageRow
           label='5h'
           {...fiveHour}
           ariaLabel={`${t('5-Hour Window')}: ${Math.round(fiveHour.percent)}%`}
         />
+      )}
+      {weeklyWindow && (
         <UsageRow
           label='7d'
           {...weekly}
           ariaLabel={`${t('Weekly Window')}: ${Math.round(weekly.percent)}%`}
         />
-      </div>
-    )
-  } else {
-    const single = windowLabel(fiveHourWindow ?? weeklyWindow)
-    const labelKey = fiveHourWindow ? '5-Hour Window' : 'Weekly Window'
-    content = (
-      <div className='flex cursor-help items-center gap-1.5'>
-        <UsageRow
-          {...single}
-          ariaLabel={`${t(labelKey)}: ${Math.round(single.percent)}%`}
-        />
-      </div>
-    )
-  }
+      )}
+    </div>
+  )
 
   return (
     <Tooltip>
