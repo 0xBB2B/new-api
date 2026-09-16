@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils'
 import {
   formatDurationSeconds,
   formatUnixSeconds,
+  resetCountdownSeconds,
   windowLabel,
   type CodexRateLimitWindow,
 } from '../../lib/subscription-usage'
@@ -66,6 +67,7 @@ const percentTextClassName: Record<
 type RateLimitWindowProps = {
   title: string
   window?: CodexRateLimitWindow | null
+  nowMs: number
 }
 
 function RateLimitWindow(props: RateLimitWindowProps) {
@@ -131,7 +133,10 @@ function RateLimitWindow(props: RateLimitWindowProps) {
             </div>
             <div className='tabular-nums'>
               {hasData
-                ? formatDurationSeconds(props.window?.reset_after_seconds, t)
+                ? formatDurationSeconds(
+                    resetCountdownSeconds(props.window, props.nowMs),
+                    t
+                  )
                 : '-'}
             </div>
           </div>
@@ -146,14 +151,20 @@ export function RateLimitWindowGrid(props: {
   weeklyWindow?: CodexRateLimitWindow | null
 }) {
   const { t } = useTranslation()
+  const nowMs = Date.now()
 
   return (
     <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
       <RateLimitWindow
         title={t('5-Hour Window')}
         window={props.fiveHourWindow}
+        nowMs={nowMs}
       />
-      <RateLimitWindow title={t('Weekly Window')} window={props.weeklyWindow} />
+      <RateLimitWindow
+        title={t('Weekly Window')}
+        window={props.weeklyWindow}
+        nowMs={nowMs}
+      />
     </div>
   )
 }
