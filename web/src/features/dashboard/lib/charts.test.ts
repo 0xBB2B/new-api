@@ -71,6 +71,9 @@ describe('processUserChartData', () => {
       'bob · ID:2',
       'ghost · ID:9',
     ])
+    expect(
+      rankValues.map((v) => rank.tooltip.dimension?.content[0].key(v))
+    ).toEqual(['Alice Liddell · oidc_1 · ID:1', 'bob · ID:2', 'ghost · ID:9'])
 
     const trendValues = trend.data[0].values
     const aliceTrend = trendValues.find((v) => v.User === 'oidc_1')
