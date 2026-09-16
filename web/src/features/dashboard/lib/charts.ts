@@ -796,6 +796,7 @@ export function processUserChartData(
     Label: userLabels.get(username) ?? username,
     rawValue: value,
   }))
+  const rankAxisMax = rankValues[0].rawValue * RANK_LABEL_HEADROOM
 
   const userColorMap = topUsers.reduce<Record<string, string>>(
     (acc, user, i) => {
@@ -881,7 +882,7 @@ export function processUserChartData(
           orient: 'bottom',
           type: 'linear',
           visible: false,
-          max: rankValues[0].rawValue * RANK_LABEL_HEADROOM,
+          max: rankAxisMax > 0 ? rankAxisMax : undefined,
         },
       ],
       tooltip: {

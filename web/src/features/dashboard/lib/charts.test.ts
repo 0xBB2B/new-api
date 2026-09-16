@@ -169,7 +169,18 @@ describe('processUserChartData', () => {
     const rank = result.spec_user_rank as unknown as UserChartSpecShape
     const bottomAxis = rank.axes?.find((axis) => axis.orient === 'bottom')
 
-    expect(bottomAxis?.max).toBeCloseTo(5_000 * 1.15)
+    expect(bottomAxis?.max).toBeCloseTo(5_750)
+  })
+
+  test('leaves the value axis domain to VChart when every user total is zero', () => {
+    const result = processUserChartData(
+      [{ user_id: 1, username: 'a', created_at: 1_700_000_000, quota: 0 }],
+      'day'
+    )
+    const rank = result.spec_user_rank as unknown as UserChartSpecShape
+    const bottomAxis = rank.axes?.find((axis) => axis.orient === 'bottom')
+
+    expect(bottomAxis?.max).toBeUndefined()
   })
 
   test('resolves the band axis and legend labels from the username to the display name', () => {
