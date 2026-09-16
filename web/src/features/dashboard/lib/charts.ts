@@ -26,6 +26,7 @@ import type {
   UserChartMetric,
 } from '@/features/dashboard/types'
 import { getCurrencyDisplay } from '@/lib/currency'
+import { formatCompactNumber } from '@/lib/format'
 import { formatChartTime, type TimeGranularity } from '@/lib/time'
 import { resolveUserName } from '@/lib/user-identity'
 
@@ -718,6 +719,8 @@ export function processUserChartData(
     useTokens
       ? Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(raw)
       : renderQuotaCompat(raw, 2)
+  const formatShort = (raw: number) =>
+    useTokens ? formatCompactNumber(raw, 'en') : renderQuotaCompat(raw, 2)
 
   const emptyResult: ProcessedUserChartData = {
     spec_user_rank: {
@@ -852,7 +855,7 @@ export function processUserChartData(
       title: {
         visible: true,
         text: tt('User Consumption Ranking'),
-        subtext: `${tt('Total:')} ${formatVal(total)}`,
+        subtext: `${tt('Total:')} ${formatShort(total)}`,
       },
       legends: { visible: false },
       bar: {
@@ -861,7 +864,7 @@ export function processUserChartData(
       label: {
         visible: true,
         position: 'outside',
-        formatMethod: (value: number) => formatVal(value),
+        formatMethod: (value: number) => formatShort(value),
         style: { fontSize: 11 },
       },
       axes: [
@@ -909,7 +912,7 @@ export function processUserChartData(
       title: {
         visible: true,
         text: tt('User Consumption Trend'),
-        subtext: `${tt('Total:')} ${formatVal(total)}`,
+        subtext: `${tt('Total:')} ${formatShort(total)}`,
       },
       legends: {
         visible: true,
@@ -926,7 +929,7 @@ export function processUserChartData(
           orient: 'left',
           type: 'linear',
           label: {
-            formatMethod: (value: number) => formatVal(value),
+            formatMethod: (value: number) => formatShort(value),
           },
         },
       ],
