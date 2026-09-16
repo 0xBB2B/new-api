@@ -21,7 +21,6 @@ import { formatTimestampToDate } from '@/lib/format'
 export type CodexRateLimitWindow = {
   used_percent?: number
   reset_at?: number
-  reset_after_seconds?: number
   limit_window_seconds?: number
 }
 
@@ -145,6 +144,18 @@ export function parseSubscriptionUsageSnapshot(
 export function formatUnixSeconds(unixSeconds: unknown): string {
   const v = Number(unixSeconds)
   return Number.isFinite(v) && v > 0 ? formatTimestampToDate(v) : '-'
+}
+
+export function resetCountdownSeconds(
+  windowData: CodexRateLimitWindow | null | undefined,
+  nowMs: number
+): number | null {
+  const resetAt = Number(windowData?.reset_at)
+  if (!Number.isFinite(resetAt) || resetAt <= 0) {
+    return null
+  }
+  const remaining = Math.floor(resetAt - nowMs / 1000)
+  return remaining > 0 ? remaining : null
 }
 
 export function formatDurationSeconds(

@@ -22,8 +22,10 @@ import { describe, test } from 'vitest'
 
 import {
   parseSubscriptionUsageSnapshot,
+  resetCountdownSeconds,
   resolveRateLimitWindows,
   windowLabel,
+  type CodexRateLimitWindow,
 } from '../subscription-usage'
 
 describe('parseSubscriptionUsageSnapshot', () => {
@@ -104,5 +106,71 @@ describe('windowLabel', () => {
       variant: 'danger',
     })
     assert.deepEqual(windowLabel(null), { percent: 0, variant: 'info' })
+  })
+})
+
+describe('resetCountdownSeconds', () => {
+  test('derives whole seconds remaining from reset_at minus now', () => {
+    assert.equal(
+      resetCountdownSeconds({ reset_at: 1700003600 }, 1700000000000),
+      3600
+    )
+    assert.equal(
+      resetCountdownSeconds({ reset_at: 1700000090 }, 1700000000000),
+      90
+    )
+    assert.equal(
+      resetCountdownSeconds({ reset_at: 1700000045 }, 1700000000000),
+      45
+    )
+  })
+
+  test('floors sub-second remainders instead of rounding', () => {
+    assert.equal(
+      resetCountdownSeconds({ reset_at: 1700003600 }, 1700000000500),
+      3599
+    )
+  })
+
+  test('ignores reset_after_seconds and other relative fields', () => {
+    const windowWithRelativeField = {
+      reset_at: 1700003600,
+      reset_after_seconds: 99,
+    }
+    assert.equal(
+      resetCountdownSeconds(windowWithRelativeField, 1700000000000),
+      3600
+    )
+  })
+
+  test('returns null once the reset moment has passed', () => {
+    assert.equal(
+      resetCountdownSeconds({ reset_at: 1699999000 }, 1700000000000),
+      null
+    )
+  })
+
+  test('returns null when reset_at is missing, non-numeric, or non-positive', () => {
+    assert.equal(
+      resetCountdownSeconds(
+        { used_percent: 0, limit_window_seconds: 18000 },
+        1700000000000
+      ),
+      null
+    )
+    assert.equal(
+      resetCountdownSeconds(
+        { reset_at: 'soon' } as unknown as CodexRateLimitWindow,
+        1700000000000
+      ),
+      null
+    )
+    assert.equal(resetCountdownSeconds({ reset_at: 0 }, 1700000000000), null)
+    assert.equal(resetCountdownSeconds({ reset_at: -5 }, 1700000000000), null)
+  })
+
+  test('returns null for a null or undefined window', () => {
+    assert.equal(resetCountdownSeconds(null, 1700000000000), null)
+    assert.equal(resetCountdownSeconds(undefined, 1700000000000), null)
   })
 })
