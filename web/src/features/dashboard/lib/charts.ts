@@ -704,6 +704,8 @@ const USER_COLORS = [
   '#5D7092',
 ]
 
+const RANK_LABEL_HEADROOM = 1.15
+
 export function processUserChartData(
   data: QuotaDataItem[],
   timeGranularity: TimeGranularity = 'day',
@@ -794,6 +796,7 @@ export function processUserChartData(
     Label: userLabels.get(username) ?? username,
     rawValue: value,
   }))
+  const rankAxisMax = rankValues[0].rawValue * RANK_LABEL_HEADROOM
 
   const userColorMap = topUsers.reduce<Record<string, string>>(
     (acc, user, i) => {
@@ -875,7 +878,12 @@ export function processUserChartData(
             formatMethod: (value: string) => userNames.get(value) ?? value,
           },
         },
-        { orient: 'bottom', type: 'linear', visible: false },
+        {
+          orient: 'bottom',
+          type: 'linear',
+          visible: false,
+          max: rankAxisMax > 0 ? rankAxisMax : undefined,
+        },
       ],
       tooltip: {
         mark: {
