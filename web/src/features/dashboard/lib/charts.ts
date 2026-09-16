@@ -834,6 +834,14 @@ export function processUserChartData(
     })
   })
 
+  const rankTooltipContent = [
+    {
+      key: (datum: Record<string, unknown>) => datum?.Label,
+      value: (datum: Record<string, unknown>) =>
+        formatVal(Number(datum?.rawQuota) || 0),
+    },
+  ]
+
   return {
     spec_user_rank: {
       type: 'bar',
@@ -869,13 +877,7 @@ export function processUserChartData(
       ],
       tooltip: {
         mark: {
-          content: [
-            {
-              key: (datum: Record<string, unknown>) => datum?.Label,
-              value: (datum: Record<string, unknown>) =>
-                formatVal(Number(datum?.rawQuota) || 0),
-            },
-          ],
+          content: rankTooltipContent,
           updateContent: (
             array: Array<{
               key: string
@@ -892,6 +894,7 @@ export function processUserChartData(
             return array
           },
         },
+        dimension: { content: rankTooltipContent },
       },
       color: { specified: userColorMap },
       background: { fill: 'transparent' },
