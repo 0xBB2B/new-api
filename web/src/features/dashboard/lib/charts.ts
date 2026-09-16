@@ -23,6 +23,7 @@ import type {
   QuotaDataItem,
   ProcessedChartData,
   ProcessedUserChartData,
+  UserChartMetric,
 } from '@/features/dashboard/types'
 import { getCurrencyDisplay } from '@/lib/currency'
 import { formatChartTime, type TimeGranularity } from '@/lib/time'
@@ -706,19 +707,23 @@ export function processUserChartData(
   data: QuotaDataItem[],
   timeGranularity: TimeGranularity = 'day',
   t?: TFunction,
-  limit = 10
+  limit = 10,
+  metric: UserChartMetric = 'quota'
 ): ProcessedUserChartData {
   const tt: TFunction = t ?? ((x) => x)
-  const { config } = getCurrencyDisplay()
-  const quotaPerUnit = config.quotaPerUnit
-
-  const formatVal = (raw: number) => renderQuotaCompat(raw, 2)
+  const useTokens = metric === 'tokens'
+  const metricValue = (item: QuotaDataItem) =>
+    Number(useTokens ? item.token_used : item.quota) || 0
+  const formatVal = (raw: number) =>
+    useTokens
+      ? Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(raw)
+      : renderQuotaCompat(raw, 2)
 
   const emptyResult: ProcessedUserChartData = {
     spec_user_rank: {
       type: 'bar',
       data: [{ id: 'userRankData', values: [] }],
-      xField: 'rawQuota',
+      xField: 'rawValue',
       yField: 'User',
       seriesField: 'User',
       direction: 'horizontal',
@@ -735,7 +740,7 @@ export function processUserChartData(
       type: 'area',
       data: [{ id: 'userTrendData', values: [] }],
       xField: 'Time',
-      yField: 'rawQuota',
+      yField: 'rawValue',
       seriesField: 'User',
       title: {
         visible: true,
@@ -751,13 +756,13 @@ export function processUserChartData(
 
   if (!data || data.length === 0) return emptyResult
 
-  const userQuotaTotal = new Map<string, number>()
+  const userTotal = new Map<string, number>()
   const userNames = new Map<string, string>()
   const userLabels = new Map<string, string>()
   data.forEach((item) => {
     const username = item.username || 'unknown'
-    const prev = userQuotaTotal.get(username) || 0
-    userQuotaTotal.set(username, prev + (Number(item.quota) || 0))
+    const prev = userTotal.get(username) || 0
+    userTotal.set(username, prev + metricValue(item))
     const userId = Number(item.user_id) || 0
     const name = resolveUserName(
       {
@@ -776,18 +781,15 @@ export function processUserChartData(
     )
   })
 
-  const sorted = Array.from(userQuotaTotal.entries()).sort(
-    (a, b) => b[1] - a[1]
-  )
+  const sorted = Array.from(userTotal.entries()).sort((a, b) => b[1] - a[1])
   const topUsers = sorted.slice(0, limit).map(([u]) => u)
   const topUserSet = new Set(topUsers)
-  const totalQuota = sorted.slice(0, limit).reduce((s, [, q]) => s + q, 0)
+  const total = sorted.slice(0, limit).reduce((s, [, v]) => s + v, 0)
 
-  const rankValues = sorted.slice(0, limit).map(([username, quota]) => ({
+  const rankValues = sorted.slice(0, limit).map(([username, value]) => ({
     User: username,
     Label: userLabels.get(username) ?? username,
-    rawQuota: quota,
-    Usage: Number((quota / quotaPerUnit).toFixed(4)),
+    rawValue: value,
   }))
 
   const userColorMap = topUsers.reduce<Record<string, string>>(
@@ -809,7 +811,7 @@ export function processUserChartData(
     if (!topUserSet.has(user)) return
     if (!timeUserMap.has(timeKey)) timeUserMap.set(timeKey, new Map())
     const map = timeUserMap.get(timeKey)!
-    map.set(user, (map.get(user) || 0) + (Number(item.quota) || 0))
+    map.set(user, (map.get(user) || 0) + metricValue(item))
   })
 
   const sortedTimePoints = Array.from(allTimePoints).sort()
@@ -817,19 +819,16 @@ export function processUserChartData(
     Time: string
     User: string
     Label: string
-    rawQuota: number
-    Usage: number
+    rawValue: number
   }> = []
 
   sortedTimePoints.forEach((time) => {
     topUsers.forEach((user) => {
-      const q = timeUserMap.get(time)?.get(user) || 0
       trendValues.push({
         Time: time,
         User: user,
         Label: userLabels.get(user) ?? user,
-        rawQuota: q,
-        Usage: Number((q / quotaPerUnit).toFixed(4)),
+        rawValue: timeUserMap.get(time)?.get(user) || 0,
       })
     })
   })
@@ -838,7 +837,7 @@ export function processUserChartData(
     {
       key: (datum: Record<string, unknown>) => datum?.Label,
       value: (datum: Record<string, unknown>) =>
-        formatVal(Number(datum?.rawQuota) || 0),
+        formatVal(Number(datum?.rawValue) || 0),
     },
   ]
 
@@ -846,14 +845,14 @@ export function processUserChartData(
     spec_user_rank: {
       type: 'bar',
       data: [{ id: 'userRankData', values: rankValues }],
-      xField: 'rawQuota',
+      xField: 'rawValue',
       yField: 'User',
       seriesField: 'User',
       direction: 'horizontal',
       title: {
         visible: true,
         text: tt('User Consumption Ranking'),
-        subtext: `${tt('Total:')} ${formatVal(totalQuota)}`,
+        subtext: `${tt('Total:')} ${formatVal(total)}`,
       },
       legends: { visible: false },
       bar: {
@@ -886,9 +885,9 @@ export function processUserChartData(
             }>
           ) => {
             for (let i = 0; i < array.length; i++) {
-              const rawQuota = array[i].datum?.rawQuota
+              const rawValue = array[i].datum?.rawValue
               const value =
-                rawQuota === undefined ? array[i].value : Number(rawQuota)
+                rawValue === undefined ? array[i].value : Number(rawValue)
               array[i].value = formatVal(Number(value) || 0)
             }
             return array
@@ -904,13 +903,13 @@ export function processUserChartData(
       type: 'area',
       data: [{ id: 'userTrendData', values: trendValues }],
       xField: 'Time',
-      yField: 'rawQuota',
+      yField: 'rawValue',
       seriesField: 'User',
       stack: false,
       title: {
         visible: true,
         text: tt('User Consumption Trend'),
-        subtext: `${tt('Total:')} ${formatVal(totalQuota)}`,
+        subtext: `${tt('Total:')} ${formatVal(total)}`,
       },
       legends: {
         visible: true,
@@ -937,7 +936,7 @@ export function processUserChartData(
             {
               key: (datum: Record<string, unknown>) => datum?.Label,
               value: (datum: Record<string, unknown>) =>
-                formatVal(Number(datum?.rawQuota) || 0),
+                formatVal(Number(datum?.rawValue) || 0),
             },
           ],
         },
@@ -946,7 +945,7 @@ export function processUserChartData(
             {
               key: (datum: Record<string, unknown>) => datum?.Label,
               value: (datum: Record<string, unknown>) =>
-                Number(datum?.rawQuota) || 0,
+                Number(datum?.rawValue) || 0,
             },
           ],
           updateContent: (
