@@ -27,15 +27,17 @@ type AxisLabelFormatMethod = (value: string) => string
 
 interface UserChartSpecShape {
   data: Array<{ values: Array<Record<string, unknown>> }>
+  title: { subtext: string }
+  label?: { formatMethod?: (value: number) => string }
   axes?: Array<{
     orient: string
-    label?: { formatMethod?: AxisLabelFormatMethod }
+    label?: { formatMethod?: (value: string | number) => string }
   }>
   legends: {
     item?: { label?: { formatMethod?: AxisLabelFormatMethod } }
   }
   tooltip: {
-    mark: { content: Array<{ key: TooltipKey }> }
+    mark: { content: Array<{ key: TooltipKey; value: TooltipKey }> }
     dimension?: { content: Array<{ key: TooltipKey }> }
   }
 }
@@ -47,6 +49,7 @@ const rows: QuotaDataItem[] = [
     display_name: 'Alice Liddell',
     created_at: 1_700_000_000,
     quota: 150,
+    token_used: 1_200,
   },
   {
     user_id: 2,
@@ -54,8 +57,15 @@ const rows: QuotaDataItem[] = [
     display_name: 'bob',
     created_at: 1_700_000_000,
     quota: 70,
+    token_used: 5_000,
   },
-  { user_id: 9, username: 'ghost', created_at: 1_700_000_000, quota: 10 },
+  {
+    user_id: 9,
+    username: 'ghost',
+    created_at: 1_700_000_000,
+    quota: 10,
+    token_used: 300,
+  },
 ]
 
 describe('processUserChartData', () => {
@@ -100,6 +110,57 @@ describe('processUserChartData', () => {
     ])
     const leftAxis = rank.axes?.find((axis) => axis.orient === 'left')
     expect(leftAxis?.label?.formatMethod?.('unknown')).toBe('User 42')
+  })
+
+  test('ranks and formats by token_used when the metric is tokens', () => {
+    const result = processUserChartData(rows, 'day', undefined, 10, 'tokens')
+    const rank = result.spec_user_rank as unknown as UserChartSpecShape
+    const trend = result.spec_user_trend as unknown as UserChartSpecShape
+
+    const rankValues = rank.data[0].values
+    expect(rankValues.map((v) => v.User)).toEqual(['bob', 'oidc_1', 'ghost'])
+    expect(rankValues.map((v) => v.rawValue)).toEqual([5_000, 1_200, 300])
+    expect(rank.tooltip.mark.content[0].value(rankValues[0])).toBe('5,000')
+
+    const bobTrend = trend.data[0].values.find((v) => v.User === 'bob')
+    expect(bobTrend?.rawValue).toBe(5_000)
+    expect(trend.tooltip.mark.content[0].value(bobTrend ?? {})).toBe('5,000')
+  })
+
+  test('abbreviates token bar labels, axis ticks and totals with K/M/B units', () => {
+    const big: QuotaDataItem[] = [
+      {
+        user_id: 1,
+        username: 'a',
+        created_at: 1_700_000_000,
+        token_used: 685_000,
+      },
+      {
+        user_id: 2,
+        username: 'b',
+        created_at: 1_700_000_000,
+        token_used: 1_375_000,
+      },
+      {
+        user_id: 3,
+        username: 'c',
+        created_at: 1_700_000_000,
+        token_used: 2_100_000_000,
+      },
+    ]
+    const result = processUserChartData(big, 'day', undefined, 10, 'tokens')
+    const rank = result.spec_user_rank as unknown as UserChartSpecShape
+    const trend = result.spec_user_trend as unknown as UserChartSpecShape
+
+    expect(rank.label?.formatMethod?.(685_000)).toBe('685K')
+    expect(rank.label?.formatMethod?.(1_375_000)).toBe('1.4M')
+    expect(rank.label?.formatMethod?.(2_100_000_000)).toBe('2.1B')
+    expect(rank.title.subtext).toContain('2.1B')
+    const leftAxis = trend.axes?.find((axis) => axis.orient === 'left')
+    expect(leftAxis?.label?.formatMethod?.(150_000)).toBe('150K')
+    expect(rank.tooltip.mark.content[0].value(rank.data[0].values[0])).toBe(
+      '2,100,000,000'
+    )
   })
 
   test('resolves the band axis and legend labels from the username to the display name', () => {
