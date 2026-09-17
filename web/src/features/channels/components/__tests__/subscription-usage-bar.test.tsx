@@ -95,6 +95,7 @@ describe('SubscriptionUsageBar', () => {
       ).toBeTruthy()
       expect(percentEl.className).toContain('text-right')
       expect(percentEl.className).toContain('w-9')
+      expect(percentEl.className).toContain('tabular-nums')
     }
   })
 
