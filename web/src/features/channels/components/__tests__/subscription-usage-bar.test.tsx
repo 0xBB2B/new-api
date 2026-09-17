@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { formatTimestampToDate } from '@/lib/format'
 
 import type { Channel } from '../../types'
 import { SubscriptionUsageBar } from '../subscription-usage-bar'
@@ -43,7 +45,8 @@ function renderBar(channel: Channel) {
 }
 
 describe('SubscriptionUsageBar', () => {
-  test('renders 5h row above 7d row with labels, percentages and per-window aria-labels when both windows exist', () => {
+  test('renders tightly stacked 5h/7d rows with labels, percentages, per-window aria-labels and an updated-at-only tooltip when both windows exist', async () => {
+    const user = userEvent.setup()
     renderBar(
       channelWithUsage({
         plan_type: 'team',
@@ -66,6 +69,13 @@ describe('SubscriptionUsageBar', () => {
     expect(progressBars).toHaveLength(2)
     expect(progressBars[0]).toHaveAttribute('aria-label', '5-Hour Window: 29%')
     expect(progressBars[1]).toHaveAttribute('aria-label', 'Weekly Window: 31%')
+    expect(progressBars[0].parentElement?.className).toContain('gap-y-0.5')
+
+    await user.hover(fiveHLabel)
+    const updatedAt = await screen.findByText(
+      `Updated at: ${formatTimestampToDate(1700000000)}`
+    )
+    expect(updatedAt.parentElement?.textContent).toBe(updatedAt.textContent)
   })
 
   test('places a right-aligned fixed-width percent between the label and the progress bar', () => {
@@ -174,11 +184,14 @@ describe('SubscriptionUsageBar', () => {
     expect(progressBars[0]).toHaveAttribute('aria-label', '5-Hour Window: 50%')
   })
 
-  test('shows "-" when other_info is empty', () => {
+  test('shows "-" with a "No usage data" tooltip when other_info is empty', async () => {
+    const user = userEvent.setup()
     renderBar(channelWithOtherInfo(''))
 
     expect(screen.getByText('-')).toBeInTheDocument()
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    await user.hover(screen.getByText('-'))
+    expect(await screen.findByText('No usage data')).toBeInTheDocument()
   })
 
   test('shows "-" when the snapshot has neither window', () => {
