@@ -192,13 +192,6 @@ function formatTimeLeftUntil(
     return t('Expired')
   }
 
-  const days = Math.floor(secondsLeft / (24 * 60 * 60))
-  const remainingSeconds = secondsLeft % (24 * 60 * 60)
-  if (days > 0) {
-    const hours = Math.floor(remainingSeconds / 3600)
-    return `${days} ${t('days')} ${hours}${t('h')}`
-  }
-
   return formatDurationSeconds(secondsLeft, t)
 }
 

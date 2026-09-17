@@ -21,6 +21,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
 
 import {
+  formatDurationSeconds,
   parseSubscriptionUsageSnapshot,
   resetCountdownSeconds,
   resolveRateLimitWindows,
@@ -34,7 +35,10 @@ describe('parseSubscriptionUsageSnapshot', () => {
     assert.equal(parseSubscriptionUsageSnapshot(undefined), null)
     assert.equal(parseSubscriptionUsageSnapshot('{oops'), null)
     assert.equal(parseSubscriptionUsageSnapshot('{"status_reason":"x"}'), null)
-    assert.equal(parseSubscriptionUsageSnapshot('{"subscription_usage":"nope"}'), null)
+    assert.equal(
+      parseSubscriptionUsageSnapshot('{"subscription_usage":"nope"}'),
+      null
+    )
   })
 
   test('reads the snapshot next to other keys', () => {
@@ -172,5 +176,25 @@ describe('resetCountdownSeconds', () => {
   test('returns null for a null or undefined window', () => {
     assert.equal(resetCountdownSeconds(null, 1700000000000), null)
     assert.equal(resetCountdownSeconds(undefined, 1700000000000), null)
+  })
+})
+
+describe('formatDurationSeconds', () => {
+  const identity = (key: string) => key
+
+  test('shows Nd Hh Mm once the duration reaches a day, keeping zero middle segments', () => {
+    assert.equal(formatDurationSeconds(360000, identity), '4d 4h 0m')
+    assert.equal(formatDurationSeconds(90000, identity), '1d 1h 0m')
+    assert.equal(formatDurationSeconds(86400, identity), '1d 0h 0m')
+  })
+
+  test('keeps the sub-day tiers unchanged', () => {
+    assert.equal(formatDurationSeconds(86399, identity), '23h 59m')
+    assert.equal(formatDurationSeconds(90, identity), '1m 30s')
+    assert.equal(formatDurationSeconds(45, identity), '45s')
+  })
+
+  test('formats the weekly window duration for the Window: field', () => {
+    assert.equal(formatDurationSeconds(604800, identity), '7d 0h 0m')
   })
 })

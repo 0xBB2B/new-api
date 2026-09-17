@@ -103,6 +103,35 @@ describe('RateLimitWindowGrid resets-in countdown', () => {
     expect(getValueByLabel(card, 'Resets in:')).toBe('-')
   })
 
+  test('weekly window Resets in: switches to Nd Hh Mm once the countdown reaches a day', () => {
+    render(
+      <RateLimitWindowGrid
+        weeklyWindow={{
+          used_percent: 0,
+          reset_at: NOW_SEC + 90000,
+          limit_window_seconds: 604800,
+        }}
+      />
+    )
+
+    const card = getCardByTitle('Weekly Window')
+    expect(getValueByLabel(card, 'Resets in:')).toBe('1d 1h 0m')
+  })
+
+  test('Window: field formats limit_window_seconds with the same day-aware format', () => {
+    render(
+      <RateLimitWindowGrid
+        fiveHourWindow={{ used_percent: 0, limit_window_seconds: 18000 }}
+        weeklyWindow={{ used_percent: 0, limit_window_seconds: 604800 }}
+      />
+    )
+
+    const fiveHourCard = getCardByTitle('5-Hour Window')
+    const weeklyCard = getCardByTitle('Weekly Window')
+    expect(within(fiveHourCard).getByText('Window: 5h 0m')).toBeTruthy()
+    expect(within(weeklyCard).getByText('Window: 7d 0h 0m')).toBeTruthy()
+  })
+
   test('formats each card independently: Mm Ss for the 5h window, Nh Mm for the weekly window', () => {
     render(
       <RateLimitWindowGrid
