@@ -68,14 +68,14 @@ function UsageRow({
   return (
     <>
       <span className='text-muted-foreground w-4 text-[10px]'>{label}</span>
+      <span className={cn('w-9 text-right text-xs tabular-nums', classes.text)}>
+        {Math.round(percent)}%
+      </span>
       <Progress
         value={percent}
         aria-label={ariaLabel}
         className={cn('w-14 gap-0', classes.indicator)}
       />
-      <span className={cn('text-xs tabular-nums', classes.text)}>
-        {Math.round(percent)}%
-      </span>
     </>
   )
 }
