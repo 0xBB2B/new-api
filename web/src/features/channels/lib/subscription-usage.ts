@@ -168,10 +168,14 @@ export function formatDurationSeconds(
   }
 
   const total = Math.floor(s)
-  const hours = Math.floor(total / 3600)
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
   const minutes = Math.floor((total % 3600) / 60)
   const secs = total % 60
 
+  if (days > 0) {
+    return `${days}${t('d')} ${hours}${t('h')} ${minutes}${t('m')}`
+  }
   if (hours > 0) {
     return `${hours}${t('h')} ${minutes}${t('m')}`
   }

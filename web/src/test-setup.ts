@@ -26,6 +26,7 @@ beforeAll(async () => {
   await i18next.use(initReactI18next).init({
     lng: 'en',
     fallbackLng: 'en',
+    nsSeparator: false,
     resources: {
       en: {
         translation: {},
