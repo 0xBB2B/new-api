@@ -68,6 +68,36 @@ describe('SubscriptionUsageBar', () => {
     expect(progressBars[1]).toHaveAttribute('aria-label', 'Weekly Window: 31%')
   })
 
+  test('places a right-aligned fixed-width percent between the label and the progress bar', () => {
+    renderBar(
+      channelWithUsage({
+        plan_type: 'team',
+        primary_window: { used_percent: 2, limit_window_seconds: 18000 },
+        secondary_window: { used_percent: 1, limit_window_seconds: 604800 },
+      })
+    )
+
+    const progressBars = screen.getAllByRole('progressbar')
+    const rows: Array<[string, string, HTMLElement]> = [
+      ['5h', '2%', progressBars[0]],
+      ['7d', '1%', progressBars[1]],
+    ]
+    for (const [label, percentText, bar] of rows) {
+      const labelEl = screen.getByText(label)
+      const percentEl = screen.getByText(percentText)
+      expect(
+        labelEl.compareDocumentPosition(percentEl) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+      expect(
+        percentEl.compareDocumentPosition(bar) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+      expect(percentEl.className).toContain('text-right')
+      expect(percentEl.className).toContain('w-9')
+    }
+  })
+
   test('colors each row independently: >=95% destructive, <80% info', () => {
     renderBar(
       channelWithUsage({
