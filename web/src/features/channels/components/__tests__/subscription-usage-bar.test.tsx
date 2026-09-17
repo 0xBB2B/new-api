@@ -111,7 +111,7 @@ describe('SubscriptionUsageBar', () => {
     }
   )
 
-  test('renders a single row without 5h/7d labels when only one window exists', () => {
+  test('renders a single 7d-labeled row when only the weekly window exists', () => {
     renderBar(
       channelWithUsage({
         plan_type: 'free',
@@ -119,13 +119,15 @@ describe('SubscriptionUsageBar', () => {
       })
     )
 
+    expect(screen.getByText('7d')).toBeInTheDocument()
     expect(screen.getByText('31%')).toBeInTheDocument()
     expect(screen.queryByText('5h')).not.toBeInTheDocument()
-    expect(screen.queryByText('7d')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('progressbar')).toHaveLength(1)
+    const progressBars = screen.getAllByRole('progressbar')
+    expect(progressBars).toHaveLength(1)
+    expect(progressBars[0]).toHaveAttribute('aria-label', 'Weekly Window: 31%')
   })
 
-  test('labels the single remaining progressbar as the 5-hour window when only that window exists', () => {
+  test('renders a single 5h-labeled row when only the 5-hour window exists', () => {
     renderBar(
       channelWithUsage({
         plan_type: 'team',
@@ -133,7 +135,8 @@ describe('SubscriptionUsageBar', () => {
       })
     )
 
-    expect(screen.queryByText('5h')).not.toBeInTheDocument()
+    expect(screen.getByText('5h')).toBeInTheDocument()
+    expect(screen.getByText('50%')).toBeInTheDocument()
     expect(screen.queryByText('7d')).not.toBeInTheDocument()
     const progressBars = screen.getAllByRole('progressbar')
     expect(progressBars).toHaveLength(1)
