@@ -78,7 +78,7 @@ describe('SubscriptionUsageBar', () => {
     expect(updatedAt.parentElement?.textContent).toBe(updatedAt.textContent)
   })
 
-  test('places a right-aligned fixed-width percent between the label and the progress bar', () => {
+  test('places a fixed-width, left-aligned percent after the progress bar', () => {
     renderBar(
       channelWithUsage({
         plan_type: 'team',
@@ -96,20 +96,21 @@ describe('SubscriptionUsageBar', () => {
       const labelEl = screen.getByText(label)
       const percentEl = screen.getByText(percentText)
       expect(
-        labelEl.compareDocumentPosition(percentEl) &
-          Node.DOCUMENT_POSITION_FOLLOWING
+        labelEl.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING
       ).toBeTruthy()
       expect(
-        percentEl.compareDocumentPosition(bar) &
+        bar.compareDocumentPosition(percentEl) &
           Node.DOCUMENT_POSITION_FOLLOWING
       ).toBeTruthy()
-      expect(percentEl.className).toContain('text-right')
+      expect(percentEl.className).not.toContain('text-right')
       expect(percentEl.className).toContain('w-9')
       expect(percentEl.className).toContain('tabular-nums')
+      expect(bar.className).toContain('w-20')
+      expect(bar.className).toContain('[&_[data-slot=progress-track]]:h-1.5')
     }
   })
 
-  test('colors each row independently: >=95% destructive, <80% info', () => {
+  test('colors each row independently: >=95% destructive, <80% muted', () => {
     renderBar(
       channelWithUsage({
         plan_type: 'team',
@@ -121,7 +122,7 @@ describe('SubscriptionUsageBar', () => {
     const ninetySix = screen.getByText('96%')
     const forty = screen.getByText('40%')
     expect(ninetySix.className).toContain('text-destructive')
-    expect(forty.className).toContain('text-info')
+    expect(forty.className).toContain('text-muted-foreground')
 
     const progressBars = screen.getAllByRole('progressbar')
     expect(progressBars[0].className).toContain('bg-destructive')
@@ -129,7 +130,7 @@ describe('SubscriptionUsageBar', () => {
   })
 
   test.each([
-    [79, 'text-info', 'bg-info'],
+    [79, 'text-muted-foreground', 'bg-info'],
     [80, 'text-warning', 'bg-warning'],
     [94, 'text-warning', 'bg-warning'],
     [95, 'text-destructive', 'bg-destructive'],
