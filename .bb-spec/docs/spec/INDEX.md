@@ -81,7 +81,7 @@
 
 - [poll-schedule](subscription-usage/poll-schedule.md) — 订阅用量后台轮询按渠道独立计时：下次自动拉取 = 上次成功拉取（手动或自动）+ 1 小时；1 分钟 tick；同一渠道两次尝试间隔 ≥ 1 小时；仅 master、跳过 multi-key。
 - [reset-countdown](subscription-usage/reset-countdown.md) — 用量弹窗窗口卡片的「将于以下时间重置」在渲染时由 reset_at 减当前时间派生；无 reset_at 或已过重置时刻显示 -；≥ 1 天按 N天 H小时 M分钟 显示；不再读取相对秒数字段。
-- [usage-bar-layout](subscription-usage/usage-bar-layout.md) — 渠道列表订阅用量进度条：每行固定「标签 + 百分比 + 进度条」，百分比固定宽右对齐，5h/7d 按窗口类型标注；两窗口并存显示两行紧贴，单窗口显示带标签的单行；无快照显示 -。
+- [usage-bar-layout](subscription-usage/usage-bar-layout.md) — 渠道列表订阅用量进度条：每行固定「标签 + 进度条 + 百分比」，进度条 80px×6px 为主信息，百分比固定宽左对齐紧贴条尾，< 80% 时百分比为弱化灰色、≥ 80% 随分级变黄/红；5h/7d 按窗口类型标注；两窗口并存显示两行紧贴，单窗口显示带标签的单行；无快照显示 -。
 
 ## user-identity-display
 
