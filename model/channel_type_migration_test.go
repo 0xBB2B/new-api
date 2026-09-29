@@ -49,11 +49,13 @@ func TestMigrateClaudeSubscriptionChannelTypeRenumbersOnlyOnce(t *testing.T) {
 		{Name: "sub2api", Type: constant.ChannelTypeSub2API},
 		{Name: "new-api", Type: constant.ChannelTypeNewAPI},
 		{Name: "task-plugin", Type: constant.ChannelTypeTaskPlugin},
+		{Name: "vllm", Type: constant.ChannelTypeVLLM},
 	}).Error)
 	require.NoError(t, MigrateClaudeSubscriptionChannelType())
 	assert.Equal(t, constant.ChannelTypeSub2API, requireChannelType(t, db, "sub2api"))
 	assert.Equal(t, constant.ChannelTypeNewAPI, requireChannelType(t, db, "new-api"))
 	assert.Equal(t, constant.ChannelTypeTaskPlugin, requireChannelType(t, db, "task-plugin"))
+	assert.Equal(t, constant.ChannelTypeVLLM, requireChannelType(t, db, "vllm"))
 }
 
 func TestMigrateClaudeSubscriptionChannelTypeRenumbersFrom60(t *testing.T) {
@@ -79,4 +81,21 @@ func TestMigrateClaudeSubscriptionChannelTypeRenumbersFrom61(t *testing.T) {
 
 	require.NoError(t, MigrateClaudeSubscriptionChannelType())
 	assert.Equal(t, constant.ChannelTypeClaudeSubscription, requireChannelType(t, db, "claude-on-61"))
+}
+
+func TestMigrateClaudeSubscriptionChannelTypeRenumbersFrom62(t *testing.T) {
+	db := useChannelTypeMigrationDB(t)
+	require.NoError(t, db.Create(&[]Option{
+		{Key: "migration.channel_type.claude_subscription_60", Value: "1"},
+		{Key: "migration.channel_type.claude_subscription_61", Value: "1"},
+		{Key: "migration.channel_type.claude_subscription_62", Value: "1"},
+	}).Error)
+	require.NoError(t, db.Create(&Channel{Name: "claude-on-62", Type: 62}).Error)
+
+	require.NoError(t, MigrateClaudeSubscriptionChannelType())
+	assert.Equal(t, constant.ChannelTypeClaudeSubscription, requireChannelType(t, db, "claude-on-62"))
+
+	require.NoError(t, db.Create(&Channel{Name: "vllm", Type: constant.ChannelTypeVLLM}).Error)
+	require.NoError(t, MigrateClaudeSubscriptionChannelType())
+	assert.Equal(t, constant.ChannelTypeVLLM, requireChannelType(t, db, "vllm"))
 }
