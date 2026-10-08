@@ -143,13 +143,13 @@ func TestClaudeCLIVersionCache(t *testing.T) {
 
 		var cache claudeCLIVersionCache
 		_, err := cache.get(context.Background(), srv.Client(), srv.URL, now)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "status=500")
 		_, err = cache.get(context.Background(), srv.Client(), srv.URL, now.Add(30*time.Minute))
-		require.Error(t, err)
+		require.ErrorContains(t, err, "failed recently")
 		assert.EqualValues(t, 1, hits.Load())
 
 		_, err = cache.get(context.Background(), srv.Client(), srv.URL, now.Add(61*time.Minute))
-		require.Error(t, err)
+		require.ErrorContains(t, err, "status=500")
 		assert.EqualValues(t, 2, hits.Load())
 	})
 }
@@ -391,39 +391,34 @@ func TestClaudeLimitResetMessagesAreTranslated(t *testing.T) {
 		key  string
 		args map[string]any
 		zhCN string
+		en   string
+		zhTW string
 	}{
-		{i18n.MsgClaudeLimitResetSuccess, nil, "重置成功"},
-		{i18n.MsgClaudeLimitResetAlreadyUsed, nil, "这次重置已经用过了"},
-		{i18n.MsgClaudeLimitResetNotLimited, nil, "当前没有触顶，不需要重置"},
-		{i18n.MsgClaudeLimitResetCooldown, nil, "冷却中，请稍后再试"},
-		{i18n.MsgClaudeLimitResetIneligible, nil, "账号不符合使用条件"},
-		{i18n.MsgClaudeLimitResetUnavailable, nil, "上游暂时不可用"},
-		{i18n.MsgClaudeLimitResetUnknownResult, nil, "上游返回未知结果"},
-		{i18n.MsgClaudeLimitResetRateLimited, nil, "请求太频繁，请稍后再试"},
-		{i18n.MsgClaudeLimitResetUnauthorized, nil, "凭据无效或权限不足"},
-		{i18n.MsgClaudeLimitResetUpstreamStatus, map[string]any{"Status": 500}, "上游返回 HTTP 500"},
-		{i18n.MsgClaudeLimitResetResultUnknown, nil, "重置结果未知，请先刷新用量确认后再决定是否重试"},
-		{i18n.MsgClaudeLimitResetUnsupportedProgram, nil, "不支持的重置类型"},
-		{i18n.MsgClaudeLimitResetInvalidParams, nil, "重置参数无效"},
-		{i18n.MsgClaudeLimitResetNoClientVersion, nil, "取不到 Claude Code 最新版本，无法执行重置"},
-		{i18n.MsgClaudeLimitResetOrgFailed, nil, "获取账号组织信息失败"},
-		{i18n.MsgClaudeLimitResetFailed, nil, "重置失败，请稍后重试"},
-		{i18n.MsgClaudeLimitResetChannelTypeInvalid, nil, "渠道类型不是 Claude 订阅"},
-		{i18n.MsgClaudeLimitResetMultiKeyUnsupported, nil, "不支持多 Key 渠道"},
-		{i18n.MsgClaudeLimitResetCredentialInvalid, nil, "解析凭证失败，请检查渠道配置"},
+		{i18n.MsgClaudeLimitResetSuccess, nil, "重置成功", "Reset succeeded", "重置成功"},
+		{i18n.MsgClaudeLimitResetAlreadyUsed, nil, "这次重置已经用过了", "This reset has already been used", "這次重置已經用過了"},
+		{i18n.MsgClaudeLimitResetNotLimited, nil, "当前没有触顶，不需要重置", "Not currently rate limited, no reset needed", "目前沒有觸頂，不需要重置"},
+		{i18n.MsgClaudeLimitResetCooldown, nil, "冷却中，请稍后再试", "On cooldown, please try again later", "冷卻中，請稍後再試"},
+		{i18n.MsgClaudeLimitResetIneligible, nil, "账号不符合使用条件", "Account is not eligible", "帳號不符合使用條件"},
+		{i18n.MsgClaudeLimitResetUnavailable, nil, "上游暂时不可用", "Upstream temporarily unavailable", "上游暫時不可用"},
+		{i18n.MsgClaudeLimitResetUnknownResult, nil, "上游返回未知结果", "Upstream returned an unknown result", "上游返回未知結果"},
+		{i18n.MsgClaudeLimitResetRateLimited, nil, "请求太频繁，请稍后再试", "Too many requests, please try again later", "請求太頻繁，請稍後再試"},
+		{i18n.MsgClaudeLimitResetUnauthorized, nil, "凭据无效或权限不足", "Invalid credentials or insufficient permissions", "憑據無效或權限不足"},
+		{i18n.MsgClaudeLimitResetUpstreamStatus, map[string]any{"Status": 500}, "上游返回 HTTP 500", "Upstream returned HTTP 500", "上游返回 HTTP 500"},
+		{i18n.MsgClaudeLimitResetResultUnknown, nil, "重置结果未知，请先刷新用量确认后再决定是否重试", "Reset outcome unknown, refresh usage to confirm before retrying", "重置結果未知，請先重新整理用量確認後再決定是否重試"},
+		{i18n.MsgClaudeLimitResetUnsupportedProgram, nil, "不支持的重置类型", "Unsupported reset type", "不支援的重置類型"},
+		{i18n.MsgClaudeLimitResetInvalidParams, nil, "重置参数无效", "Invalid reset parameters", "重置參數無效"},
+		{i18n.MsgClaudeLimitResetNoClientVersion, nil, "取不到 Claude Code 最新版本，无法执行重置", "Unable to get the latest Claude Code version, cannot perform reset", "取不到 Claude Code 最新版本，無法執行重置"},
+		{i18n.MsgClaudeLimitResetOrgFailed, nil, "获取账号组织信息失败", "Failed to get account organization info", "取得帳號組織資訊失敗"},
+		{i18n.MsgClaudeLimitResetFailed, nil, "重置失败，请稍后重试", "Reset failed, please try again later", "重置失敗，請稍後重試"},
+		{i18n.MsgClaudeLimitResetChannelTypeInvalid, nil, "渠道类型不是 Claude 订阅", "Channel type is not Claude Subscription", "渠道類型不是 Claude 訂閱"},
+		{i18n.MsgClaudeLimitResetMultiKeyUnsupported, nil, "不支持多 Key 渠道", "Multi-key channels are not supported", "不支援多 Key 渠道"},
+		{i18n.MsgClaudeLimitResetCredentialInvalid, nil, "解析凭证失败，请检查渠道配置", "Failed to parse credentials, please check channel settings", "解析憑證失敗，請檢查渠道設定"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
 			assert.Equal(t, tt.zhCN, i18n.Translate("zh-CN", tt.key, tt.args))
-			for _, lang := range []string{"en", "zh-TW"} {
-				got := i18n.Translate(lang, tt.key, tt.args)
-				assert.NotEmpty(t, got, lang)
-				assert.NotEqual(t, tt.key, got, lang)
-				assert.NotContains(t, got, "<no value>", lang)
-				if tt.key == i18n.MsgClaudeLimitResetUpstreamStatus {
-					assert.Contains(t, got, "500", lang)
-				}
-			}
+			assert.Equal(t, tt.en, i18n.Translate("en", tt.key, tt.args))
+			assert.Equal(t, tt.zhTW, i18n.Translate("zh-TW", tt.key, tt.args))
 		})
 	}
 }
