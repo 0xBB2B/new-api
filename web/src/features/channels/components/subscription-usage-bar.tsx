@@ -58,28 +58,46 @@ function UsageRow({
   percent,
   variant,
   ariaLabel,
+  resetAt,
 }: {
   label: string
   percent: number
   variant: UsageVariant
   ariaLabel: string
+  resetAt: number
 }) {
+  const { t } = useTranslation()
   const classes = usageVariantClassName[variant]
   return (
-    <>
-      <span className='text-muted-foreground w-4 text-[10px]'>{label}</span>
-      <Progress
-        value={percent}
-        aria-label={ariaLabel}
-        className={cn(
-          'w-20 gap-0 [&_[data-slot=progress-track]]:h-1.5',
-          classes.indicator
-        )}
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div className='flex cursor-help items-center gap-x-1.5'>
+            <span className='text-muted-foreground w-4 text-[10px]'>
+              {label}
+            </span>
+            <Progress
+              value={percent}
+              aria-label={ariaLabel}
+              className={cn(
+                'w-20 gap-0 [&_[data-slot=progress-track]]:h-1.5',
+                classes.indicator
+              )}
+            />
+            <span className={cn('w-9 text-xs tabular-nums', classes.text)}>
+              {Math.round(percent)}%
+            </span>
+          </div>
+        }
       />
-      <span className={cn('w-9 text-xs tabular-nums', classes.text)}>
-        {Math.round(percent)}%
-      </span>
-    </>
+      <TooltipContent>
+        <p>
+          {Number.isFinite(resetAt) && resetAt > 0
+            ? t('Resets at {{time}}', { time: formatTimestampToDate(resetAt) })
+            : t('Reset timer not started')}
+        </p>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -105,17 +123,17 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
     )
   }
 
-  const updatedAt = Number(snapshot?.updated_at)
   const fiveHour = windowLabel(fiveHourWindow)
   const weekly = windowLabel(weeklyWindow)
 
-  const content = (
-    <div className='grid cursor-help grid-cols-[auto_auto_auto] items-center gap-x-1.5 gap-y-0.5'>
+  return (
+    <div className='flex flex-col gap-y-0.5'>
       {fiveHourWindow && (
         <UsageRow
           label='5h'
           {...fiveHour}
           ariaLabel={`${t('5-Hour Window')}: ${Math.round(fiveHour.percent)}%`}
+          resetAt={Number(fiveHourWindow.reset_at)}
         />
       )}
       {weeklyWindow && (
@@ -123,21 +141,9 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
           label='7d'
           {...weekly}
           ariaLabel={`${t('Weekly Window')}: ${Math.round(weekly.percent)}%`}
+          resetAt={Number(weeklyWindow.reset_at)}
         />
       )}
     </div>
-  )
-
-  return (
-    <Tooltip>
-      <TooltipTrigger render={content} />
-      <TooltipContent>
-        {Number.isFinite(updatedAt) && updatedAt > 0 && (
-          <p>
-            {t('Updated at:')} {formatTimestampToDate(updatedAt)}
-          </p>
-        )}
-      </TooltipContent>
-    </Tooltip>
   )
 }
