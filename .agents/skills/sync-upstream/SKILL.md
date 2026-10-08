@@ -129,10 +129,18 @@ git rev-list --parents -n 1 HEAD       # 必须输出 3 个 SHA（自己 + 两�
 
 ### 7. 验证（任一失败就停下，不推送）
 
+`main.go` 用 `go:embed` 把 `web/dist` 打进二进制。没有前端构建产物时，`go build` 会报 `pattern web/dist: no matching files found`。所以 `web/dist` 不存在时，先放一个占位页再编译，编译完删掉；已经存在的 `web/dist` 不动。下面这段要放在同一次调用里跑完：
+
 ```bash
-go build ./...
+DIST_PLACEHOLDER=0
+if [ ! -e web/dist ]; then mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html && DIST_PLACEHOLDER=1; fi
+go build ./...; BUILD_RC=$?
+if [ "$DIST_PLACEHOLDER" = 1 ]; then rm -rf web/dist; fi
+test "$BUILD_RC" = 0 && echo "GO-OK"
 (cd relaykit && GOWORK=off go build ./...)
 ```
+
+没输出 `GO-OK` 就是编译失败。
 
 如果这次合并改了 `web/package.json` 或 `web/bun.lock`，先 `(cd web && bun install)`。然后：
 
