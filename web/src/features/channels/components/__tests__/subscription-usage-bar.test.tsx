@@ -45,14 +45,12 @@ function renderBar(channel: Channel) {
 }
 
 describe('SubscriptionUsageBar', () => {
-  test('renders tightly stacked 5h/7d rows with labels, percentages, per-window aria-labels and an updated-at-only tooltip when both windows exist', async () => {
-    const user = userEvent.setup()
+  test('renders tightly stacked 5h/7d rows with labels, percentages and per-window aria-labels when both windows exist', () => {
     renderBar(
       channelWithUsage({
         plan_type: 'team',
         primary_window: { used_percent: 29, limit_window_seconds: 18000 },
         secondary_window: { used_percent: 31, limit_window_seconds: 604800 },
-        updated_at: 1700000000,
       })
     )
 
@@ -69,13 +67,70 @@ describe('SubscriptionUsageBar', () => {
     expect(progressBars).toHaveLength(2)
     expect(progressBars[0]).toHaveAttribute('aria-label', '5-Hour Window: 29%')
     expect(progressBars[1]).toHaveAttribute('aria-label', 'Weekly Window: 31%')
-    expect(progressBars[0].parentElement?.className).toContain('gap-y-0.5')
-
-    await user.hover(fiveHLabel)
-    const updatedAt = await screen.findByText(
-      `Updated at: ${formatTimestampToDate(1700000000)}`
+    expect(progressBars[0].parentElement?.parentElement?.className).toContain(
+      'gap-y-0.5'
     )
-    expect(updatedAt.parentElement?.textContent).toBe(updatedAt.textContent)
+  })
+
+  test.each([
+    ['5h', 1700003600, 1700600000],
+    ['7d', 1700600000, 1700003600],
+  ])(
+    'shows only the hovered %s row reset time, without an updated-at line',
+    async (label, ownResetAt, otherResetAt) => {
+      const user = userEvent.setup()
+      const fiveHourResetAt = label === '5h' ? ownResetAt : otherResetAt
+      const weeklyResetAt = label === '7d' ? ownResetAt : otherResetAt
+      renderBar(
+        channelWithUsage({
+          plan_type: 'team',
+          primary_window: {
+            used_percent: 29,
+            limit_window_seconds: 18000,
+            reset_at: fiveHourResetAt,
+          },
+          secondary_window: {
+            used_percent: 31,
+            limit_window_seconds: 604800,
+            reset_at: weeklyResetAt,
+          },
+          updated_at: 1700000000,
+        })
+      )
+
+      await user.hover(screen.getByText(label))
+
+      expect(
+        await screen.findByText(
+          `Resets at ${formatTimestampToDate(ownResetAt)}`
+        )
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByText(`Resets at ${formatTimestampToDate(otherResetAt)}`)
+      ).not.toBeInTheDocument()
+      expect(screen.queryByText(/Updated at/)).not.toBeInTheDocument()
+    }
+  )
+
+  test('tells the reset timer has not started when the 5h window has no reset_at', async () => {
+    const user = userEvent.setup()
+    renderBar(
+      channelWithUsage({
+        plan_type: 'team',
+        primary_window: { used_percent: 0, limit_window_seconds: 18000 },
+        secondary_window: {
+          used_percent: 64,
+          limit_window_seconds: 604800,
+          reset_at: 1700600000,
+        },
+      })
+    )
+
+    await user.hover(screen.getByText('5h'))
+
+    expect(
+      await screen.findByText('Reset timer not started')
+    ).toBeInTheDocument()
   })
 
   test('places a fixed-width, left-aligned percent after the progress bar', () => {
