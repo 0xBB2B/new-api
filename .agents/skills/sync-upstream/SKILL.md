@@ -146,7 +146,10 @@ test "$BUILD_RC" = 0 && echo "GO-OK"
 
 ```bash
 (cd web && bun run typecheck)   # 必须用这个；tsc -p tsconfig.json 会空跑假通过
+go test ./router/ ./middleware/ -count=1
 ```
+
+不管有没有冲突，`router` 和 `middleware` 两个包的测试每次都要跑。上游有测试 `TestAccessTokenRouteRulesCoverEveryDashboardRoute`，它要求每个面板接口都在 `middleware/access_token_routes.go` 里登记了访问令牌的权限范围。上游新增这类检查时，fork 自己加的接口往往没登记，合并本身不会冲突，只有跑测试才看得出来。失败信息里点名的如果是 fork 自己的接口，通常的修法是：照同一组接口用的权限范围补登记，`RootAuth` 下的接口也用普通的权限范围规则。
 
 第 6 步改过的 Go 文件，对它们所在的包跑 `go test ./<包路径>/...`。第 6 步改过的前端文件，对相关测试跑 `(cd web && NODE_OPTIONS=--no-experimental-webstorage bunx vitest run <路径>)`（本机 Node 26 不加这个参数，zustand persist 相关测试会失败）。
 
