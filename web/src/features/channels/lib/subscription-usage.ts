@@ -216,7 +216,6 @@ export type ClaudeFiveHourResetRow =
   | { canReset: false; reasonKind: 'next_available'; nextAvailableAt: number }
 
 export type ClaudeLimitResets =
-  | { state: 'error'; message: string }
   | { state: 'client_version' }
   | { state: 'not_returned' }
   | {
@@ -226,8 +225,6 @@ export type ClaudeLimitResets =
     }
 
 type ClaudeLimitResetSource = {
-  success: boolean
-  message?: string
   limit_reset_unavailable?: string
   data?: unknown
 }
@@ -326,9 +323,6 @@ export function resolveClaudeLimitResets(
   response: ClaudeLimitResetSource,
   nowSeconds: number
 ): ClaudeLimitResets {
-  if (response.success === false) {
-    return { state: 'error', message: response.message ?? '' }
-  }
   if (response.limit_reset_unavailable === 'client_version') {
     return { state: 'client_version' }
   }

@@ -236,6 +236,7 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "2.1.293", cedar)
 		assert.True(t, res.Success)
+		assert.Equal(t, "重置成功", res.Message)
 
 		require.Len(t, f.profileReqs, 1)
 		require.Len(t, f.resetReqs, 1)
@@ -282,6 +283,8 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 			{"cooldown", http.StatusOK, `{"result":"cooldown"}`, "冷却中，请稍后再试"},
 			{"ineligible", http.StatusOK, `{"result":"ineligible"}`, "账号不符合使用条件"},
 			{"unavailable", http.StatusOK, `{"result":"unavailable"}`, "上游暂时不可用"},
+			{"unknown result", http.StatusOK, `{"result":"something_new"}`, "上游返回未知结果"},
+			{"non json body", http.StatusOK, `not json`, "上游返回未知结果"},
 			{"http 429", http.StatusTooManyRequests, `{}`, "请求太频繁，请稍后再试"},
 			{"http 401", http.StatusUnauthorized, `{}`, "凭据无效或权限不足"},
 			{"http 500", http.StatusInternalServerError, `{}`, "上游返回 HTTP 500"},

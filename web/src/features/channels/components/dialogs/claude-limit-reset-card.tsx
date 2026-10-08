@@ -143,12 +143,6 @@ export function ClaudeLimitResetCard(props: ClaudeLimitResetCardProps) {
         <Skeleton className='h-9 w-full' />
       </div>
     )
-  } else if (resets?.state === 'error') {
-    body = (
-      <div className='text-muted-foreground text-xs'>
-        {resets.message || t('Failed to fetch usage')}
-      </div>
-    )
   } else if (resets?.state === 'client_version') {
     body = (
       <div className='text-muted-foreground text-xs'>

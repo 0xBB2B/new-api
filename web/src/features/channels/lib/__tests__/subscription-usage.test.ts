@@ -296,13 +296,11 @@ describe('resolveClaudeLimitResets state priority', () => {
   test('returns not_returned when both programs are null or missing', () => {
     expect(
       resolveClaudeLimitResets(
-        { success: true, data: { cedar_ember: null, juniper_tide: null } },
+        { data: { cedar_ember: null, juniper_tide: null } },
         nowSeconds
       )
     ).toEqual({ state: 'not_returned' })
-    expect(
-      resolveClaudeLimitResets({ success: true, data: {} }, nowSeconds)
-    ).toEqual({
+    expect(resolveClaudeLimitResets({ data: {} }, nowSeconds)).toEqual({
       state: 'not_returned',
     })
   })
@@ -311,27 +309,12 @@ describe('resolveClaudeLimitResets state priority', () => {
     expect(
       resolveClaudeLimitResets(
         {
-          success: true,
           limit_reset_unavailable: 'client_version',
           data: { cedar_ember: null, juniper_tide: null },
         },
         nowSeconds
       )
     ).toEqual({ state: 'client_version' })
-  })
-
-  test('error outranks client_version and keeps the message verbatim', () => {
-    expect(
-      resolveClaudeLimitResets(
-        {
-          success: false,
-          message: 'upstream status: 401',
-          limit_reset_unavailable: 'client_version',
-          data: { cedar_ember: null, juniper_tide: null },
-        },
-        nowSeconds
-      )
-    ).toEqual({ state: 'error', message: 'upstream status: 401' })
   })
 
   test('is ready when only one program is returned', () => {
