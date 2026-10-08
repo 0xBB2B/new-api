@@ -84,6 +84,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/:id/codex/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshCodexChannelCredential},
 	{method: http.MethodPost, path: "/:id/claude/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshClaudeChannelCredential},
 	{method: http.MethodGet, path: "/:id/claude/usage", permission: authz.ChannelRead, handler: controller.GetClaudeChannelUsage},
+	{method: http.MethodPost, path: "/:id/claude/usage/reset", permission: authz.ChannelOperate, handler: controller.ResetClaudeChannelLimit},
 	{method: http.MethodGet, path: "/:id/codex/usage", permission: authz.ChannelRead, handler: controller.GetCodexChannelUsage},
 	{method: http.MethodGet, path: "/:id/codex/usage/reset-credits", permission: authz.ChannelRead, handler: controller.GetCodexChannelRateLimitResetCredits},
 	{method: http.MethodPost, path: "/:id/codex/usage/reset", permission: authz.ChannelOperate, handler: controller.ResetCodexChannelUsage},

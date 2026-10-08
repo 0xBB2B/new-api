@@ -73,3 +73,60 @@ func GetClaudeChannelUsage(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, resp)
 }
+
+func ResetClaudeChannelLimit(c *gin.Context) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		return
+	}
+
+	ch, err := model.GetChannelById(channelId, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if ch == nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
+		return
+	}
+	if ch.Type != constant.ChannelTypeClaudeSubscription {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Claude Subscription"})
+		return
+	}
+	if ch.ChannelInfo.IsMultiKey {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+		return
+	}
+
+	cred, err := service.ClaudeChannelCredential(ch)
+	if err != nil {
+		common.SysError("failed to parse claude credential: " + err.Error())
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "解析凭证失败，请检查渠道配置"})
+		return
+	}
+
+	var req service.ClaudeLimitResetRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "重置参数无效"})
+		return
+	}
+
+	res, err := service.ResetClaudeChannelLimit(c.Request.Context(), ch, cred, req)
+	if err != nil {
+		common.SysError("failed to reset claude limit: " + err.Error())
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "重置失败，请稍后重试"})
+		return
+	}
+
+	var payload any
+	if common.Unmarshal(res.Body, &payload) != nil {
+		payload = string(res.Body)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":         res.Success,
+		"message":         res.Message,
+		"upstream_status": res.UpstreamStatus,
+		"data":            payload,
+	})
+}
