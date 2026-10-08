@@ -118,7 +118,7 @@ func syncSubscriptionChannelUsage(ctx context.Context, ch *model.Channel) (int, 
 		if err != nil {
 			return 0, err
 		}
-		statusCode, _, _, err := SyncClaudeChannelUsage(ctx, ch, cred)
+		statusCode, _, _, _, err := SyncClaudeChannelUsage(ctx, ch, cred)
 		return statusCode, err
 	}
 	return 0, fmt.Errorf("unsupported channel type %d", ch.Type)

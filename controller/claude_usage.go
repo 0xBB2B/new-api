@@ -45,7 +45,7 @@ func GetClaudeChannelUsage(c *gin.Context) {
 		return
 	}
 
-	statusCode, body, snapshot, err := service.SyncClaudeChannelUsage(c.Request.Context(), ch, cred)
+	statusCode, body, snapshot, hasVersion, err := service.SyncClaudeChannelUsage(c.Request.Context(), ch, cred)
 	if err != nil {
 		common.SysError("failed to fetch claude usage: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取用量信息失败，请稍后重试"})
@@ -64,6 +64,9 @@ func GetClaudeChannelUsage(c *gin.Context) {
 		"upstream_status": statusCode,
 		"data":            payload,
 		"usage":           snapshot,
+	}
+	if !hasVersion {
+		resp["limit_reset_unavailable"] = "client_version"
 	}
 	if !ok {
 		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
