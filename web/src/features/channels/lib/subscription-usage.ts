@@ -312,9 +312,15 @@ function resolveFiveHourResetRow(
     return { canReset: false, reasonKind: 'raw', rawReason: reason }
   }
 
-  const nextAvailableAt = parseIsoTimestamp(juniper.next_available_at)
-  if (nextAvailableAt > 0) {
-    return { canReset: false, reasonKind: 'next_available', nextAvailableAt }
+  if (
+    typeof juniper.next_available_at === 'string' &&
+    juniper.next_available_at !== ''
+  ) {
+    return {
+      canReset: false,
+      reasonKind: 'next_available',
+      nextAvailableAt: parseIsoTimestamp(juniper.next_available_at),
+    }
   }
   return { canReset: false, reasonKind: 'none' }
 }

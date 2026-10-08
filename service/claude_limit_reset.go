@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/google/uuid"
 )
@@ -31,7 +32,8 @@ type ClaudeLimitResetRequest struct {
 
 type ClaudeLimitResetResult struct {
 	Success        bool
-	Message        string
+	MessageKey     string
+	MessageArgs    map[string]any
 	UpstreamStatus int
 	Body           []byte
 }
@@ -42,11 +44,11 @@ func validateClaudeLimitResetRequest(req ClaudeLimitResetRequest) string {
 		return ""
 	case claudeResetProgramCedarEmber:
 		if !claudeResetGrantIDPattern.MatchString(req.GrantID) || req.ResetsLeft < 1 || req.ResetsLeft > 100 {
-			return "重置参数无效"
+			return i18n.MsgClaudeLimitResetInvalidParams
 		}
 		return ""
 	default:
-		return "不支持的重置类型"
+		return i18n.MsgClaudeLimitResetUnsupportedProgram
 	}
 }
 
@@ -117,15 +119,15 @@ func postClaudeResetRateLimits(ctx context.Context, client *http.Client, baseURL
 	return doClaudeResetRequest(client, httpReq)
 }
 
-func claudeLimitResetMessage(status int, body []byte) (bool, string) {
+func claudeLimitResetMessage(status int, body []byte) (bool, string, map[string]any) {
 	if status < 200 || status >= 300 {
 		switch status {
 		case http.StatusTooManyRequests:
-			return false, "请求太频繁，请稍后再试"
+			return false, i18n.MsgClaudeLimitResetRateLimited, nil
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return false, "凭据无效或权限不足"
+			return false, i18n.MsgClaudeLimitResetUnauthorized, nil
 		default:
-			return false, fmt.Sprintf("上游返回 HTTP %d", status)
+			return false, i18n.MsgClaudeLimitResetUpstreamStatus, map[string]any{"Status": status}
 		}
 	}
 	var payload struct {
@@ -134,28 +136,28 @@ func claudeLimitResetMessage(status int, body []byte) (bool, string) {
 	_ = common.Unmarshal(body, &payload)
 	switch payload.Result {
 	case "reset":
-		return true, "重置成功"
+		return true, i18n.MsgClaudeLimitResetSuccess, nil
 	case "already_used":
-		return false, "这次重置已经用过了"
+		return false, i18n.MsgClaudeLimitResetAlreadyUsed, nil
 	case "not_limited":
-		return false, "当前没有触顶，不需要重置"
+		return false, i18n.MsgClaudeLimitResetNotLimited, nil
 	case "cooldown":
-		return false, "冷却中，请稍后再试"
+		return false, i18n.MsgClaudeLimitResetCooldown, nil
 	case "ineligible":
-		return false, "账号不符合使用条件"
+		return false, i18n.MsgClaudeLimitResetIneligible, nil
 	case "unavailable":
-		return false, "上游暂时不可用"
+		return false, i18n.MsgClaudeLimitResetUnavailable, nil
 	default:
-		return false, "上游返回未知结果"
+		return false, i18n.MsgClaudeLimitResetUnknownResult, nil
 	}
 }
 
 func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, accessToken, cliVersion string, req ClaudeLimitResetRequest) ClaudeLimitResetResult {
-	if msg := validateClaudeLimitResetRequest(req); msg != "" {
-		return ClaudeLimitResetResult{Message: msg}
+	if key := validateClaudeLimitResetRequest(req); key != "" {
+		return ClaudeLimitResetResult{MessageKey: key}
 	}
 	if cliVersion == "" {
-		return ClaudeLimitResetResult{Message: "取不到 Claude Code 最新版本，无法执行重置"}
+		return ClaudeLimitResetResult{MessageKey: i18n.MsgClaudeLimitResetNoClientVersion}
 	}
 
 	profileCtx, cancelProfile := context.WithTimeout(ctx, 15*time.Second)
@@ -166,10 +168,10 @@ func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, a
 			common.SysError("failed to fetch claude organization uuid: " + err.Error())
 		}
 		if profileStatus != 0 && (profileStatus < 200 || profileStatus >= 300) {
-			_, msg := claudeLimitResetMessage(profileStatus, nil)
-			return ClaudeLimitResetResult{Message: msg, UpstreamStatus: profileStatus}
+			_, key, args := claudeLimitResetMessage(profileStatus, nil)
+			return ClaudeLimitResetResult{MessageKey: key, MessageArgs: args, UpstreamStatus: profileStatus}
 		}
-		return ClaudeLimitResetResult{Message: "获取账号组织信息失败", UpstreamStatus: profileStatus}
+		return ClaudeLimitResetResult{MessageKey: i18n.MsgClaudeLimitResetOrgFailed, UpstreamStatus: profileStatus}
 	}
 
 	resetCtx, cancelReset := context.WithTimeout(ctx, 15*time.Second)
@@ -177,15 +179,15 @@ func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, a
 	status, body, err := postClaudeResetRateLimits(resetCtx, client, baseURL, accessToken, cliVersion, orgUUID, req)
 	if err != nil {
 		common.SysError("failed to reset claude rate limits: " + err.Error())
-		return ClaudeLimitResetResult{Message: "重置结果未知，请先刷新用量确认后再决定是否重试", UpstreamStatus: status}
+		return ClaudeLimitResetResult{MessageKey: i18n.MsgClaudeLimitResetResultUnknown, UpstreamStatus: status}
 	}
-	success, msg := claudeLimitResetMessage(status, body)
-	return ClaudeLimitResetResult{Success: success, Message: msg, UpstreamStatus: status, Body: body}
+	success, key, args := claudeLimitResetMessage(status, body)
+	return ClaudeLimitResetResult{Success: success, MessageKey: key, MessageArgs: args, UpstreamStatus: status, Body: body}
 }
 
 func ResetClaudeChannelLimit(ctx context.Context, ch *model.Channel, cred *claudeOAuthCredential, req ClaudeLimitResetRequest) (ClaudeLimitResetResult, error) {
-	if msg := validateClaudeLimitResetRequest(req); msg != "" {
-		return ClaudeLimitResetResult{Message: msg}, nil
+	if key := validateClaudeLimitResetRequest(req); key != "" {
+		return ClaudeLimitResetResult{MessageKey: key}, nil
 	}
 	client, err := GetHttpClientWithProxy(ch.GetSetting().Proxy)
 	if err != nil {

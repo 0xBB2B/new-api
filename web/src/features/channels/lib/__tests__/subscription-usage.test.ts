@@ -455,6 +455,23 @@ describe('resolveClaudeLimitResets five hour row', () => {
     })
   })
 
+  test('next_available is 0 when next_available_at cannot be parsed', () => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({
+          ineligible_reason: null,
+          next_available_at: 'not-a-date',
+        })
+      )
+    )
+    expect(result.fiveHour).toEqual({
+      canReset: false,
+      reasonKind: 'next_available',
+      nextAvailableAt: 0,
+    })
+  })
+
   test('is none when no reason and no next_available_at', () => {
     const result = resolveReady(
       buildResponse(

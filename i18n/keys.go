@@ -347,3 +347,26 @@ const (
 	MsgCustomOAuthBindingNotFound   = "custom_oauth.binding_not_found"
 	MsgCustomOAuthProviderIdInvalid = "custom_oauth.provider_id_field_invalid"
 )
+
+// Claude limit reset related messages
+const (
+	MsgClaudeLimitResetSuccess             = "claude_limit_reset.success"
+	MsgClaudeLimitResetAlreadyUsed         = "claude_limit_reset.already_used"
+	MsgClaudeLimitResetNotLimited          = "claude_limit_reset.not_limited"
+	MsgClaudeLimitResetCooldown            = "claude_limit_reset.cooldown"
+	MsgClaudeLimitResetIneligible          = "claude_limit_reset.ineligible"
+	MsgClaudeLimitResetUnavailable         = "claude_limit_reset.unavailable"
+	MsgClaudeLimitResetUnknownResult       = "claude_limit_reset.unknown_result"
+	MsgClaudeLimitResetRateLimited         = "claude_limit_reset.rate_limited"
+	MsgClaudeLimitResetUnauthorized        = "claude_limit_reset.unauthorized"
+	MsgClaudeLimitResetUpstreamStatus      = "claude_limit_reset.upstream_status"
+	MsgClaudeLimitResetResultUnknown       = "claude_limit_reset.result_unknown"
+	MsgClaudeLimitResetUnsupportedProgram  = "claude_limit_reset.unsupported_program"
+	MsgClaudeLimitResetInvalidParams       = "claude_limit_reset.invalid_params"
+	MsgClaudeLimitResetNoClientVersion     = "claude_limit_reset.no_client_version"
+	MsgClaudeLimitResetOrgFailed           = "claude_limit_reset.org_failed"
+	MsgClaudeLimitResetFailed              = "claude_limit_reset.failed"
+	MsgClaudeLimitResetChannelTypeInvalid  = "claude_limit_reset.channel_type_invalid"
+	MsgClaudeLimitResetMultiKeyUnsupported = "claude_limit_reset.multi_key_unsupported"
+	MsgClaudeLimitResetCredentialInvalid   = "claude_limit_reset.credential_invalid"
+)

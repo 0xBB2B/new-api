@@ -13,7 +13,7 @@ description: 新接口 POST /api/channel/:id/claude/usage/reset 执行全部重�
 - 请求体：`{"program": "cedar_ember" | "juniper_tide", "grant_id": string, "resets_left": int}`；`grant_id`、`resets_left` 仅 `cedar_ember` 必填。
 - 后端处理顺序：
   1. 校验渠道：存在、类型为 Claude 订阅、不是多 key 渠道、凭据可解析；
-  2. 校验请求：`program` 只能是两个值之一；`cedar_ember` 时 `grant_id` 匹配 `^[a-z0-9_-]{1,40}$`，`resets_left` 为 1～100 的整数；不合法返回 `success=false` 与中文原因，不调上游；
+  2. 校验请求：`program` 只能是两个值之一；`cedar_ember` 时 `grant_id` 匹配 `^[a-z0-9_-]{1,40}$`，`resets_left` 为 1～100 的整数；不合法返回 `success=false` 与翻译后的原因，不调上游；
   3. 取客户端版本号（与用量查询共用同一份缓存），取不到则返回「取不到 Claude Code 最新版本，无法执行重置」，不调上游；
   4. `GET <base_url>/api/oauth/profile` 取 `organization.uuid`，必须是标准 UUID 格式，否则返回失败；
   5. `POST <base_url>/api/organizations/<uuid>/reset_rate_limits`。请求体：`cedar_ember` 为 `{"program":"cedar_ember","grant_id":<grant_id>,"request_id":"<grant_id>-u<resets_left>"}`；`juniper_tide` 为 `{"program":"juniper_tide"}`。
@@ -31,6 +31,7 @@ description: 新接口 POST /api/channel/:id/claude/usage/reset 执行全部重�
   - `reset_rate_limits` 请求发出后网络出错或超时（拿不到响应）→ 重置结果未知，请先刷新用量确认后再决定是否重试
   - 按渠道代理设置构造 HTTP 客户端失败 → 重置失败，请稍后重试
 - 前端：点「免费重置」先弹确认框，说明会清空哪些窗口、次数用完就没有了；确认后调用接口；成功后显示成功提示并重新调用用量接口刷新弹窗；失败显示失败原因。执行中按钮禁用。
+- `message` 由 controller 按用户语言翻译（en / zh-CN / zh-TW），service 层只回传翻译 key 与参数；上表与下文所列为简体中文译文，带状态码的一条用模板参数 `Status` 注入。
 - 不写审计日志。
 
 ## 约束
