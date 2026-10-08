@@ -13,3 +13,6 @@
 | Claude Code system prompt | OAuth 鉴权硬要求置于首条 system 的身份串 `You are Claude Code, Anthropic's official CLI for Claude.` | 简体「Claude Code 身份 system」 |
 | username | 用户登录名，全站唯一，日志与审计记录中持久保存的用户标识文本，对应 users.username | 简体「用户名」 |
 | display name | 用户可自行修改的展示用名称，允许为空与重名，对应 users.display_name | 简体「显示名」 |
+| limit reset | Claude 订阅账号把用量窗口立即清零的权益，由上游按账号授予，分全部重置与 5 小时重置 | 简体「限额重置」 |
+| full reset | 上游程序 `cedar_ember` 授予的重置，按授予次数使用，清空授予记录里 `clears` 列出的窗口 | 简体「全部重置」 |
+| 5-hour reset | 上游程序 `juniper_tide` 的重置，每周可用次数有限，只在 5 小时额度用完时可用，只清空 5 小时窗口 | 简体「5 小时重置」 |
