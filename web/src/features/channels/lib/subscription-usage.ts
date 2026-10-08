@@ -184,3 +184,165 @@ export function formatDurationSeconds(
   }
   return `${secs}${t('s')}`
 }
+
+export type ClaudeLimitResetRequest = {
+  program: 'cedar_ember' | 'juniper_tide'
+  grant_id?: string
+  resets_left?: number
+}
+
+export type ClaudeFullResetRow =
+  | { available: false }
+  | {
+      available: true
+      label: string
+      resetsLeft: number
+      resetsTotal: number
+      endsAt: number
+      clears: string[]
+      cooldownUntil: number
+      coolingDown: boolean
+      canReset: boolean
+      request: ClaudeLimitResetRequest
+    }
+
+export type ClaudeFiveHourResetRow =
+  | { canReset: true; request: ClaudeLimitResetRequest }
+  | {
+      canReset: false
+      reasonKind: 'not_at_wall' | 'client_identity' | 'none'
+    }
+  | { canReset: false; reasonKind: 'raw'; rawReason: string }
+  | { canReset: false; reasonKind: 'next_available'; nextAvailableAt: number }
+
+export type ClaudeLimitResets =
+  | { state: 'error'; message: string }
+  | { state: 'client_version' }
+  | { state: 'not_returned' }
+  | {
+      state: 'ready'
+      full: ClaudeFullResetRow
+      fiveHour: ClaudeFiveHourResetRow
+    }
+
+type ClaudeLimitResetSource = {
+  success: boolean
+  message?: string
+  limit_reset_unavailable?: string
+  data?: unknown
+}
+
+type UnknownRecord = Record<string, unknown>
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object'
+    ? (value as UnknownRecord)
+    : null
+}
+
+export function parseIsoTimestamp(value: unknown): number {
+  if (typeof value !== 'string' || value === '') {
+    return 0
+  }
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0
+}
+
+function resolveFullResetRow(
+  cedar: UnknownRecord,
+  nowSeconds: number
+): ClaudeFullResetRow {
+  const grants = Array.isArray(cedar.grants) ? cedar.grants : []
+  const grant = grants
+    .map(asRecord)
+    .find((g) => g !== null && g.id === cedar.next_grant_id)
+  if (!grant || typeof grant.id !== 'string') {
+    return { available: false }
+  }
+
+  const resetsLeft = Number(grant.resets_left) || 0
+  const cooldownUntil = parseIsoTimestamp(cedar.cooldown_until)
+  const hasCooldown =
+    cedar.cooldown_until !== null &&
+    cedar.cooldown_until !== undefined &&
+    cedar.cooldown_until !== ''
+  const coolingDown =
+    hasCooldown && (cooldownUntil === 0 || cooldownUntil > nowSeconds)
+  const canReset =
+    cedar.eligible === true &&
+    grant.usable_now === true &&
+    grant.paused !== true &&
+    resetsLeft > 0 &&
+    (grant.use_requires_limit !== true || cedar.at_limit === true) &&
+    !coolingDown
+
+  return {
+    available: true,
+    label: String(grant.label ?? ''),
+    resetsLeft,
+    resetsTotal: Number(grant.resets_total) || 0,
+    endsAt: parseIsoTimestamp(grant.ends_at),
+    clears: Array.isArray(grant.clears) ? grant.clears.map(String) : [],
+    cooldownUntil,
+    coolingDown,
+    canReset,
+    request: {
+      program: 'cedar_ember',
+      grant_id: grant.id,
+      resets_left: resetsLeft,
+    },
+  }
+}
+
+function resolveFiveHourResetRow(
+  juniper: UnknownRecord | null
+): ClaudeFiveHourResetRow {
+  if (!juniper) {
+    return { canReset: false, reasonKind: 'none' }
+  }
+  if (juniper.eligible === true && juniper.available === true) {
+    return { canReset: true, request: { program: 'juniper_tide' } }
+  }
+
+  const reason = juniper.ineligible_reason
+  if (reason === 'not_at_wall') {
+    return { canReset: false, reasonKind: 'not_at_wall' }
+  }
+  if (reason === 'surface' || reason === 'cli_version') {
+    return { canReset: false, reasonKind: 'client_identity' }
+  }
+  if (typeof reason === 'string' && reason !== '') {
+    return { canReset: false, reasonKind: 'raw', rawReason: reason }
+  }
+
+  const nextAvailableAt = parseIsoTimestamp(juniper.next_available_at)
+  if (nextAvailableAt > 0) {
+    return { canReset: false, reasonKind: 'next_available', nextAvailableAt }
+  }
+  return { canReset: false, reasonKind: 'none' }
+}
+
+export function resolveClaudeLimitResets(
+  response: ClaudeLimitResetSource,
+  nowSeconds: number
+): ClaudeLimitResets {
+  if (response.success === false) {
+    return { state: 'error', message: response.message ?? '' }
+  }
+  if (response.limit_reset_unavailable === 'client_version') {
+    return { state: 'client_version' }
+  }
+
+  const data = asRecord(response.data)
+  const cedar = asRecord(data?.cedar_ember)
+  const juniper = asRecord(data?.juniper_tide)
+  if (!cedar && !juniper) {
+    return { state: 'not_returned' }
+  }
+
+  return {
+    state: 'ready',
+    full: cedar ? resolveFullResetRow(cedar, nowSeconds) : { available: false },
+    fiveHour: resolveFiveHourResetRow(juniper),
+  }
+}

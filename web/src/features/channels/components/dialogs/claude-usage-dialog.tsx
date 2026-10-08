@@ -41,6 +41,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import type { ClaudeUsageResponse } from '../../api'
 import { resolveRateLimitWindows } from '../../lib/subscription-usage'
+import { ClaudeLimitResetCard } from './claude-limit-reset-card'
 import { RateLimitWindowGrid } from './rate-limit-window-grid'
 
 type ClaudeUsageDialogProps = {
@@ -185,6 +186,13 @@ export function ClaudeUsageDialog({
         <RateLimitWindowGrid
           fiveHourWindow={fiveHourWindow}
           weeklyWindow={weeklyWindow}
+        />
+
+        <ClaudeLimitResetCard
+          channelId={channelId}
+          response={response}
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
         />
 
         <Collapsible
