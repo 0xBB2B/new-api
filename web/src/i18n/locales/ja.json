@@ -88,7 +88,6 @@
     "{{first}} or {{second}}": "{{first}}または{{second}}",
     "{{key}} · from {{source}}": "{{key}} · 配布元 {{source}}",
     "{{key}} · version {{version}} · from {{source}}": "{{key}} · バージョン {{version}} · 提供元 {{source}}",
-    "{{label}} · {{left}}/{{total}} left · Expires {{time}}": "{{label}} · 残り {{left}}/{{total}} 回 · 有効期限 {{time}}",
     "{{method}} {{route}}": "{{method}} {{route}}",
     "{{modality}} not supported": "{{modality}} はサポートされていません",
     "{{modality}} supported": "{{modality}} をサポート",
@@ -1158,7 +1157,7 @@
     "Cleared disk cache": "ディスクキャッシュをクリアしました",
     "Cleared historical logs": "履歴ログをクリアしました",
     "Cleared log files": "ログファイルをクリアしました",
-    "Clears: ": "クリア対象：",
+    "Clears": "クリア対象",
     "Click \"Create Plan\" to create your first subscription plan": "「プラン作成」をクリックして最初のプランを作成してください",
     "Click \"Generate\" to create a token": "「生成」をクリックしてトークンを作成",
     "Click a stage to show or hide that column": "ステージをクリックすると、その列を表示または非表示にできます",
@@ -1455,7 +1454,7 @@
     "Converter": "コンバーター",
     "Converter does not match incoming path": "コンバーターが受信パスと一致しません",
     "Converter is not registered": "コンバーターが登録されていません",
-    "Cooling down, available after {{time}}": "クールダウン中、{{time}} 以降に利用可能",
+    "Cooldown": "クールダウン",
     "Copied": "コピーしました",
     "Copied {{count}} key(s)": "{{count}} 件のキーをコピーしました",
     "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})": "チャネルを複製しました（元 ID: {{sourceId}}）→ {{name}}（新 ID: {{id}}）",
@@ -2359,6 +2358,7 @@
     "Extra visible": "追加表示",
     "Extra visible to {{group}}": "{{group}} に追加表示",
     "extras": "追加項目",
+    "Fable weekly window": "Fable 週間ウィンドウ",
     "Factory": "組み込み",
     "Factory and custom plugin behavior": "組み込み版とカスタム版の動作",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "ファクトリープラグインとカスタムプラグインは直ちに停止します。実行中のタスクはタイムアウトクリーンアップで処理されます。",
@@ -5010,6 +5010,7 @@
     "Reset value ({{currency}})": "リセット値 ({{currency}})",
     "Resets at {{time}}": "{{time}} にリセット",
     "Resets in:": "リセットまで：",
+    "Resets left": "残り回数",
     "Resets to {{value}}": "{{value}} にリセットされます",
     "Resetting...": "リセット中...",
     "Resize column": "列幅を変更",
@@ -5976,6 +5977,7 @@
     "This channel type does not support fetching models": "このチャネルタイプはモデルの取得をサポートしていません",
     "This channel type requires additional configuration": "このチャネルタイプには追加設定が必要です",
     "This clears only the 5-hour window. The weekly limit stays unchanged.": "5時間枠のみクリアします。週間上限は変わりません。",
+    "This clears the windows listed below right away. Once used, this reset is gone.": "下に表示されたウィンドウをすぐにクリアします。使用すると、このリセットは失われます。",
     "This combination will be billed as free.": "この組み合わせの料金は発生しません。",
     "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.": "この確認により、支払い、引換コード、サブスクリプションプラン、招待報酬の機能が解除されます。各項目をよく読んでください。",
     "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.": "これはモデルリクエストのレート制限を制御します。Web/API ルートのスロットリングは環境変数で設定され、引き続き 429 を返す場合があります。",
@@ -6912,7 +6914,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム",
-    "This clears the windows listed below right away. Once used, this reset is gone.": "下に表示されたウィンドウをすぐにクリアします。使用すると、このリセットは失われます。"
+    "Zoom": "ズーム"
   }
 }

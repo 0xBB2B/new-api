@@ -88,7 +88,6 @@
     "{{first}} or {{second}}": "{{first}} or {{second}}",
     "{{key}} · from {{source}}": "{{key}} · from {{source}}",
     "{{key}} · version {{version}} · from {{source}}": "{{key}} · version {{version}} · from {{source}}",
-    "{{label}} · {{left}}/{{total}} left · Expires {{time}}": "{{label}} · {{left}}/{{total}} left · Expires {{time}}",
     "{{method}} {{route}}": "{{method}} {{route}}",
     "{{modality}} not supported": "{{modality}} not supported",
     "{{modality}} supported": "{{modality}} supported",
@@ -1158,7 +1157,7 @@
     "Cleared disk cache": "Cleared disk cache",
     "Cleared historical logs": "Cleared historical logs",
     "Cleared log files": "Cleared log files",
-    "Clears: ": "Clears: ",
+    "Clears": "Clears",
     "Click \"Create Plan\" to create your first subscription plan": "Click \"Create Plan\" to create your first subscription plan",
     "Click \"Generate\" to create a token": "Click \"Generate\" to create a token",
     "Click a stage to show or hide that column": "Click a stage to show or hide that column",
@@ -1455,7 +1454,7 @@
     "Converter": "Converter",
     "Converter does not match incoming path": "Converter does not match incoming path",
     "Converter is not registered": "Converter is not registered",
-    "Cooling down, available after {{time}}": "Cooling down, available after {{time}}",
+    "Cooldown": "Cooldown",
     "Copied": "Copied",
     "Copied {{count}} key(s)": "Copied {{count}} key(s)",
     "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})": "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})",
@@ -2359,6 +2358,7 @@
     "Extra visible": "Extra visible",
     "Extra visible to {{group}}": "Extra visible to {{group}}",
     "extras": "extras",
+    "Fable weekly window": "Fable weekly window",
     "Factory": "Factory",
     "Factory and custom plugin behavior": "Factory and custom plugin behavior",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.",
@@ -5010,6 +5010,7 @@
     "Reset value ({{currency}})": "Reset value ({{currency}})",
     "Resets at {{time}}": "Resets at {{time}}",
     "Resets in:": "Resets in:",
+    "Resets left": "Resets left",
     "Resets to {{value}}": "Resets to {{value}}",
     "Resetting...": "Resetting...",
     "Resize column": "Resize column",
@@ -5976,6 +5977,7 @@
     "This channel type does not support fetching models": "This channel type does not support fetching models",
     "This channel type requires additional configuration": "This channel type requires additional configuration",
     "This clears only the 5-hour window. The weekly limit stays unchanged.": "This clears only the 5-hour window. The weekly limit stays unchanged.",
+    "This clears the windows listed below right away. Once used, this reset is gone.": "This clears the windows listed below right away. Once used, this reset is gone.",
     "This combination will be billed as free.": "This combination will be billed as free.",
     "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.": "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.",
     "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.": "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.",
@@ -6912,7 +6914,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "This clears the windows listed below right away. Once used, this reset is gone.": "This clears the windows listed below right away. Once used, this reset is gone."
+    "Zoom": "Zoom"
   }
 }

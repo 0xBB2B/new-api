@@ -88,7 +88,6 @@
     "{{first}} or {{second}}": "{{first}}或{{second}}",
     "{{key}} · from {{source}}": "{{key}} · 来自 {{source}}",
     "{{key}} · version {{version}} · from {{source}}": "{{key}} · 版本 {{version}} · 来自 {{source}}",
-    "{{label}} · {{left}}/{{total}} left · Expires {{time}}": "{{label}} · 剩余 {{left}}/{{total}} 次 · {{time}} 过期",
     "{{method}} {{route}}": "{{method}} {{route}}",
     "{{modality}} not supported": "不支持 {{modality}}",
     "{{modality}} supported": "支持 {{modality}}",
@@ -1158,7 +1157,7 @@
     "Cleared disk cache": "清除磁盘缓存",
     "Cleared historical logs": "清理历史日志",
     "Cleared log files": "清理日志文件",
-    "Clears: ": "会清空：",
+    "Clears": "会清空",
     "Click \"Create Plan\" to create your first subscription plan": "点击「新建套餐」创建您的第一个订阅套餐",
     "Click \"Generate\" to create a token": "点击“生成”以创建令牌",
     "Click a stage to show or hide that column": "点击某个阶段可显示或隐藏对应的列",
@@ -1455,7 +1454,7 @@
     "Converter": "转换器",
     "Converter does not match incoming path": "转换器与入口路径不匹配",
     "Converter is not registered": "转换器未注册",
-    "Cooling down, available after {{time}}": "冷却中，{{time}} 后可用",
+    "Cooldown": "冷却",
     "Copied": "已复制",
     "Copied {{count}} key(s)": "已复制 {{count}} 个密钥",
     "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})": "复制渠道（源 ID: {{sourceId}}）为 {{name}}（新 ID: {{id}}）",
@@ -2359,6 +2358,7 @@
     "Extra visible": "额外可见",
     "Extra visible to {{group}}": "对 {{group}} 额外可见",
     "extras": "额外项",
+    "Fable weekly window": "Fable 每周窗口",
     "Factory": "出厂",
     "Factory and custom plugin behavior": "出厂与自定义插件行为",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "出厂插件和自定义插件将立即停止服务。进行中的任务将由超时清理处理。",
@@ -5010,6 +5010,7 @@
     "Reset value ({{currency}})": "重置值 ({{currency}})",
     "Resets at {{time}}": "将于 {{time}} 重置",
     "Resets in:": "将于以下时间重置：",
+    "Resets left": "剩余次数",
     "Resets to {{value}}": "将重置为 {{value}}",
     "Resetting...": "重置中...",
     "Resize column": "调整列宽",
@@ -5976,6 +5977,7 @@
     "This channel type does not support fetching models": "此渠道类型不支持获取模型",
     "This channel type requires additional configuration": "此渠道类型需要填写额外配置",
     "This clears only the 5-hour window. The weekly limit stays unchanged.": "只会清空 5 小时窗口，每周上限不变。",
+    "This clears the windows listed below right away. Once used, this reset is gone.": "会立即清空下面列出的窗口。这次重置用掉就没有了。",
     "This combination will be billed as free.": "此组合将免费计费。",
     "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.": "此确认会解锁支付、兑换码、订阅套餐和邀请奖励功能。请仔细阅读相关声明。",
     "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.": "此处仅控制模型请求速率限制。Web/API 路由限流由环境变量配置，仍可能返回 429。",
@@ -6912,7 +6914,6 @@
     "Zhipu": "智谱",
     "Zhipu GLM": "智谱GLM",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放",
-    "This clears the windows listed below right away. Once used, this reset is gone.": "会立即清空下面列出的窗口。这次重置用掉就没有了。"
+    "Zoom": "缩放"
   }
 }

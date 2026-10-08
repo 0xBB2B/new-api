@@ -88,7 +88,6 @@
     "{{first}} or {{second}}": "{{first}} ou {{second}}",
     "{{key}} · from {{source}}": "{{key}} · source : {{source}}",
     "{{key}} · version {{version}} · from {{source}}": "{{key}} · version {{version}} · depuis {{source}}",
-    "{{label}} · {{left}}/{{total}} left · Expires {{time}}": "{{label}} · {{left}}/{{total}} restante(s) · Expire le {{time}}",
     "{{method}} {{route}}": "{{method}} {{route}}",
     "{{modality}} not supported": "{{modality}} non pris en charge",
     "{{modality}} supported": "{{modality}} pris en charge",
@@ -1158,7 +1157,7 @@
     "Cleared disk cache": "Cache disque vidé",
     "Cleared historical logs": "Journaux historiques effacés",
     "Cleared log files": "Fichiers journaux effacés",
-    "Clears: ": "Efface : ",
+    "Clears": "Efface",
     "Click \"Create Plan\" to create your first subscription plan": "Cliquez sur « Créer un plan » pour créer votre premier abonnement",
     "Click \"Generate\" to create a token": "Cliquez sur \"Générer\" pour créer un jeton",
     "Click a stage to show or hide that column": "Cliquez sur une étape pour afficher ou masquer cette colonne",
@@ -1455,7 +1454,7 @@
     "Converter": "Convertisseur",
     "Converter does not match incoming path": "Le convertisseur ne correspond pas au chemin entrant",
     "Converter is not registered": "Le convertisseur n’est pas enregistre",
-    "Cooling down, available after {{time}}": "Période de refroidissement, disponible après {{time}}",
+    "Cooldown": "Délai d’attente",
     "Copied": "Copié",
     "Copied {{count}} key(s)": "{{count}} clé(s) copiée(s)",
     "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})": "Canal copié (ID source : {{sourceId}}) vers {{name}} (nouvel ID : {{id}})",
@@ -2359,6 +2358,7 @@
     "Extra visible": "Visible en plus",
     "Extra visible to {{group}}": "Visible en plus pour {{group}}",
     "extras": "suppléments",
+    "Fable weekly window": "Fenêtre hebdomadaire Fable",
     "Factory": "Intégré",
     "Factory and custom plugin behavior": "Comportement des plugins intégrés et personnalisés",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Les plugins d’usine et personnalisés cessent immédiatement de servir. Les tâches en cours seront traitées par le nettoyage des délais d’attente.",
@@ -5010,6 +5010,7 @@
     "Reset value ({{currency}})": "Valeur de réinitialisation ({{currency}})",
     "Resets at {{time}}": "Réinitialisation le {{time}}",
     "Resets in:": "Réinitialise dans :",
+    "Resets left": "Réinitialisations restantes",
     "Resets to {{value}}": "Réinitialisation à {{value}}",
     "Resetting...": "Réinitialisation...",
     "Resize column": "Redimensionner la colonne",
@@ -5976,6 +5977,7 @@
     "This channel type does not support fetching models": "Ce type de canal ne prend pas en charge la récupération de modèles",
     "This channel type requires additional configuration": "Ce type de canal nécessite une configuration supplémentaire",
     "This clears only the 5-hour window. The weekly limit stays unchanged.": "Cela efface uniquement la fenêtre de 5 h. La limite hebdomadaire reste inchangée.",
+    "This clears the windows listed below right away. Once used, this reset is gone.": "Cela efface immédiatement les fenêtres listées ci-dessous. Une fois utilisée, cette réinitialisation est perdue.",
     "This combination will be billed as free.": "Cette combinaison ne sera pas facturée.",
     "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.": "Cette confirmation déverrouille les fonctionnalités de paiement, de codes de兑换, de forfaits d’abonnement et de récompenses d’invitation. Veuillez lire attentivement les déclarations.",
     "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.": "Ce réglage contrôle la limitation des requêtes de modèles. La limitation des routes Web/API se configure via les variables d'environnement et peut encore renvoyer 429.",
@@ -6912,7 +6914,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "This clears the windows listed below right away. Once used, this reset is gone.": "Cela efface immédiatement les fenêtres listées ci-dessous. Une fois utilisée, cette réinitialisation est perdue."
+    "Zoom": "Zoom"
   }
 }

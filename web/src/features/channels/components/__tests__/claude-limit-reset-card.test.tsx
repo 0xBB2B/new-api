@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -96,8 +97,9 @@ describe('ClaudeLimitResetCard', () => {
         'This clears the windows listed below right away. Once used, this reset is gone.'
       )
     ).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('Clears')
     expect(dialog).toHaveTextContent(
-      'Clears: 5-Hour Window, Weekly Window, seven_day_overage_included'
+      '5-Hour Window, Weekly Window, Fable weekly window'
     )
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(post).not.toHaveBeenCalled()
@@ -145,9 +147,33 @@ describe('ClaudeLimitResetCard', () => {
     expect(
       screen.getByRole('button', { name: 'Reset for free' })
     ).toBeDisabled()
-    expect(
-      screen.getByText(/^Cooling down, available after 2099-01-01/)
-    ).toBeInTheDocument()
+    const terms = screen.getAllByRole('term').map((el) => el.textContent)
+    const definitions = screen.getAllByRole('definition')
+    expect(terms).toContain('Cooldown')
+    expect(definitions[terms.indexOf('Cooldown')].textContent).toMatch(
+      /^Available after 2099-01-01/
+    )
+    expect(screen.queryByText(/Cooling down/)).not.toBeInTheDocument()
+  })
+
+  test('shows the grant as title, upstream label and a field list', () => {
+    renderCard(usageResponse())
+
+    expect(screen.getByText('Full reset')).toBeInTheDocument()
+    expect(screen.getByText('Launch reset')).toBeInTheDocument()
+
+    const terms = screen.getAllByRole('term').map((el) => el.textContent)
+    const definitions = screen
+      .getAllByRole('definition')
+      .map((el) => el.textContent)
+    expect(terms).toEqual(['Resets left', 'Expires at', 'Clears'])
+    expect(definitions[0]).toBe('1/1')
+    expect(definitions[1]).toMatch(/^2099-10-2[23] \d{2}:\d{2}$/)
+    expect(definitions[2]).toBe(
+      '5-Hour Window, Weekly Window, Fable weekly window'
+    )
+
+    expect(screen.queryByText(/Clears: /)).not.toBeInTheDocument()
   })
 
   test('shows skeletons instead of reset buttons while usage is refreshing', () => {
@@ -156,5 +182,18 @@ describe('ClaudeLimitResetCard', () => {
     expect(
       screen.queryByRole('button', { name: 'Reset for free' })
     ).not.toBeInTheDocument()
+  })
+
+  test('joins cleared windows with the Chinese list separator in zhCN', async () => {
+    await i18next.changeLanguage('zhCN')
+    try {
+      renderCard(usageResponse())
+      const definitions = screen.getAllByRole('definition')
+      expect(definitions.at(-1)).toHaveTextContent(
+        '5-Hour Window、Weekly Window、Fable weekly window'
+      )
+    } finally {
+      await i18next.changeLanguage('en')
+    }
   })
 })

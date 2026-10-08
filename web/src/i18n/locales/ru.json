@@ -88,7 +88,6 @@
     "{{first}} or {{second}}": "{{first}} или {{second}}",
     "{{key}} · from {{source}}": "{{key}} · источник: {{source}}",
     "{{key}} · version {{version}} · from {{source}}": "{{key}} · версия {{version}} · из {{source}}",
-    "{{label}} · {{left}}/{{total}} left · Expires {{time}}": "{{label}} · осталось {{left}}/{{total}} · истекает {{time}}",
     "{{method}} {{route}}": "{{method}} {{route}}",
     "{{modality}} not supported": "{{modality}} не поддерживается",
     "{{modality}} supported": "{{modality}} поддерживается",
@@ -1158,7 +1157,7 @@
     "Cleared disk cache": "Дисковый кэш очищен",
     "Cleared historical logs": "Исторические журналы очищены",
     "Cleared log files": "Файлы журналов очищены",
-    "Clears: ": "Очищает: ",
+    "Clears": "Очищает",
     "Click \"Create Plan\" to create your first subscription plan": "Нажмите «Создать план», чтобы создать первый план подписки",
     "Click \"Generate\" to create a token": "Нажмите \"Сгенерировать\", чтобы создать токен",
     "Click a stage to show or hide that column": "Нажмите на этап, чтобы показать или скрыть этот столбец",
@@ -1455,7 +1454,7 @@
     "Converter": "Конвертер",
     "Converter does not match incoming path": "Конвертер не соответствует входящему пути",
     "Converter is not registered": "Конвертер не зарегистрирован",
-    "Cooling down, available after {{time}}": "Идёт охлаждение, доступно после {{time}}",
+    "Cooldown": "Перезарядка",
     "Copied": "Скопировано",
     "Copied {{count}} key(s)": "Скопировано {{count}} ключ(ей)",
     "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})": "Канал скопирован (исходный ID: {{sourceId}}) в {{name}} (новый ID: {{id}})",
@@ -2359,6 +2358,7 @@
     "Extra visible": "Дополнительно видимая",
     "Extra visible to {{group}}": "Дополнительно видима для {{group}}",
     "extras": "доп. пункты",
+    "Fable weekly window": "Недельное окно Fable",
     "Factory": "Встроенный",
     "Factory and custom plugin behavior": "Поведение встроенных и пользовательских плагинов",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Заводские и пользовательские плагины сразу перестают обслуживать запросы. Текущие задачи обработает очистка по таймауту.",
@@ -5010,6 +5010,7 @@
     "Reset value ({{currency}})": "Значение сброса ({{currency}})",
     "Resets at {{time}}": "Сброс {{time}}",
     "Resets in:": "Сброс через:",
+    "Resets left": "Осталось сбросов",
     "Resets to {{value}}": "Сброс до {{value}}",
     "Resetting...": "Сброс...",
     "Resize column": "Изменить ширину столбца",
@@ -5976,6 +5977,7 @@
     "This channel type does not support fetching models": "Этот тип канала не поддерживает получение моделей",
     "This channel type requires additional configuration": "Для этого типа канала требуется дополнительная конфигурация",
     "This clears only the 5-hour window. The weekly limit stays unchanged.": "Очищается только 5-часовое окно. Недельный лимит не меняется.",
+    "This clears the windows listed below right away. Once used, this reset is gone.": "Это сразу очистит перечисленные ниже окна. После применения сброс будет потрачен.",
     "This combination will be billed as free.": "Эта комбинация будет тарифицироваться бесплатно.",
     "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.": "Это подтверждение разблокирует функции платежей, кодов пополнения, планов подписки и наград за приглашения. Внимательно прочитайте заявления.",
     "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.": "Этот параметр управляет ограничением частоты запросов к моделям. Ограничение маршрутов Web/API настраивается переменными окружения и всё ещё может возвращать 429.",
@@ -6912,7 +6914,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "This clears the windows listed below right away. Once used, this reset is gone.": "Это сразу очистит перечисленные ниже окна. После применения сброс будет потрачен."
+    "Zoom": "Zoom"
   }
 }

@@ -25,6 +25,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 import { createServerError } from '@/lib/server-error-message'
 
@@ -83,7 +84,7 @@ function formatMinute(timestamp: number): string {
 }
 
 export function ClaudeLimitResetCard(props: ClaudeLimitResetCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [confirmKind, setConfirmKind] = useState<ResetKind | null>(null)
   const [isResetting, setIsResetting] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
@@ -97,8 +98,17 @@ export function ClaudeLimitResetCard(props: ClaudeLimitResetCardProps) {
   const clearName = (name: string) => {
     if (name === 'five_hour') return t('5-Hour Window')
     if (name === 'seven_day') return t('Weekly Window')
+    if (name === 'seven_day_overage_included') {
+      return t('Fable weekly window')
+    }
     return name
   }
+
+  const clearNames = (names: string[]) =>
+    new Intl.ListFormat(toIntlLocale(i18n.resolvedLanguage || i18n.language), {
+      type: 'conjunction',
+      style: 'narrow',
+    }).format(names.map(clearName))
 
   const requestFor = (kind: ResetKind): ClaudeLimitResetRequest | null => {
     if (resets?.state !== 'ready') return null
@@ -166,25 +176,27 @@ export function ClaudeLimitResetCard(props: ClaudeLimitResetCardProps) {
     if (full.available) {
       fullDescription = (
         <>
-          <div>
-            {t('{{label}} · {{left}}/{{total}} left · Expires {{time}}', {
-              label: full.label,
-              left: full.resetsLeft,
-              total: full.resetsTotal,
-              time: formatMinute(full.endsAt),
-            })}
-          </div>
-          <div>
-            {t('Clears: ')}
-            {full.clears.map(clearName).join(', ')}
-          </div>
-          {full.coolingDown ? (
-            <div>
-              {t('Cooling down, available after {{time}}', {
-                time: formatMinute(full.cooldownUntil),
-              })}
-            </div>
-          ) : null}
+          <div>{full.label}</div>
+          <dl className='mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5'>
+            <dt className='text-muted-foreground/70'>{t('Resets left')}</dt>
+            <dd className='text-foreground'>
+              {full.resetsLeft}/{full.resetsTotal}
+            </dd>
+            <dt className='text-muted-foreground/70'>{t('Expires at')}</dt>
+            <dd className='text-foreground'>{formatMinute(full.endsAt)}</dd>
+            {full.coolingDown ? (
+              <>
+                <dt className='text-muted-foreground/70'>{t('Cooldown')}</dt>
+                <dd className='text-foreground'>
+                  {t('Available after {{time}}', {
+                    time: formatMinute(full.cooldownUntil),
+                  })}
+                </dd>
+              </>
+            ) : null}
+            <dt className='text-muted-foreground/70'>{t('Clears')}</dt>
+            <dd className='text-foreground'>{clearNames(full.clears)}</dd>
+          </dl>
         </>
       )
     }
@@ -277,8 +289,7 @@ export function ClaudeLimitResetCard(props: ClaudeLimitResetCardProps) {
               </p>
               {resets?.state === 'ready' && resets.full.available ? (
                 <div className='bg-muted/50 rounded-lg border px-3 py-2 text-xs'>
-                  {t('Clears: ')}
-                  {resets.full.clears.map(clearName).join(', ')}
+                  {t('Clears')} {clearNames(resets.full.clears)}
                 </div>
               ) : null}
             </div>

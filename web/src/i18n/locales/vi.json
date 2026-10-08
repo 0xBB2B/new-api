@@ -88,7 +88,6 @@
     "{{first}} or {{second}}": "{{first}} hoặc {{second}}",
     "{{key}} · from {{source}}": "{{key}} · nguồn {{source}}",
     "{{key}} · version {{version}} · from {{source}}": "{{key}} · phiên bản {{version}} · từ {{source}}",
-    "{{label}} · {{left}}/{{total}} left · Expires {{time}}": "{{label}} · còn {{left}}/{{total}} lượt · Hết hạn {{time}}",
     "{{method}} {{route}}": "{{method}} {{route}}",
     "{{modality}} not supported": "Không hỗ trợ {{modality}}",
     "{{modality}} supported": "Hỗ trợ {{modality}}",
@@ -1158,7 +1157,7 @@
     "Cleared disk cache": "Đã xóa bộ nhớ đệm trên đĩa",
     "Cleared historical logs": "Đã xóa nhật ký lịch sử",
     "Cleared log files": "Đã xóa tệp nhật ký",
-    "Clears: ": "Xóa: ",
+    "Clears": "Xóa",
     "Click \"Create Plan\" to create your first subscription plan": "Nhấp \"Tạo gói\" để tạo gói đăng ký đầu tiên",
     "Click \"Generate\" to create a token": "Nhấp \"Tạo\" để tạo một token",
     "Click a stage to show or hide that column": "Nhấp vào một giai đoạn để hiện hoặc ẩn cột đó",
@@ -1455,7 +1454,7 @@
     "Converter": "Bộ chuyển đổi",
     "Converter does not match incoming path": "Bộ chuyển đổi không khớp path đầu vào",
     "Converter is not registered": "Bộ chuyển đổi chưa được đăng ký",
-    "Cooling down, available after {{time}}": "Đang chờ, khả dụng sau {{time}}",
+    "Cooldown": "Thời gian chờ",
     "Copied": "Đã sao chép",
     "Copied {{count}} key(s)": "Đã sao chép {{count}} khóa",
     "Copied channel (source ID: {{sourceId}}) to {{name}} (new ID: {{id}})": "Đã sao chép kênh (ID nguồn: {{sourceId}}) thành {{name}} (ID mới: {{id}})",
@@ -2359,6 +2358,7 @@
     "Extra visible": "Hiển thị thêm",
     "Extra visible to {{group}}": "Hiển thị thêm cho {{group}}",
     "extras": "mục bổ sung",
+    "Fable weekly window": "Cửa sổ tuần Fable",
     "Factory": "Tích hợp",
     "Factory and custom plugin behavior": "Cách hoạt động của plugin tích hợp và tùy chỉnh",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Plugin gốc và plugin tùy chỉnh sẽ ngay lập tức ngừng phục vụ. Các tác vụ đang chạy sẽ được xử lý bằng dọn dẹp hết hạn.",
@@ -5010,6 +5010,7 @@
     "Reset value ({{currency}})": "Giá trị đặt lại ({{currency}})",
     "Resets at {{time}}": "Đặt lại lúc {{time}}",
     "Resets in:": "Đặt lại sau:",
+    "Resets left": "Lượt đặt lại còn lại",
     "Resets to {{value}}": "Đặt lại thành {{value}}",
     "Resetting...": "Đang đặt lại...",
     "Resize column": "Thay đổi kích thước cột",
@@ -5976,6 +5977,7 @@
     "This channel type does not support fetching models": "Loại kênh này không hỗ trợ lấy mô hình",
     "This channel type requires additional configuration": "Loại kênh này yêu cầu cấu hình bổ sung",
     "This clears only the 5-hour window. The weekly limit stays unchanged.": "Chỉ xóa cửa sổ 5 giờ. Hạn mức hằng tuần không đổi.",
+    "This clears the windows listed below right away. Once used, this reset is gone.": "Thao tác này xóa ngay các cửa sổ liệt kê bên dưới. Dùng xong, lượt đặt lại này sẽ mất.",
     "This combination will be billed as free.": "Tổ hợp này sẽ không phát sinh phí.",
     "This confirmation unlocks payment, redemption code, subscription plan, and invitation reward features. Please read the statements carefully.": "Xác nhận này mở khóa các tính năng thanh toán, mã đổi thưởng, gói đăng ký và phần thưởng mời. Vui lòng đọc kỹ các tuyên bố.",
     "This controls model request rate limiting. Web/API route throttling is configured by environment variables and may still return 429.": "Thiết lập này kiểm soát giới hạn tốc độ yêu cầu mô hình. Giới hạn tuyến Web/API được cấu hình bằng biến môi trường và vẫn có thể trả về 429.",
@@ -6912,7 +6914,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "This clears the windows listed below right away. Once used, this reset is gone.": "Thao tác này xóa ngay các cửa sổ liệt kê bên dưới. Dùng xong, lượt đặt lại này sẽ mất."
+    "Zoom": "Zoom"
   }
 }
