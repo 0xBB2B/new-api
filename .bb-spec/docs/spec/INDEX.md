@@ -60,7 +60,7 @@
 
 ## quota-reset
 
-- [manual-trigger](quota-reset/manual-trigger.md) — 管理端「立即按规则重置」入口：仅管理员可用，对全体参与用户执行与定时触发完全相同的重置。
+- [manual-trigger](quota-reset/manual-trigger.md) — 管理端「立即按规则重置」入口：仅超级管理员可用，对全体参与用户执行与定时触发完全相同的重置。
 - [reset-semantics](quota-reset/reset-semantics.md) — 单次额度重置动作的语义：quota 覆盖写为重置值（≥0 整数），统计字段不动，每用户记一条系统日志。
 - [rule-resolution](quota-reset/rule-resolution.md) — 额度重置规则的生效解析：全局默认 + 每用户专属完全覆盖；退出标记最优先；仅启用状态用户参与。
 - [schedule-trigger](quota-reset/schedule-trigger.md) — 额度重置的定时触发：每天/每周/每月三种周期的触发时点按服务器本地时区计算；错过不追赶。
