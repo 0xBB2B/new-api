@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -34,7 +35,7 @@ func TestQuotaResetRunRouteRequiresRootRole(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}))
 
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	model.DB, model.LOG_DB = db, db
@@ -50,13 +51,13 @@ func TestQuotaResetRunRouteRequiresRootRole(t *testing.T) {
 	s.ResetValue = 500000
 	t.Cleanup(func() { *s = originalSetting })
 
-	adminPAT := "quota-reset-router-admin-pat"
-	admin := model.User{Username: "quota_reset_router_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AccessToken: &adminPAT, Quota: 1234, AffCode: "quota-reset-router-admin"}
+	admin := model.User{Username: "quota_reset_router_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Quota: 1234, AffCode: "quota-reset-router-admin"}
 	require.NoError(t, db.Create(&admin).Error)
+	adminPAT := createQuotaResetRouterAccessToken(t, admin.Id)
 
-	rootPAT := "quota-reset-router-root-pat"
-	root := model.User{Username: "quota_reset_router_root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AccessToken: &rootPAT, Quota: 5678, AffCode: "quota-reset-router-root"}
+	root := model.User{Username: "quota_reset_router_root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Quota: 5678, AffCode: "quota-reset-router-root"}
 	require.NoError(t, db.Create(&root).Error)
+	rootPAT := createQuotaResetRouterAccessToken(t, root.Id)
 
 	engine := gin.New()
 	SetApiRouter(engine)
@@ -84,6 +85,17 @@ func TestQuotaResetRunRouteRequiresRootRole(t *testing.T) {
 	assert.Equal(t, 2, response.Data.ResetCount)
 	assert.Equal(t, 500000, fetchQuotaResetRouterUser(t, db, admin.Id).Quota)
 	assert.Equal(t, 500000, fetchQuotaResetRouterUser(t, db, root.Id).Quota)
+}
+
+func createQuotaResetRouterAccessToken(t *testing.T, userID int) string {
+	t.Helper()
+	suffix, err := common.GenerateRandomCharsKey(43)
+	require.NoError(t, err)
+	raw := model.AccessTokenPrefix + suffix
+	token := &model.UserAccessToken{Name: "quota reset router token", TokenHash: model.AccessTokenFingerprint(raw), TokenHint: model.AccessTokenHint(raw)}
+	require.NoError(t, token.SetScopes([]string{"user:write"}))
+	require.NoError(t, model.CreateUserAccessToken(userID, token, service.AccessTokenMaxPerUser))
+	return raw
 }
 
 func fetchQuotaResetRouterUser(t *testing.T, db *gorm.DB, id int) *model.User {
