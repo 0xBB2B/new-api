@@ -526,23 +526,17 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
     remainingBadgeLabel = t('Updating...')
-  } else if (sensitiveVisible && isSubscriptionChannel) {
-    remainingBadgeLabel = t('Account Info')
   } else if (sensitiveVisible && isInferenceChannel) {
     remainingBadgeLabel = inferenceStatusLabel
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
-  } else if (isClaudeSubscription) {
-    remainingTooltipLabel = t('Click to view Claude usage')
-  } else if (channel.type === 57) {
-    remainingTooltipLabel = t('Click to view Codex usage')
   } else if (isInferenceChannel) {
     remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (isSubscriptionChannel || isInferenceChannel) {
+  if (isInferenceChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -559,16 +553,44 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     />
   )
 
-  const showUsageBar = isSubscriptionChannel && sensitiveVisible
+  const subscriptionEntry = sensitiveVisible ? (
+    <SubscriptionUsageBar
+      channel={channel}
+      onOpen={handleClickUpdate}
+      isLoading={isUpdating}
+    />
+  ) : (
+    <StatusBadge
+      label={SENSITIVE_MASK}
+      variant='neutral'
+      size='sm'
+      copyable={false}
+      showDot={false}
+      role='button'
+      tabIndex={0}
+      title={undefined}
+      aria-haspopup='dialog'
+      aria-label={t('Usage')}
+      aria-busy={isUpdating}
+      className={cn(
+        '-ml-1.5',
+        isUpdating ? 'cursor-wait opacity-50' : 'cursor-pointer'
+      )}
+      onClick={handleClickUpdate}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        void handleClickUpdate()
+      }}
+    />
+  )
 
   return (
     <TooltipProvider>
-      <div
-        className={cn('flex items-center gap-1', !showUsageBar && '-ml-1.5')}
-      >
-        {showUsageBar ? (
-          <SubscriptionUsageBar channel={channel} />
-        ) : (
+      {isSubscriptionChannel ? (
+        subscriptionEntry
+      ) : (
+        <div className='-ml-1.5 flex items-center gap-1'>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -586,33 +608,31 @@ export function BalanceCell({ channel }: { channel: Channel }) {
               <p>{sensitiveVisible ? usedLabel : maskedUsedLabel}</p>
             </TooltipContent>
           </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              isInferenceChannel ? (
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  className='h-auto rounded-full p-0'
-                  aria-haspopup='dialog'
-                  onClick={handleClickUpdate}
-                >
-                  {remainingBadge}
-                </Button>
-              ) : (
-                remainingBadge
-              )
-            }
-          />
-          <TooltipContent>
-            <p>{remainingTooltipLabel}</p>
-            {!isSubscriptionChannel && !isInferenceChannel && (
-              <p>{t('Click to update balance')}</p>
-            )}
-          </TooltipContent>
-        </Tooltip>
-      </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                isInferenceChannel ? (
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='h-auto rounded-full p-0'
+                    aria-haspopup='dialog'
+                    onClick={handleClickUpdate}
+                  >
+                    {remainingBadge}
+                  </Button>
+                ) : (
+                  remainingBadge
+                )
+              }
+            />
+            <TooltipContent>
+              <p>{remainingTooltipLabel}</p>
+              {!isInferenceChannel && <p>{t('Click to update balance')}</p>}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
 
       <CodexUsageDialog
         open={codexUsageOpen}

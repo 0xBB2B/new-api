@@ -21,7 +21,10 @@ import { api, type ApiRequestConfig } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type { InferenceStatus } from './lib/inference-status'
-import type { SubscriptionUsageSnapshot } from './lib/subscription-usage'
+import type {
+  ClaudeLimitResetRequest,
+  SubscriptionUsageSnapshot,
+} from './lib/subscription-usage'
 import type {
   AddChannelRequest,
   BatchDeleteParams,
@@ -94,6 +97,14 @@ export type CodexUsageResponse = {
 
 export type ClaudeUsageResponse = CodexUsageResponse & {
   usage?: SubscriptionUsageSnapshot | null
+  limit_reset_unavailable?: string
+}
+
+export type ClaudeLimitResetResponse = {
+  success: boolean
+  message?: string
+  upstream_status?: number
+  data?: unknown
 }
 
 export type CodexResetCreditsResponse = CodexUsageResponse
@@ -427,6 +438,18 @@ export async function resetCodexUsage(
   const res = await api.post(
     `/api/channel/${channelId}/codex/usage/reset`,
     {},
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function resetClaudeLimit(
+  channelId: number,
+  body: ClaudeLimitResetRequest
+): Promise<ClaudeLimitResetResponse> {
+  const res = await api.post(
+    `/api/channel/${channelId}/claude/usage/reset`,
+    body,
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data

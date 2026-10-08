@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,10 +29,18 @@ func ClaudeChannelCredential(ch *model.Channel) (*claudeOAuthCredential, error) 
 	return env.ClaudeAiOauth, nil
 }
 
-func fetchClaudeOAuthUsage(ctx context.Context, client *http.Client, baseURL string, accessToken string) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/oauth/usage", nil)
+func fetchClaudeOAuthUsage(ctx context.Context, client *http.Client, baseURL string, accessToken string, cliVersion string) (int, []byte, error) {
+	usageURL := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/api/oauth/usage"
+	if cliVersion != "" {
+		query := url.Values{"cedar_ember": {"1"}, "at_wall": {"1"}}
+		usageURL += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 	if err != nil {
 		return 0, nil, err
+	}
+	if cliVersion != "" {
+		req.Header.Set("User-Agent", claudeCLIUserAgent(cliVersion))
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
@@ -50,38 +59,46 @@ func fetchClaudeOAuthUsage(ctx context.Context, client *http.Client, baseURL str
 }
 
 // SyncClaudeChannelUsage 拉取 Claude 订阅用量；access token 失效时刷新凭证重试一次，成功后把摘要写入 other_info。
-func SyncClaudeChannelUsage(ctx context.Context, ch *model.Channel, cred *claudeOAuthCredential) (int, []byte, *SubscriptionUsageSnapshot, error) {
+func SyncClaudeChannelUsage(ctx context.Context, ch *model.Channel, cred *claudeOAuthCredential) (int, []byte, *SubscriptionUsageSnapshot, bool, error) {
 	client, err := GetHttpClientWithProxy(ch.GetSetting().Proxy)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, false, err
 	}
+
+	versionCtx, cancelVersion := context.WithTimeout(ctx, 10*time.Second)
+	cliVersion, versionErr := GetLatestClaudeCLIVersion(versionCtx, client)
+	cancelVersion()
+	if versionErr != nil {
+		common.SysLog("failed to fetch latest claude cli version: " + versionErr.Error())
+	}
+	hasVersion := cliVersion != ""
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	statusCode, body, err := fetchClaudeOAuthUsage(fetchCtx, client, ch.GetBaseURL(), cred.AccessToken)
+	statusCode, body, err := fetchClaudeOAuthUsage(fetchCtx, client, ch.GetBaseURL(), cred.AccessToken, cliVersion)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, hasVersion, err
 	}
 	if (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) && strings.TrimSpace(cred.RefreshToken) != "" {
 		if refreshed, _, refreshErr := RefreshClaudeChannelCredential(ctx, ch.Id, ClaudeCredentialRefreshOptions{ResetCaches: true}); refreshErr == nil {
 			cred = refreshed
 			retryCtx, cancelRetry := context.WithTimeout(ctx, 15*time.Second)
 			defer cancelRetry()
-			statusCode, body, err = fetchClaudeOAuthUsage(retryCtx, client, ch.GetBaseURL(), cred.AccessToken)
+			statusCode, body, err = fetchClaudeOAuthUsage(retryCtx, client, ch.GetBaseURL(), cred.AccessToken, cliVersion)
 			if err != nil {
-				return 0, nil, nil, err
+				return 0, nil, nil, hasVersion, err
 			}
 		}
 	}
 	if statusCode < 200 || statusCode >= 300 {
-		return statusCode, body, nil, nil
+		return statusCode, body, nil, hasVersion, nil
 	}
 	snapshot, err := parseClaudeUsageSnapshot(body, cred.SubscriptionType, time.Now())
 	if err != nil {
-		return statusCode, body, nil, nil
+		return statusCode, body, nil, hasVersion, nil
 	}
 	saveSubscriptionUsageSnapshot(ch.Id, snapshot)
-	return statusCode, body, snapshot, nil
+	return statusCode, body, snapshot, hasVersion, nil
 }
 
 func parseClaudeUsageSnapshot(body []byte, planType string, now time.Time) (*SubscriptionUsageSnapshot, error) {

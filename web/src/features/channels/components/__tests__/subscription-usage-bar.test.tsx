@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { formatTimestampToDate } from '@/lib/format'
@@ -36,12 +36,25 @@ function channelWithUsage(subscriptionUsage: object): Channel {
   )
 }
 
-function renderBar(channel: Channel) {
+function renderBar(
+  channel: Channel,
+  props: { onOpen?: () => void; isLoading?: boolean } = {}
+) {
   return render(
     <TooltipProvider>
-      <SubscriptionUsageBar channel={channel} />
+      <SubscriptionUsageBar
+        channel={channel}
+        onOpen={props.onOpen ?? (() => {})}
+        isLoading={props.isLoading ?? false}
+      />
     </TooltipProvider>
   )
+}
+
+const bothWindows = {
+  plan_type: 'team',
+  primary_window: { used_percent: 29, limit_window_seconds: 18000 },
+  secondary_window: { used_percent: 31, limit_window_seconds: 604800 },
 }
 
 describe('SubscriptionUsageBar', () => {
@@ -240,14 +253,59 @@ describe('SubscriptionUsageBar', () => {
     expect(progressBars[0]).toHaveAttribute('aria-label', '5-Hour Window: 50%')
   })
 
-  test('shows "-" with a "No usage data" tooltip when other_info is empty', async () => {
+  test('shows "-" with a "No usage data, click to query" tooltip when other_info is empty', async () => {
     const user = userEvent.setup()
     renderBar(channelWithOtherInfo(''))
 
     expect(screen.getByText('-')).toBeInTheDocument()
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     await user.hover(screen.getByText('-'))
-    expect(await screen.findByText('No usage data')).toBeInTheDocument()
+    expect(
+      await screen.findByText('No usage data, click to query')
+    ).toBeInTheDocument()
+  })
+
+  test('makes the whole snapshot area one button that opens on click, Enter and Space', async () => {
+    const user = userEvent.setup()
+    const onOpen = vi.fn()
+    renderBar(channelWithUsage(bothWindows), { onOpen })
+
+    const button = screen.getByRole('button')
+    expect(button).toHaveAttribute('tabindex', '0')
+    expect(button).toContainElement(screen.getByText('5h'))
+    expect(button).toContainElement(screen.getByText('7d'))
+
+    await user.tab()
+    expect(button).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    await user.keyboard(' ')
+    expect(onOpen).toHaveBeenCalledTimes(2)
+
+    await user.click(button)
+    expect(onOpen).toHaveBeenCalledTimes(3)
+  })
+
+  test('marks the entry aria-busy and ignores clicks while loading', async () => {
+    const user = userEvent.setup()
+    const onOpen = vi.fn()
+    renderBar(channelWithUsage(bothWindows), { onOpen, isLoading: true })
+
+    const button = screen.getByRole('button')
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    await user.click(button)
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  test('makes the "-" placeholder a button that opens on click', async () => {
+    const user = userEvent.setup()
+    const onOpen = vi.fn()
+    renderBar(channelWithOtherInfo(''), { onOpen })
+
+    const button = screen.getByRole('button')
+    expect(button).toHaveTextContent('-')
+    await user.click(button)
+    expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
   test('shows "-" when the snapshot has neither window', () => {

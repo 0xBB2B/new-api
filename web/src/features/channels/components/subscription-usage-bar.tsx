@@ -72,7 +72,7 @@ function UsageRow({
     <Tooltip>
       <TooltipTrigger
         render={
-          <div className='flex cursor-help items-center gap-x-1.5'>
+          <div className='flex items-center gap-x-1.5'>
             <span className='text-muted-foreground w-4 text-[10px]'>
               {label}
             </span>
@@ -101,11 +101,39 @@ function UsageRow({
   )
 }
 
-export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
+export function SubscriptionUsageBar({
+  channel,
+  onOpen,
+  isLoading = false,
+}: {
+  channel: Channel
+  onOpen: () => void
+  isLoading?: boolean
+}) {
   const { t } = useTranslation()
   const snapshot = parseSubscriptionUsageSnapshot(channel.other_info)
   const { fiveHourWindow, weeklyWindow } = resolveRateLimitWindows(
     snapshot ? { plan_type: snapshot.plan_type, rate_limit: snapshot } : null
+  )
+
+  const entryProps = {
+    role: 'button',
+    tabIndex: 0,
+    'aria-haspopup': 'dialog' as const,
+    'aria-label': t('Usage'),
+    'aria-busy': isLoading,
+    onClick: () => {
+      if (!isLoading) onOpen()
+    },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      e.preventDefault()
+      if (!isLoading) onOpen()
+    },
+  }
+  const entryClassName = cn(
+    'focus-visible:ring-ring/50 rounded-md outline-none focus-visible:ring-2',
+    isLoading ? 'cursor-wait opacity-50' : 'hover:bg-muted/60 cursor-pointer'
   )
 
   if (!fiveHourWindow && !weeklyWindow) {
@@ -113,11 +141,19 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
       <Tooltip>
         <TooltipTrigger
           render={
-            <span className='text-muted-foreground cursor-help text-xs'>-</span>
+            <span
+              {...entryProps}
+              className={cn(
+                'text-muted-foreground px-1 text-xs',
+                entryClassName
+              )}
+            >
+              -
+            </span>
           }
         />
         <TooltipContent>
-          <p>{t('No usage data')}</p>
+          <p>{t('No usage data, click to query')}</p>
         </TooltipContent>
       </Tooltip>
     )
@@ -127,7 +163,10 @@ export function SubscriptionUsageBar({ channel }: { channel: Channel }) {
   const weekly = windowLabel(weeklyWindow)
 
   return (
-    <div className='flex flex-col gap-y-0.5'>
+    <div
+      {...entryProps}
+      className={cn('flex flex-col gap-y-0.5 p-0.5', entryClassName)}
+    >
       {fiveHourWindow && (
         <UsageRow
           label='5h'

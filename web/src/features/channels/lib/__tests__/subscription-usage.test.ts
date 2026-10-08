@@ -18,12 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import {
   formatDurationSeconds,
+  parseIsoTimestamp,
   parseSubscriptionUsageSnapshot,
   resetCountdownSeconds,
+  resolveClaudeLimitResets,
   resolveRateLimitWindows,
   windowLabel,
   type CodexRateLimitWindow,
@@ -196,5 +198,292 @@ describe('formatDurationSeconds', () => {
 
   test('formats the weekly window duration for the Window: field', () => {
     assert.equal(formatDurationSeconds(604800, identity), '7d 0h 0m')
+  })
+})
+
+const iso = (value: string) => Date.parse(value) / 1000
+const nowSeconds = iso('2026-10-08T05:00:00Z')
+const grantId = 'opus55-launch-promax-20260921'
+
+const buildGrant = (overrides: Record<string, unknown> = {}) => ({
+  id: grantId,
+  label: 'Claude Opus 5.5 launch: one usage-limit reset for Pro and Max',
+  resets_total: 1,
+  resets_left: 1,
+  starts_at: '2026-09-22T16:00:00+00:00',
+  ends_at: '2026-10-22T16:00:00+00:00',
+  clears: ['five_hour', 'seven_day', 'seven_day_overage_included'],
+  paused: false,
+  usable_now: true,
+  use_requires_limit: false,
+  ...overrides,
+})
+
+const buildCedarEmber = (
+  cedar: Record<string, unknown> = {},
+  grant: Record<string, unknown> = {}
+) => ({
+  eligible: true,
+  ineligible_reason: null,
+  at_limit: false,
+  next_grant_id: grantId,
+  cooldown_until: null,
+  grants: [buildGrant(grant)],
+  ...cedar,
+})
+
+const buildJuniperTide = (overrides: Record<string, unknown> = {}) => ({
+  eligible: false,
+  ineligible_reason: 'not_at_wall',
+  available: false,
+  next_available_at: null,
+  ...overrides,
+})
+
+const buildResponse = (
+  cedar: unknown = buildCedarEmber(),
+  juniper: unknown = buildJuniperTide()
+) => ({
+  success: true,
+  data: { cedar_ember: cedar, juniper_tide: juniper },
+})
+
+const resolveReady = (response: ReturnType<typeof buildResponse>) => {
+  const result = resolveClaudeLimitResets(response, nowSeconds)
+  if (result.state !== 'ready') {
+    throw new Error(`expected ready, got ${result.state}`)
+  }
+  return result
+}
+
+describe('parseIsoTimestamp', () => {
+  test('converts an ISO string to unix seconds', () => {
+    expect(parseIsoTimestamp('2026-10-22T16:00:00+00:00')).toBe(
+      iso('2026-10-22T16:00:00Z')
+    )
+  })
+
+  test.each(['bad', null, undefined, '', 123])(
+    'returns 0 for invalid input %s',
+    (value) => {
+      expect(parseIsoTimestamp(value)).toBe(0)
+    }
+  )
+})
+
+describe('resolveClaudeLimitResets state priority', () => {
+  test('returns ready with both rows for the observed sample', () => {
+    const result = resolveReady(buildResponse())
+
+    expect(result.full).toEqual({
+      available: true,
+      label: 'Claude Opus 5.5 launch: one usage-limit reset for Pro and Max',
+      resetsLeft: 1,
+      resetsTotal: 1,
+      endsAt: iso('2026-10-22T16:00:00Z'),
+      clears: ['five_hour', 'seven_day', 'seven_day_overage_included'],
+      cooldownUntil: 0,
+      coolingDown: false,
+      canReset: true,
+      request: { program: 'cedar_ember', grant_id: grantId, resets_left: 1 },
+    })
+    expect(result.fiveHour).toEqual({
+      canReset: false,
+      reasonKind: 'not_at_wall',
+    })
+  })
+
+  test('returns not_returned when both programs are null or missing', () => {
+    expect(
+      resolveClaudeLimitResets(
+        { data: { cedar_ember: null, juniper_tide: null } },
+        nowSeconds
+      )
+    ).toEqual({ state: 'not_returned' })
+    expect(resolveClaudeLimitResets({ data: {} }, nowSeconds)).toEqual({
+      state: 'not_returned',
+    })
+  })
+
+  test('client_version outranks not_returned', () => {
+    expect(
+      resolveClaudeLimitResets(
+        {
+          limit_reset_unavailable: 'client_version',
+          data: { cedar_ember: null, juniper_tide: null },
+        },
+        nowSeconds
+      )
+    ).toEqual({ state: 'client_version' })
+  })
+
+  test('is ready when only one program is returned', () => {
+    const result = resolveReady(buildResponse(null, buildJuniperTide()))
+    expect(result.full).toEqual({ available: false })
+  })
+})
+
+describe('resolveClaudeLimitResets full reset row', () => {
+  test.each([
+    ['cooldown not yet over', '2026-10-08T05:10:00Z', false],
+    ['cooldown already over', '2026-10-08T04:50:00Z', true],
+    ['cooldown exactly now', '2026-10-08T05:00:00Z', true],
+  ])('%s', (_name, cooldown, canReset) => {
+    const result = resolveReady(
+      buildResponse(buildCedarEmber({ cooldown_until: cooldown }))
+    )
+    const full = result.full
+    expect(full).toMatchObject({
+      canReset,
+      coolingDown: !canReset,
+      cooldownUntil: iso(cooldown),
+    })
+  })
+
+  test('treats an unparsable cooldown as still cooling down', () => {
+    const result = resolveReady(
+      buildResponse(buildCedarEmber({ cooldown_until: 'soon' }))
+    )
+    expect(result.full).toMatchObject({
+      canReset: false,
+      coolingDown: true,
+      cooldownUntil: 0,
+    })
+  })
+
+  test.each([
+    ['eligible is false', { eligible: false }, {}, false],
+    ['grant is not usable now', {}, { usable_now: false }, false],
+    ['grant is paused', {}, { paused: true }, false],
+    ['no resets left', {}, { resets_left: 0 }, false],
+    [
+      'grant requires limit but account is not at limit',
+      { at_limit: false },
+      { use_requires_limit: true },
+      false,
+    ],
+    [
+      'grant requires limit and account is at limit',
+      { at_limit: true },
+      { use_requires_limit: true },
+      true,
+    ],
+  ])('canReset when %s', (_name, cedar, grant, canReset) => {
+    const result = resolveReady(buildResponse(buildCedarEmber(cedar, grant)))
+    expect(result.full).toMatchObject({ available: true, canReset })
+  })
+
+  test('is unavailable when next_grant_id matches no grant', () => {
+    const result = resolveReady(
+      buildResponse({
+        eligible: false,
+        ineligible_reason: 'surface',
+        grants: [],
+        next_grant_id: null,
+      })
+    )
+    expect(result.full).toEqual({ available: false })
+  })
+
+  test('is unavailable when next_grant_id points at a missing grant', () => {
+    const result = resolveReady(
+      buildResponse(buildCedarEmber({ next_grant_id: 'other' }))
+    )
+    expect(result.full).toEqual({ available: false })
+  })
+})
+
+describe('resolveClaudeLimitResets five hour row', () => {
+  test('can reset when eligible and available', () => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({
+          eligible: true,
+          available: true,
+          ineligible_reason: null,
+        })
+      )
+    )
+    expect(result.fiveHour).toEqual({
+      canReset: true,
+      request: { program: 'juniper_tide' },
+    })
+  })
+
+  test.each([
+    ['surface', 'client_identity'],
+    ['cli_version', 'client_identity'],
+  ])('maps ineligible_reason %s to %s', (reason, reasonKind) => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({ ineligible_reason: reason })
+      )
+    )
+    expect(result.fiveHour).toEqual({ canReset: false, reasonKind })
+  })
+
+  test('keeps unknown reasons as raw', () => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({ ineligible_reason: 'weekly_used' })
+      )
+    )
+    expect(result.fiveHour).toEqual({
+      canReset: false,
+      reasonKind: 'raw',
+      rawReason: 'weekly_used',
+    })
+  })
+
+  test('falls back to next_available when there is no reason', () => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({
+          ineligible_reason: null,
+          next_available_at: '2026-10-09T00:00:00Z',
+        })
+      )
+    )
+    expect(result.fiveHour).toEqual({
+      canReset: false,
+      reasonKind: 'next_available',
+      nextAvailableAt: iso('2026-10-09T00:00:00Z'),
+    })
+  })
+
+  test('next_available is 0 when next_available_at cannot be parsed', () => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({
+          ineligible_reason: null,
+          next_available_at: 'not-a-date',
+        })
+      )
+    )
+    expect(result.fiveHour).toEqual({
+      canReset: false,
+      reasonKind: 'next_available',
+      nextAvailableAt: 0,
+    })
+  })
+
+  test('is none when no reason and no next_available_at', () => {
+    const result = resolveReady(
+      buildResponse(
+        buildCedarEmber(),
+        buildJuniperTide({ ineligible_reason: null })
+      )
+    )
+    expect(result.fiveHour).toEqual({ canReset: false, reasonKind: 'none' })
+  })
+
+  test('is none when juniper_tide is null', () => {
+    const result = resolveReady(buildResponse(buildCedarEmber(), null))
+    expect(result.fiveHour).toEqual({ canReset: false, reasonKind: 'none' })
   })
 })
