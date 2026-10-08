@@ -157,7 +157,7 @@ it('shows the operator display name and reveals username/user id only on hover',
     display_name: '张三',
     other: null,
   } as AuditLog
-  render(
+  renderWithQueryClient(
     <I18nextProvider i18n={i18n}>
       <TooltipProvider>
         <AuditLogDetailsDialog entry={log} />

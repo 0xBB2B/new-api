@@ -128,11 +128,11 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
     const data = unorderedUsage(scenario.start, scenario.interval)
     const original = structuredClone(data)
     const result = processUserChartData(data, scenario.granularity)
-    const values: Array<{ Time: string; rawQuota: number }> =
+    const values: Array<{ Time: string; rawValue: number }> =
       result.spec_user_trend.data[0].values
 
     expect(values.map((row) => row.Time)).toEqual(scenario.labels)
-    expect(values.map((row) => row.rawQuota / 500000)).toEqual([
+    expect(values.map((row) => row.rawValue / 500000)).toEqual([
       11, 2, 3, 4, 5, 6, 7, 8,
     ])
     expect(data).toEqual(original)
