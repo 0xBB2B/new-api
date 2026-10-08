@@ -33,6 +33,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
+import { useEffect } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest'
 
@@ -40,13 +41,17 @@ import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG } from '../../constants'
+import {
+  CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
+  CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VLLM,
+} from '../../constants'
 import type { InferenceStatus } from '../../lib/inference-status'
 import { channelSchema } from '../../types'
 import { ChannelRowActionsLayoutContext } from '../channel-row-actions-context'
 import { BalanceCell } from '../channels-columns'
 import { ChannelsDialogs } from '../channels-dialogs'
-import { ChannelsProvider } from '../channels-provider'
+import { ChannelsProvider, useChannels } from '../channels-provider'
 import { InferenceStatusDialog } from '../dialogs/inference-status-dialog'
 import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
@@ -514,3 +519,112 @@ it.each([
     ).toBe(editable)
   }
 )
+
+function HideSensitive() {
+  const { setSensitiveVisible } = useChannels()
+  useEffect(() => setSensitiveVisible(false), [setSensitiveVisible])
+  return null
+}
+
+function renderSubscriptionBalance(type: number, hideSensitive = false) {
+  const channel = channelSchema.parse({
+    id: 42,
+    type,
+    key: '',
+    name: 'Subscription',
+    status: 1,
+    created_time: 1,
+    test_time: 0,
+    response_time: 0,
+    balance_updated_time: 0,
+    other_info: JSON.stringify({
+      subscription_usage: {
+        primary_window: { used_percent: 29, limit_window_seconds: 18000 },
+        secondary_window: { used_percent: 31, limit_window_seconds: 604800 },
+      },
+    }),
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ChannelsProvider>
+        {hideSensitive ? <HideSensitive /> : null}
+        <BalanceCell channel={channel} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+}
+
+it.each([
+  {
+    name: 'Codex',
+    type: 57,
+    usagePath: 'codex',
+    title: 'Codex Account & Usage',
+  },
+  {
+    name: 'Claude',
+    type: CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
+    usagePath: 'claude',
+    title: 'Claude Account & Usage',
+  },
+])(
+  'opens the $name usage dialog from its usage bar without an account info badge',
+  async ({ type, usagePath, title }) => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, upstream_status: 200, data: {} },
+    })
+    const user = userEvent.setup()
+    renderSubscriptionBalance(type)
+
+    expect(screen.queryByText('Account Info')).not.toBeInTheDocument()
+    const entry = screen.getByRole('button')
+    expect(entry).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(entry).toHaveAccessibleName('Usage')
+
+    await user.click(entry)
+
+    expect(await screen.findByRole('dialog', { name: title })).toBeVisible()
+    const urls = get.mock.calls.map(([url]) => url)
+    expect(urls).toEqual([`/api/channel/42/${usagePath}/usage`])
+  }
+)
+
+it('keeps the dialog closed when the usage request fails', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: false, message: 'upstream status: 401' },
+  })
+  const user = userEvent.setup()
+  renderSubscriptionBalance(CHANNEL_TYPE_CLAUDE_SUBSCRIPTION)
+
+  await user.click(screen.getByRole('button'))
+
+  await waitFor(() =>
+    expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'false')
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+it('shows one masked entry without a native tooltip when sensitive data is hidden', async () => {
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, upstream_status: 200, data: {} },
+  })
+  const user = userEvent.setup()
+  renderSubscriptionBalance(CHANNEL_TYPE_CLAUDE_SUBSCRIPTION, true)
+
+  const entry = await screen.findByRole('button', { name: 'Usage' })
+  expect(screen.getAllByRole('button')).toHaveLength(1)
+  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  expect(entry).toHaveTextContent('••••')
+  expect(entry).not.toHaveAttribute('title')
+  expect(entry).toHaveAttribute('aria-haspopup', 'dialog')
+
+  entry.focus()
+  await user.keyboard('{Enter}')
+
+  expect(
+    await screen.findByRole('dialog', { name: 'Claude Account & Usage' })
+  ).toBeVisible()
+  expect(get.mock.calls.map(([url]) => url)).toEqual([
+    '/api/channel/42/claude/usage',
+  ])
+})
