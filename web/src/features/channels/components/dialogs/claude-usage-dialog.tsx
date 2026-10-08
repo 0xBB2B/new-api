@@ -73,10 +73,6 @@ export function ClaudeUsageDialog({
   )
   const planType = usage?.plan_type?.trim()
   const updatedAt = Number(usage?.updated_at)
-  const errorMessage =
-    response?.success === false
-      ? response?.message?.trim() || t('Failed to fetch usage')
-      : ''
 
   const rawJsonText = useMemo(() => {
     if (!response) {
@@ -124,12 +120,6 @@ export function ClaudeUsageDialog({
       }
     >
       <div className='flex flex-col gap-4'>
-        {errorMessage && (
-          <div className='rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'>
-            {errorMessage}
-          </div>
-        )}
-
         <Card size='sm' className='bg-muted/30 gap-0 py-0'>
           <CardHeader className='p-4 pb-2'>
             <CardTitle className='text-muted-foreground text-xs font-medium'>
