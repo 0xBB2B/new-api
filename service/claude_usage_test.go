@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -239,8 +238,9 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "2.1.293", cedar)
 		assert.True(t, res.Success)
-		assert.Equal(t, i18n.MsgClaudeLimitResetSuccess, res.MessageKey)
-		assert.Nil(t, res.MessageArgs)
+		require.NotNil(t, res.Message)
+		assert.Equal(t, "Reset succeeded", res.Message.Key)
+		assert.Nil(t, res.Message.Params)
 
 		require.Len(t, f.profileReqs, 1)
 		require.Len(t, f.resetReqs, 1)
@@ -271,8 +271,9 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "2.1.293", ClaudeLimitResetRequest{Program: "juniper_tide"})
 		assert.False(t, res.Success)
-		assert.Equal(t, i18n.MsgClaudeLimitResetNotLimited, res.MessageKey)
-		assert.Nil(t, res.MessageArgs)
+		require.NotNil(t, res.Message)
+		assert.Equal(t, "Not currently rate limited, no reset needed", res.Message.Key)
+		assert.Nil(t, res.Message.Params)
 		require.Len(t, f.resetBodies, 1)
 		assert.JSONEq(t, `{"program":"juniper_tide"}`, f.resetBodies[0])
 	})
@@ -285,23 +286,24 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 			key      string
 			wantArgs map[string]any
 		}{
-			{"already_used", http.StatusOK, `{"result":"already_used"}`, i18n.MsgClaudeLimitResetAlreadyUsed, nil},
-			{"cooldown", http.StatusOK, `{"result":"cooldown"}`, i18n.MsgClaudeLimitResetCooldown, nil},
-			{"ineligible", http.StatusOK, `{"result":"ineligible"}`, i18n.MsgClaudeLimitResetIneligible, nil},
-			{"unavailable", http.StatusOK, `{"result":"unavailable"}`, i18n.MsgClaudeLimitResetUnavailable, nil},
-			{"unknown result", http.StatusOK, `{"result":"something_new"}`, i18n.MsgClaudeLimitResetUnknownResult, nil},
-			{"non json body", http.StatusOK, `not json`, i18n.MsgClaudeLimitResetUnknownResult, nil},
-			{"http 429", http.StatusTooManyRequests, `{}`, i18n.MsgClaudeLimitResetRateLimited, nil},
-			{"http 401", http.StatusUnauthorized, `{}`, i18n.MsgClaudeLimitResetUnauthorized, nil},
-			{"http 500", http.StatusInternalServerError, `{}`, i18n.MsgClaudeLimitResetUpstreamStatus, map[string]any{"Status": 500}},
+			{"already_used", http.StatusOK, `{"result":"already_used"}`, "This reset has already been used", nil},
+			{"cooldown", http.StatusOK, `{"result":"cooldown"}`, "On cooldown, please try again later", nil},
+			{"ineligible", http.StatusOK, `{"result":"ineligible"}`, "Account is not eligible", nil},
+			{"unavailable", http.StatusOK, `{"result":"unavailable"}`, "Upstream temporarily unavailable", nil},
+			{"unknown result", http.StatusOK, `{"result":"something_new"}`, "Upstream returned an unknown result", nil},
+			{"non json body", http.StatusOK, `not json`, "Upstream returned an unknown result", nil},
+			{"http 429", http.StatusTooManyRequests, `{}`, "Too many requests, please try again later", nil},
+			{"http 401", http.StatusUnauthorized, `{}`, "Invalid credentials or insufficient permissions", nil},
+			{"http 500", http.StatusInternalServerError, `{}`, "Upstream returned HTTP {{status}}", map[string]any{"status": 500}},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newFakeClaudeResetServer(t, fakeClaudeProfile, tt.status, tt.body)
 				res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "2.1.293", cedar)
 				assert.False(t, res.Success)
-				assert.Equal(t, tt.key, res.MessageKey)
-				assert.Equal(t, tt.wantArgs, res.MessageArgs)
+				require.NotNil(t, res.Message)
+				assert.Equal(t, tt.key, res.Message.Key)
+				assert.Equal(t, tt.wantArgs, res.Message.Params)
 				assert.Equal(t, tt.status, res.UpstreamStatus)
 			})
 		}
@@ -313,19 +315,20 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 			req  ClaudeLimitResetRequest
 			key  string
 		}{
-			{"unknown program", ClaudeLimitResetRequest{Program: "foo"}, i18n.MsgClaudeLimitResetUnsupportedProgram},
-			{"grant_id path traversal", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: "../x", ResetsLeft: 1}, i18n.MsgClaudeLimitResetInvalidParams},
-			{"grant_id 41 chars", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: strings.Repeat("a", 41), ResetsLeft: 1}, i18n.MsgClaudeLimitResetInvalidParams},
-			{"resets_left 0", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: "g1", ResetsLeft: 0}, i18n.MsgClaudeLimitResetInvalidParams},
-			{"resets_left 101", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: "g1", ResetsLeft: 101}, i18n.MsgClaudeLimitResetInvalidParams},
+			{"unknown program", ClaudeLimitResetRequest{Program: "foo"}, "Unsupported reset type"},
+			{"grant_id path traversal", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: "../x", ResetsLeft: 1}, "Invalid reset parameters"},
+			{"grant_id 41 chars", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: strings.Repeat("a", 41), ResetsLeft: 1}, "Invalid reset parameters"},
+			{"resets_left 0", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: "g1", ResetsLeft: 0}, "Invalid reset parameters"},
+			{"resets_left 101", ClaudeLimitResetRequest{Program: "cedar_ember", GrantID: "g1", ResetsLeft: 101}, "Invalid reset parameters"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newFakeClaudeResetServer(t, fakeClaudeProfile, http.StatusOK, `{"result":"reset"}`)
 				res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "2.1.293", tt.req)
 				assert.False(t, res.Success)
-				assert.Equal(t, tt.key, res.MessageKey)
-				assert.Nil(t, res.MessageArgs)
+				require.NotNil(t, res.Message)
+				assert.Equal(t, tt.key, res.Message.Key)
+				assert.Nil(t, res.Message.Params)
 				assert.Empty(t, f.resetReqs)
 			})
 		}
@@ -336,8 +339,9 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "2.1.293", cedar)
 		assert.False(t, res.Success)
-		assert.Equal(t, i18n.MsgClaudeLimitResetOrgFailed, res.MessageKey)
-		assert.Nil(t, res.MessageArgs)
+		require.NotNil(t, res.Message)
+		assert.Equal(t, "Failed to get account organization info", res.Message.Key)
+		assert.Nil(t, res.Message.Params)
 		assert.Empty(t, f.resetReqs)
 	})
 
@@ -346,8 +350,9 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "", cedar)
 		assert.False(t, res.Success)
-		assert.Equal(t, i18n.MsgClaudeLimitResetNoClientVersion, res.MessageKey)
-		assert.Nil(t, res.MessageArgs)
+		require.NotNil(t, res.Message)
+		assert.Equal(t, "Unable to get the latest Claude Code version, cannot perform reset", res.Message.Key)
+		assert.Nil(t, res.Message.Params)
 		assert.Empty(t, f.profileReqs)
 		assert.Empty(t, f.resetReqs)
 	})
@@ -357,8 +362,9 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), f.Client(), f.URL, "tok-placeholder", "", ClaudeLimitResetRequest{Program: "foo"})
 		assert.False(t, res.Success)
-		assert.Equal(t, i18n.MsgClaudeLimitResetUnsupportedProgram, res.MessageKey)
-		assert.Nil(t, res.MessageArgs)
+		require.NotNil(t, res.Message)
+		assert.Equal(t, "Unsupported reset type", res.Message.Key)
+		assert.Nil(t, res.Message.Params)
 		assert.Empty(t, f.profileReqs)
 		assert.Empty(t, f.resetReqs)
 	})
@@ -379,46 +385,8 @@ func TestRedeemClaudeLimitReset(t *testing.T) {
 
 		res := redeemClaudeLimitReset(context.Background(), srv.Client(), srv.URL, "tok-placeholder", "2.1.293", cedar)
 		assert.False(t, res.Success)
-		assert.Equal(t, i18n.MsgClaudeLimitResetResultUnknown, res.MessageKey)
-		assert.Nil(t, res.MessageArgs)
+		require.NotNil(t, res.Message)
+		assert.Equal(t, "Reset outcome unknown, refresh usage to confirm before retrying", res.Message.Key)
+		assert.Nil(t, res.Message.Params)
 	})
-}
-
-func TestClaudeLimitResetMessagesAreTranslated(t *testing.T) {
-	require.NoError(t, i18n.Init())
-
-	tests := []struct {
-		key  string
-		args map[string]any
-		zhCN string
-		en   string
-		zhTW string
-	}{
-		{i18n.MsgClaudeLimitResetSuccess, nil, "重置成功", "Reset succeeded", "重置成功"},
-		{i18n.MsgClaudeLimitResetAlreadyUsed, nil, "这次重置已经用过了", "This reset has already been used", "這次重置已經用過了"},
-		{i18n.MsgClaudeLimitResetNotLimited, nil, "当前没有触顶，不需要重置", "Not currently rate limited, no reset needed", "目前沒有觸頂，不需要重置"},
-		{i18n.MsgClaudeLimitResetCooldown, nil, "冷却中，请稍后再试", "On cooldown, please try again later", "冷卻中，請稍後再試"},
-		{i18n.MsgClaudeLimitResetIneligible, nil, "账号不符合使用条件", "Account is not eligible", "帳號不符合使用條件"},
-		{i18n.MsgClaudeLimitResetUnavailable, nil, "上游暂时不可用", "Upstream temporarily unavailable", "上游暫時不可用"},
-		{i18n.MsgClaudeLimitResetUnknownResult, nil, "上游返回未知结果", "Upstream returned an unknown result", "上游返回未知結果"},
-		{i18n.MsgClaudeLimitResetRateLimited, nil, "请求太频繁，请稍后再试", "Too many requests, please try again later", "請求太頻繁，請稍後再試"},
-		{i18n.MsgClaudeLimitResetUnauthorized, nil, "凭据无效或权限不足", "Invalid credentials or insufficient permissions", "憑據無效或權限不足"},
-		{i18n.MsgClaudeLimitResetUpstreamStatus, map[string]any{"Status": 500}, "上游返回 HTTP 500", "Upstream returned HTTP 500", "上游返回 HTTP 500"},
-		{i18n.MsgClaudeLimitResetResultUnknown, nil, "重置结果未知，请先刷新用量确认后再决定是否重试", "Reset outcome unknown, refresh usage to confirm before retrying", "重置結果未知，請先重新整理用量確認後再決定是否重試"},
-		{i18n.MsgClaudeLimitResetUnsupportedProgram, nil, "不支持的重置类型", "Unsupported reset type", "不支援的重置類型"},
-		{i18n.MsgClaudeLimitResetInvalidParams, nil, "重置参数无效", "Invalid reset parameters", "重置參數無效"},
-		{i18n.MsgClaudeLimitResetNoClientVersion, nil, "取不到 Claude Code 最新版本，无法执行重置", "Unable to get the latest Claude Code version, cannot perform reset", "取不到 Claude Code 最新版本，無法執行重置"},
-		{i18n.MsgClaudeLimitResetOrgFailed, nil, "获取账号组织信息失败", "Failed to get account organization info", "取得帳號組織資訊失敗"},
-		{i18n.MsgClaudeLimitResetFailed, nil, "重置失败，请稍后重试", "Reset failed, please try again later", "重置失敗，請稍後重試"},
-		{i18n.MsgClaudeLimitResetChannelTypeInvalid, nil, "渠道类型不是 Claude 订阅", "Channel type is not Claude Subscription", "渠道類型不是 Claude 訂閱"},
-		{i18n.MsgClaudeLimitResetMultiKeyUnsupported, nil, "不支持多 Key 渠道", "Multi-key channels are not supported", "不支援多 Key 渠道"},
-		{i18n.MsgClaudeLimitResetCredentialInvalid, nil, "解析凭证失败，请检查渠道配置", "Failed to parse credentials, please check channel settings", "解析憑證失敗，請檢查渠道設定"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			assert.Equal(t, tt.zhCN, i18n.Translate("zh-CN", tt.key, tt.args))
-			assert.Equal(t, tt.en, i18n.Translate("en", tt.key, tt.args))
-			assert.Equal(t, tt.zhTW, i18n.Translate("zh-TW", tt.key, tt.args))
-		})
-	}
 }
