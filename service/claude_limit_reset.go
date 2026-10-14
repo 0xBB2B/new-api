@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/google/uuid"
 )
@@ -32,23 +31,22 @@ type ClaudeLimitResetRequest struct {
 
 type ClaudeLimitResetResult struct {
 	Success        bool
-	MessageKey     string
-	MessageArgs    map[string]any
+	Message        *common.Message
 	UpstreamStatus int
 	Body           []byte
 }
 
-func validateClaudeLimitResetRequest(req ClaudeLimitResetRequest) string {
+func validateClaudeLimitResetRequest(req ClaudeLimitResetRequest) *common.Message {
 	switch req.Program {
 	case claudeResetProgramJuniperTide:
-		return ""
+		return nil
 	case claudeResetProgramCedarEmber:
 		if !claudeResetGrantIDPattern.MatchString(req.GrantID) || req.ResetsLeft < 1 || req.ResetsLeft > 100 {
-			return i18n.MsgClaudeLimitResetInvalidParams
+			return common.NewMessage("Invalid reset parameters")
 		}
-		return ""
+		return nil
 	default:
-		return i18n.MsgClaudeLimitResetUnsupportedProgram
+		return common.NewMessage("Unsupported reset type")
 	}
 }
 
@@ -119,15 +117,15 @@ func postClaudeResetRateLimits(ctx context.Context, client *http.Client, baseURL
 	return doClaudeResetRequest(client, httpReq)
 }
 
-func claudeLimitResetMessage(status int, body []byte) (bool, string, map[string]any) {
+func claudeLimitResetMessage(status int, body []byte) (bool, *common.Message) {
 	if status < 200 || status >= 300 {
 		switch status {
 		case http.StatusTooManyRequests:
-			return false, i18n.MsgClaudeLimitResetRateLimited, nil
+			return false, common.NewMessage("Too many requests, please try again later")
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return false, i18n.MsgClaudeLimitResetUnauthorized, nil
+			return false, common.NewMessage("Invalid credentials or insufficient permissions")
 		default:
-			return false, i18n.MsgClaudeLimitResetUpstreamStatus, map[string]any{"Status": status}
+			return false, common.NewMessage("Upstream returned HTTP {{status}}", map[string]any{"status": status})
 		}
 	}
 	var payload struct {
@@ -136,28 +134,28 @@ func claudeLimitResetMessage(status int, body []byte) (bool, string, map[string]
 	_ = common.Unmarshal(body, &payload)
 	switch payload.Result {
 	case "reset":
-		return true, i18n.MsgClaudeLimitResetSuccess, nil
+		return true, common.NewMessage("Reset succeeded")
 	case "already_used":
-		return false, i18n.MsgClaudeLimitResetAlreadyUsed, nil
+		return false, common.NewMessage("This reset has already been used")
 	case "not_limited":
-		return false, i18n.MsgClaudeLimitResetNotLimited, nil
+		return false, common.NewMessage("Not currently rate limited, no reset needed")
 	case "cooldown":
-		return false, i18n.MsgClaudeLimitResetCooldown, nil
+		return false, common.NewMessage("On cooldown, please try again later")
 	case "ineligible":
-		return false, i18n.MsgClaudeLimitResetIneligible, nil
+		return false, common.NewMessage("Account is not eligible")
 	case "unavailable":
-		return false, i18n.MsgClaudeLimitResetUnavailable, nil
+		return false, common.NewMessage("Upstream temporarily unavailable")
 	default:
-		return false, i18n.MsgClaudeLimitResetUnknownResult, nil
+		return false, common.NewMessage("Upstream returned an unknown result")
 	}
 }
 
 func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, accessToken, cliVersion string, req ClaudeLimitResetRequest) ClaudeLimitResetResult {
-	if key := validateClaudeLimitResetRequest(req); key != "" {
-		return ClaudeLimitResetResult{MessageKey: key}
+	if msg := validateClaudeLimitResetRequest(req); msg != nil {
+		return ClaudeLimitResetResult{Message: msg}
 	}
 	if cliVersion == "" {
-		return ClaudeLimitResetResult{MessageKey: i18n.MsgClaudeLimitResetNoClientVersion}
+		return ClaudeLimitResetResult{Message: common.NewMessage("Unable to get the latest Claude Code version, cannot perform reset")}
 	}
 
 	profileCtx, cancelProfile := context.WithTimeout(ctx, 15*time.Second)
@@ -168,10 +166,10 @@ func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, a
 			common.SysError("failed to fetch claude organization uuid: " + err.Error())
 		}
 		if profileStatus != 0 && (profileStatus < 200 || profileStatus >= 300) {
-			_, key, args := claudeLimitResetMessage(profileStatus, nil)
-			return ClaudeLimitResetResult{MessageKey: key, MessageArgs: args, UpstreamStatus: profileStatus}
+			_, msg := claudeLimitResetMessage(profileStatus, nil)
+			return ClaudeLimitResetResult{Message: msg, UpstreamStatus: profileStatus}
 		}
-		return ClaudeLimitResetResult{MessageKey: i18n.MsgClaudeLimitResetOrgFailed, UpstreamStatus: profileStatus}
+		return ClaudeLimitResetResult{Message: common.NewMessage("Failed to get account organization info"), UpstreamStatus: profileStatus}
 	}
 
 	resetCtx, cancelReset := context.WithTimeout(ctx, 15*time.Second)
@@ -179,15 +177,15 @@ func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, a
 	status, body, err := postClaudeResetRateLimits(resetCtx, client, baseURL, accessToken, cliVersion, orgUUID, req)
 	if err != nil {
 		common.SysError("failed to reset claude rate limits: " + err.Error())
-		return ClaudeLimitResetResult{MessageKey: i18n.MsgClaudeLimitResetResultUnknown, UpstreamStatus: status}
+		return ClaudeLimitResetResult{Message: common.NewMessage("Reset outcome unknown, refresh usage to confirm before retrying"), UpstreamStatus: status}
 	}
-	success, key, args := claudeLimitResetMessage(status, body)
-	return ClaudeLimitResetResult{Success: success, MessageKey: key, MessageArgs: args, UpstreamStatus: status, Body: body}
+	success, msg := claudeLimitResetMessage(status, body)
+	return ClaudeLimitResetResult{Success: success, Message: msg, UpstreamStatus: status, Body: body}
 }
 
 func ResetClaudeChannelLimit(ctx context.Context, ch *model.Channel, cred *claudeOAuthCredential, req ClaudeLimitResetRequest) (ClaudeLimitResetResult, error) {
-	if key := validateClaudeLimitResetRequest(req); key != "" {
-		return ClaudeLimitResetResult{MessageKey: key}, nil
+	if msg := validateClaudeLimitResetRequest(req); msg != nil {
+		return ClaudeLimitResetResult{Message: msg}, nil
 	}
 	client, err := GetHttpClientWithProxy(ch.GetSetting().Proxy)
 	if err != nil {

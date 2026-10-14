@@ -2,13 +2,12 @@ package controller
 
 import (
 	"errors"
-	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
@@ -19,39 +18,39 @@ import (
 func GetClaudeChannelUsage(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 
 	ch, err := model.GetChannelById(channelId, true)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		common.ApiErrorT(c, "Channel does not exist")
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if ch == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
-		return
-	}
 	if ch.Type != constant.ChannelTypeClaudeSubscription {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Claude Subscription"})
+		common.ApiErrorT(c, "Channel type is not Claude Subscription")
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+		common.ApiErrorT(c, "Multi-key channels are not supported")
 		return
 	}
 
 	cred, err := service.ClaudeChannelCredential(ch)
 	if err != nil {
 		common.SysError("failed to parse claude credential: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "解析凭证失败，请检查渠道配置"})
+		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
 		return
 	}
 
 	statusCode, body, snapshot, hasVersion, err := service.SyncClaudeChannelUsage(c.Request.Context(), ch, cred)
 	if err != nil {
 		common.SysError("failed to fetch claude usage: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取用量信息失败，请稍后重试"})
+		common.ApiErrorT(c, "Failed to fetch usage. Please try again later")
 		return
 	}
 
@@ -72,7 +71,9 @@ func GetClaudeChannelUsage(c *gin.Context) {
 		resp["limit_reset_unavailable"] = "client_version"
 	}
 	if !ok {
-		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
+		msg := common.NewMessage("Upstream returned HTTP {{status}}", map[string]any{"status": statusCode})
+		resp["message"] = msg.Error()
+		maps.Copy(resp, msg.Fields())
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -91,35 +92,35 @@ func ResetClaudeChannelLimit(c *gin.Context) {
 	}
 	if err != nil {
 		common.SysError("failed to get channel: " + err.Error())
-		common.ApiErrorI18n(c, i18n.MsgClaudeLimitResetFailed)
+		common.ApiErrorT(c, "Reset failed, please try again later")
 		return
 	}
 	if ch.Type != constant.ChannelTypeClaudeSubscription {
-		common.ApiErrorI18n(c, i18n.MsgClaudeLimitResetChannelTypeInvalid)
+		common.ApiErrorT(c, "Channel type is not Claude Subscription")
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		common.ApiErrorI18n(c, i18n.MsgClaudeLimitResetMultiKeyUnsupported)
+		common.ApiErrorT(c, "Multi-key channels are not supported")
 		return
 	}
 
 	cred, err := service.ClaudeChannelCredential(ch)
 	if err != nil {
 		common.SysError("failed to parse claude credential: " + err.Error())
-		common.ApiErrorI18n(c, i18n.MsgClaudeLimitResetCredentialInvalid)
+		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
 		return
 	}
 
 	var req service.ClaudeLimitResetRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgClaudeLimitResetInvalidParams)
+		common.ApiErrorT(c, "Invalid reset parameters")
 		return
 	}
 
 	res, err := service.ResetClaudeChannelLimit(c.Request.Context(), ch, cred, req)
 	if err != nil {
 		common.SysError("failed to reset claude limit: " + err.Error())
-		common.ApiErrorI18n(c, i18n.MsgClaudeLimitResetFailed)
+		common.ApiErrorT(c, "Reset failed, please try again later")
 		return
 	}
 
@@ -127,11 +128,12 @@ func ResetClaudeChannelLimit(c *gin.Context) {
 	if common.Unmarshal(res.Body, &payload) != nil {
 		payload = string(res.Body)
 	}
-	message := i18n.T(c, res.MessageKey, res.MessageArgs)
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success":         res.Success,
-		"message":         message,
+		"message":         res.Message.Error(),
 		"upstream_status": res.UpstreamStatus,
 		"data":            payload,
-	})
+	}
+	maps.Copy(resp, res.Message.Fields())
+	c.JSON(http.StatusOK, resp)
 }
