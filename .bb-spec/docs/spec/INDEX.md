@@ -4,9 +4,9 @@
 
 ## backend-i18n
 
-- [edge-translation](backend-i18n/edge-translation.md) — 翻译在最外层执行；深层无 context 只回传 (key, args)，由上层拿到 c 后翻译。
-- [key-registry](backend-i18n/key-registry.md) — 后端 i18n 消息 key 用类型化常量集中在 i18n/keys.go 定义；业务代码只引用常量，禁传字面串。
-- [templated-messages](backend-i18n/templated-messages.md) — 带动态数据的翻译消息用 {{.Placeholder}} 模板 + map[string]any 注入；禁 fmt.Sprintf 或拼接。
+- [edge-translation](backend-i18n/edge-translation.md) — 翻译在离读者最近的一层做：网页控制台提示后端只发英文原文和 message_key、由前端翻译；后端只翻译给 AI 客户端的错误、邮件和通知。
+- [key-registry](backend-i18n/key-registry.md) — 后端自己翻译的文字（给 AI 客户端的错误、邮件、通知）的 key 用常量集中登记在 i18n/keys.go；网页控制台的提示不登记，直接用英文原文作 key。
+- [templated-messages](backend-i18n/templated-messages.md) — 带动态数据的提示用占位符 + 参数 map 传入，禁 fmt.Sprintf 或拼接；后端 yaml 用 {{.Xxx}}，网页控制台提示用 {{xxx}}。
 
 ## backend-test-quality
 
@@ -42,7 +42,7 @@
 
 ## error-handling
 
-- [admin-response-envelope](error-handling/admin-response-envelope.md) — 管理端 HTTP 响应统一 {success, message, data?} 三字段信封；错误默认 HTTP 200 由 success:false 承载。
+- [admin-response-envelope](error-handling/admin-response-envelope.md) — 管理端 HTTP 响应统一 {success, message, data?} 信封，网页提示另带 message_key / message_params；错误默认 HTTP 200 由 success:false 承载。
 - [error-code-catalog-central](error-handling/error-code-catalog-central.md) — ErrorCode/ErrorType 枚举集中在 types 包；业务包只引用常量，禁自造字面串。
 - [relay-error-wrap-newapierror](error-handling/relay-error-wrap-newapierror.md) — relay 及其上下游返回的错误统一包装成 *types.NewAPIError，携带 ErrorCode、StatusCode 与重试/日志选项。
 
