@@ -1679,7 +1679,7 @@
     "Creem Payment": "Paiement Creem",
     "Creem product ID from your Creem dashboard.": "ID du produit Creem depuis votre tableau de bord Creem.",
     "Creem products must be a JSON array": "Les produits Creem doivent être un tableau JSON",
-    "Data dashboard is off, statistics are incomplete": "Tableau de données désactivé, statistiques incomplètes",
+    "Data dashboard is off, statistics are incomplete": "Tableau de bord des données désactivé, statistiques incomplètes",
     "Database connection failed": "Échec de la connexion à la base de données",
     "Database error, please contact the administrator": "Erreur de base de données, veuillez contacter l’administrateur",
     "Cross-group": "Inter-groupes",
