@@ -47,6 +47,7 @@ import {
   saveChartPreferences,
 } from './lib'
 import {
+  ADMIN_ONLY_SECTIONS,
   type DashboardSectionId,
   DASHBOARD_DEFAULT_SECTION,
   DASHBOARD_SECTION_IDS,
@@ -110,6 +111,12 @@ const LazyUserCharts = lazy(() =>
 const LazyFlowCharts = lazy(() =>
   import('./components/flow/flow-charts').then((m) => ({
     default: m.FlowCharts,
+  }))
+)
+
+const LazyUtilizationOverview = lazy(() =>
+  import('./components/utilization/utilization-overview').then((m) => ({
+    default: m.UtilizationOverview,
   }))
 )
 
@@ -189,6 +196,9 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
   users: {
     titleKey: 'User Analytics',
   },
+  utilization: {
+    titleKey: 'Utilization',
+  },
 }
 
 export function Dashboard() {
@@ -249,7 +259,9 @@ export function Dashboard() {
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+        (section) =>
+          section !== 'overview' &&
+          (isAdmin || !ADMIN_ONLY_SECTIONS.has(section))
       ),
     [isAdmin]
   )
@@ -399,6 +411,13 @@ export function Dashboard() {
                   filters={userChartsFilters}
                   onFiltersChange={setUserChartsFilters}
                 />
+              </Suspense>
+            </FadeIn>
+          )}
+          {activeSection === 'utilization' && (
+            <FadeIn>
+              <Suspense fallback={<ModelChartsFallback />}>
+                <LazyUtilizationOverview />
               </Suspense>
             </FadeIn>
           )}

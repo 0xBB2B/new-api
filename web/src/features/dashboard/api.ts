@@ -22,6 +22,7 @@ import type {
   FlowQuotaDataItem,
   QuotaDataItem,
   UptimeGroupResult,
+  UserUtilization,
 } from './types'
 
 // ============================================================================
@@ -63,6 +64,15 @@ export async function getUserQuotaDataByUsers(params: {
     '/api/data/users',
     { params }
   )
+  return res.data
+}
+
+export async function getUserUtilization() {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data: UserUtilization
+  }>('/api/data/utilization')
   return res.data
 }
 
