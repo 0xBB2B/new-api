@@ -33,16 +33,20 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { CanceledError } from 'axios'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { markServerErrorHandled } from '@/lib/handle-server-error'
 import { createAppQueryClient } from '@/lib/query-client'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
 import {
+  CHANNEL_TYPE_CLAUDE_SUBSCRIPTION,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
@@ -2861,4 +2865,55 @@ test('a New API channel binds upstream task plugins and publishes their models',
   expect(setting).toMatchObject({ task_extend_plugin_keys: ['video-b'] })
   expect(setting).not.toHaveProperty('task_plugin_key')
   expect(payload.models?.split(',').sort()).toEqual(['gpt-5', 'video-b-1'])
+})
+
+async function clickClaudeRefresh() {
+  editingChannel = { ...editingChannel, type: CHANNEL_TYPE_CLAUDE_SUBSCRIPTION }
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Refresh credential' })
+  )
+}
+
+test('Claude credential refresh stays silent when the request is cancelled', async () => {
+  const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
+  const post = vi.spyOn(api, 'post').mockRejectedValue(new CanceledError())
+  await clickClaudeRefresh()
+  await waitFor(() => expect(post).toHaveBeenCalled())
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Refresh credential' })
+    ).toBeEnabled()
+  )
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('Claude credential refresh does not toast an error that was already reported', async () => {
+  const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
+  const reported = new Error('Session expired!')
+  markServerErrorHandled(reported)
+  const post = vi.spyOn(api, 'post').mockRejectedValue(reported)
+  await clickClaudeRefresh()
+  await waitFor(() => expect(post).toHaveBeenCalled())
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Refresh credential' })
+    ).toBeEnabled()
+  )
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('Claude credential refresh toasts the translated message_key of a failed response', async () => {
+  const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: false,
+      message: 'rendered english text',
+      message_key: 'Source key for the failure',
+    },
+  })
+  await clickClaudeRefresh()
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith('Source key for the failure')
+  )
 })
