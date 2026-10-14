@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +28,7 @@ func StartQuotaResetTask() {
 		}
 		lastTick = time.Now()
 		gopool.Go(func() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("quota reset task started: tick=%s", quotaResetTickInterval))
+			logger.LogInfo(context.Background(), common.LogText("quota reset task started: tick=%s", quotaResetTickInterval))
 			ticker := time.NewTicker(quotaResetTickInterval)
 			defer ticker.Stop()
 			for range ticker.C {
@@ -49,7 +48,7 @@ func quotaResetTick() {
 	periods := crossedQuotaResetPeriods(lastTick, now)
 	if len(periods) > 0 {
 		if _, err := RunQuotaResetPass(periods, QuotaResetTriggerScheduled); err != nil {
-			logger.LogWarn(context.Background(), fmt.Sprintf("quota reset task failed: %v", err))
+			logger.LogWarn(context.Background(), common.LogText("quota reset task failed: %v", err))
 		}
 	}
 	lastTick = now

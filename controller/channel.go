@@ -660,18 +660,18 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
 			if !strings.HasPrefix(trimmedKey, "{") {
-				return fmt.Errorf("Claude subscription key must be a valid JSON object")
+				return common.NewMessage("Claude subscription key must be a valid JSON object")
 			}
 			var keyMap map[string]any
 			if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
-				return fmt.Errorf("Claude subscription key must be a valid JSON object")
+				return common.NewMessage("Claude subscription key must be a valid JSON object")
 			}
 			oauth, ok := keyMap["claudeAiOauth"].(map[string]any)
 			if !ok {
-				return fmt.Errorf("Claude subscription key JSON must include claudeAiOauth.accessToken")
+				return common.NewMessage("Claude subscription key JSON must include claudeAiOauth.accessToken")
 			}
 			if v, ok := oauth["accessToken"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-				return fmt.Errorf("Claude subscription key JSON must include claudeAiOauth.accessToken")
+				return common.NewMessage("Claude subscription key JSON must include claudeAiOauth.accessToken")
 			}
 		}
 	}
@@ -714,7 +714,7 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 func RefreshClaudeChannelCredential(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 
@@ -723,8 +723,8 @@ func RefreshClaudeChannelCredential(c *gin.Context) {
 
 	_, ch, err := service.RefreshClaudeChannelCredential(ctx, channelId, service.ClaudeCredentialRefreshOptions{ResetCaches: true})
 	if err != nil {
-		common.SysError("failed to refresh claude subscription channel credential: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "刷新凭证失败，请稍后重试"})
+		common.SysError(common.LogText("failed to refresh claude subscription channel credential: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to refresh credentials. Please try again later")
 		return
 	}
 

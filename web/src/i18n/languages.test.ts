@@ -79,6 +79,11 @@ describe('Claude subscription message keys', () => {
     'Unable to get the latest Claude Code version, cannot perform reset',
     'Failed to get account organization info',
     'Reset failed, please try again later',
+    'Failed to refresh credentials. Please try again later',
+    'Invalid reset period. Valid values: daily, weekly, monthly',
+    'Reset value must be an integer of 0 or more',
+    'Claude subscription key must be a valid JSON object',
+    'Claude subscription key JSON must include claudeAiOauth.accessToken',
   ]
   const locales = { en, zh, 'zh-TW': zhTW, fr, ja, ru, vi }
 

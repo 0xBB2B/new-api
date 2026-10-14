@@ -163,7 +163,7 @@ func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, a
 	orgUUID, profileStatus, err := fetchClaudeOAuthOrganizationUUID(profileCtx, client, baseURL, accessToken, cliVersion)
 	if err != nil || orgUUID == "" {
 		if err != nil {
-			common.SysError("failed to fetch claude organization uuid: " + err.Error())
+			common.SysError(common.LogText("failed to fetch claude organization uuid: %s", err.Error()))
 		}
 		if profileStatus != 0 && (profileStatus < 200 || profileStatus >= 300) {
 			_, msg := claudeLimitResetMessage(profileStatus, nil)
@@ -176,7 +176,7 @@ func redeemClaudeLimitReset(ctx context.Context, client *http.Client, baseURL, a
 	defer cancelReset()
 	status, body, err := postClaudeResetRateLimits(resetCtx, client, baseURL, accessToken, cliVersion, orgUUID, req)
 	if err != nil {
-		common.SysError("failed to reset claude rate limits: " + err.Error())
+		common.SysError(common.LogText("failed to reset claude rate limits: %s", err.Error()))
 		return ClaudeLimitResetResult{Message: common.NewMessage("Reset outcome unknown, refresh usage to confirm before retrying"), UpstreamStatus: status}
 	}
 	success, msg := claudeLimitResetMessage(status, body)
@@ -196,7 +196,7 @@ func ResetClaudeChannelLimit(ctx context.Context, ch *model.Channel, cred *claud
 	cliVersion, versionErr := GetLatestClaudeCLIVersion(versionCtx, client)
 	cancelVersion()
 	if versionErr != nil {
-		common.SysLog("failed to fetch latest claude cli version: " + versionErr.Error())
+		common.SysLog(common.LogText("failed to fetch latest claude cli version: %s", versionErr.Error()))
 	}
 
 	res := redeemClaudeLimitReset(ctx, client, ch.GetBaseURL(), cred.AccessToken, cliVersion, req)

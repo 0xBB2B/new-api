@@ -14,28 +14,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateChannel_ClaudeSubscription_RejectsNonJSONKey(t *testing.T) {
-	channel := &model.Channel{
-		Type:   constant.ChannelTypeClaudeSubscription,
-		Key:    "sk-plain-string",
-		Models: "claude-3-5-sonnet",
+func TestValidateChannel_ClaudeSubscription_RejectsInvalidKey(t *testing.T) {
+	const notJSONKey = "Claude subscription key must be a valid JSON object"
+	const missingTokenKey = "Claude subscription key JSON must include claudeAiOauth.accessToken"
+	tests := []struct {
+		name    string
+		key     string
+		wantKey string
+	}{
+		{"plain string", "sk-plain-string", notJSONKey},
+		{"malformed json", "{bad", notJSONKey},
+		{"missing claudeAiOauth", "{}", missingTokenKey},
+		{"missing accessToken", `{"claudeAiOauth":{"refreshToken":"rt"}}`, missingTokenKey},
+		{"blank accessToken", `{"claudeAiOauth":{"accessToken":"  "}}`, missingTokenKey},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channel := &model.Channel{
+				Type:   constant.ChannelTypeClaudeSubscription,
+				Key:    tt.key,
+				Models: "claude-3-5-sonnet",
+			}
 
-	err := validateChannel(channel, true)
+			err := validateChannel(channel, true)
 
-	assert.Error(t, err)
-}
-
-func TestValidateChannel_ClaudeSubscription_RejectsMissingAccessToken(t *testing.T) {
-	channel := &model.Channel{
-		Type:   constant.ChannelTypeClaudeSubscription,
-		Key:    `{"claudeAiOauth":{"refreshToken":"rt"}}`,
-		Models: "claude-3-5-sonnet",
+			var msg *common.Message
+			require.ErrorAs(t, err, &msg)
+			assert.Equal(t, tt.wantKey, msg.Key)
+		})
 	}
-
-	err := validateChannel(channel, true)
-
-	assert.Error(t, err)
 }
 
 func TestValidateChannel_ClaudeSubscription_AcceptsValidOAuthKey(t *testing.T) {
@@ -79,6 +86,8 @@ func TestClaudeChannelEndpoints_ErrorMessagesAreWebConsoleKeys(t *testing.T) {
 		{"reset bad credentials", ResetClaudeChannelLimit, "103", `{"program":"juniper_tide"}`, "Failed to parse credentials. Please check the channel configuration"},
 		{"reset body not json", ResetClaudeChannelLimit, "104", `not json`, "Invalid reset parameters"},
 		{"reset unsupported program", ResetClaudeChannelLimit, "104", `{"program":"foo"}`, "Unsupported reset type"},
+		{"refresh id not integer", RefreshClaudeChannelCredential, "abc", "", "Invalid parameters"},
+		{"refresh channel missing", RefreshClaudeChannelCredential, "999999", "", "Failed to refresh credentials. Please try again later"},
 		{"usage id not integer", GetClaudeChannelUsage, "abc", "", "Invalid parameters"},
 		{"usage channel missing", GetClaudeChannelUsage, "999999", "", "Channel does not exist"},
 		{"usage wrong channel type", GetClaudeChannelUsage, "101", "", "Channel type is not Claude Subscription"},
@@ -107,6 +116,7 @@ func TestClaudeChannelEndpoints_ErrorMessagesAreWebConsoleKeys(t *testing.T) {
 			assert.False(t, resp.Success)
 			assert.Equal(t, tt.wantText, resp.Message)
 			assert.Equal(t, tt.wantText, resp.MessageKey)
+			assert.NotRegexp(t, `\p{Han}`, recorder.Body.String())
 			assert.Empty(t, resp.MessageParams)
 			assert.Zero(t, resp.UpstreamStatus)
 			assert.Equal(t, http.StatusOK, recorder.Code)

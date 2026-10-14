@@ -69,7 +69,7 @@ func SyncClaudeChannelUsage(ctx context.Context, ch *model.Channel, cred *claude
 	cliVersion, versionErr := GetLatestClaudeCLIVersion(versionCtx, client)
 	cancelVersion()
 	if versionErr != nil {
-		common.SysLog("failed to fetch latest claude cli version: " + versionErr.Error())
+		common.SysLog(common.LogText("failed to fetch latest claude cli version: %s", versionErr.Error()))
 	}
 	hasVersion := cliVersion != ""
 
