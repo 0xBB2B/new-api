@@ -66,9 +66,9 @@ func RunQuotaResetPass(periods []string, trigger QuotaResetTrigger) (int, error)
 		periodFilter[p] = true
 	}
 
-	triggerLabel := "定时"
+	logKey := "Quota reset (scheduled): {{old}} -> {{new}}"
 	if trigger == QuotaResetTriggerManual {
-		triggerLabel = "手动"
+		logKey = "Quota reset (manual): {{old}} -> {{new}}"
 	}
 
 	resetCount := 0
@@ -96,7 +96,7 @@ func RunQuotaResetPass(periods []string, trigger QuotaResetTrigger) (int, error)
 				common.SysLog(fmt.Sprintf("failed to reset quota for user %d: %s", user.Id, err.Error()))
 				continue
 			}
-			model.RecordLog(user.Id, model.LogTypeSystem, fmt.Sprintf("额度重置（%s）：%d -> %d", triggerLabel, oldQuota, value))
+			model.RecordLog(user.Id, model.LogTypeSystem, common.NewMessage(logKey, map[string]any{"old": oldQuota, "new": value}))
 			resetCount++
 		}
 	}

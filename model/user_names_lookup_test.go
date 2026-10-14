@@ -73,7 +73,7 @@ func TestGetAllLogsFillsDisplayNameFromUsersTable(t *testing.T) {
 	seedUserNamesLookupUsers(t)
 	seedDisplayNameLogs(t)
 
-	logs, total, err := GetAllLogs(0, 0, 0, "", "", "", 0, 10, 0, "", "", "")
+	logs, total, err := GetAllLogs(LogFilter{}, 0, 10)
 	require.NoError(t, err)
 	require.EqualValues(t, 4, total)
 	require.Len(t, logs, 4)
@@ -93,7 +93,7 @@ func TestGetUserLogsDoesNotFillDisplayName(t *testing.T) {
 	seedUserNamesLookupUsers(t)
 	seedDisplayNameLogs(t)
 
-	logs, total, err := GetUserLogs(7, 0, 0, 0, "", "", 0, 10, "", "", "")
+	logs, total, err := GetUserLogs(7, LogFilter{}, 0, 10)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, total)
 	require.Len(t, logs, 2)
@@ -235,7 +235,7 @@ func TestDisplayNameFillOnRealDatabases(t *testing.T) {
 			assert.Equal(t, UserNames{Username: "lisi", DisplayName: ""}, names[8])
 
 			wantDisplayName := map[int]string{7: "张三", 8: "", 9: "", 0: ""}
-			logs, total, err := GetAllLogs(0, 0, 0, "", "", "", 0, 10, 0, "", "", "")
+			logs, total, err := GetAllLogs(LogFilter{}, 0, 10)
 			require.NoError(t, err)
 			require.EqualValues(t, 4, total)
 			for _, log := range logs {

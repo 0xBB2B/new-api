@@ -18,8 +18,8 @@ func GetCodexChannelUsage(c *gin.Context) {
 	fetchCodexChannelWhamData(
 		c,
 		service.SyncCodexChannelUsage,
-		"failed to fetch codex usage",
-		"获取用量信息失败，请稍后重试",
+		common.LogText("failed to fetch codex usage"),
+		"Failed to fetch usage. Please try again later",
 	)
 }
 
@@ -29,8 +29,8 @@ func GetCodexChannelRateLimitResetCredits(c *gin.Context) {
 		func(ctx context.Context, ch *model.Channel, oauthKey *service.CodexOAuthKey) (int, []byte, error) {
 			return service.FetchCodexChannelWham(ctx, ch, oauthKey, service.FetchCodexWhamRateLimitResetCredits)
 		},
-		"failed to fetch codex reset credits",
-		"获取重置次数详情失败，请稍后重试",
+		common.LogText("failed to fetch codex reset credits"),
+		"Failed to fetch reset credit details. Please try again later",
 	)
 }
 
@@ -40,8 +40,8 @@ func ResetCodexChannelUsage(c *gin.Context) {
 		func(ctx context.Context, ch *model.Channel, oauthKey *service.CodexOAuthKey) (int, []byte, error) {
 			return service.FetchCodexChannelWham(ctx, ch, oauthKey, service.ConsumeCodexWhamRateLimitResetCredit)
 		},
-		"failed to reset codex usage",
-		"重置用量失败，请稍后重试",
+		common.LogText("failed to reset codex usage"),
+		"Failed to reset usage. Please try again later",
 	)
 }
 
@@ -77,15 +77,15 @@ func fetchCodexChannelWhamData(
 
 	oauthKey, err := service.CodexChannelCredential(ch)
 	if err != nil {
-		common.SysError("failed to parse oauth key: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "解析凭证失败，请检查渠道配置"})
+		common.SysError(common.LogText("failed to parse oauth key: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
 		return
 	}
 
 	statusCode, body, err := fetch(c.Request.Context(), ch, oauthKey)
 	if err != nil {
 		common.SysError(logPrefix + ": " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": userMessage})
+		common.ApiErrorT(c, userMessage)
 		return
 	}
 

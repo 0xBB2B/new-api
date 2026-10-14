@@ -137,11 +137,11 @@ func TestRunQuotaResetNow_MixedUsers_ResetsOnlyUsersWithEffectiveRule(t *testing
 	globalLogs := fetchQuotaResetNowLogs(t, db, globalUser.Id)
 	require.Len(t, globalLogs, 1)
 	assert.Equal(t, model.LogTypeSystem, globalLogs[0].Type)
-	assert.Equal(t, "额度重置（手动）：123456 -> 500000", globalLogs[0].Content)
+	assert.Equal(t, "Quota reset (manual): 123456 -> 500000", globalLogs[0].Content)
 
 	exclusiveLogs := fetchQuotaResetNowLogs(t, db, exclusiveUser.Id)
 	require.Len(t, exclusiveLogs, 1)
-	assert.Equal(t, "额度重置（手动）：50 -> 100000", exclusiveLogs[0].Content)
+	assert.Equal(t, "Quota reset (manual): 50 -> 100000", exclusiveLogs[0].Content)
 
 	assert.Empty(t, fetchQuotaResetNowLogs(t, db, optedOutUser.Id))
 	assert.Empty(t, fetchQuotaResetNowLogs(t, db, disabledUser.Id))

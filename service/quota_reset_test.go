@@ -306,15 +306,15 @@ func TestRunQuotaResetPass(t *testing.T) {
 		globalLowLogs := getQuotaResetLogs(t, globalLow.Id)
 		require.Len(t, globalLowLogs, 1)
 		assert.Equal(t, model.LogTypeSystem, globalLowLogs[0].Type)
-		assert.Equal(t, "额度重置（定时）：123456 -> 500000", globalLowLogs[0].Content)
+		assert.Equal(t, "Quota reset (scheduled): 123456 -> 500000", globalLowLogs[0].Content)
 
 		globalHighLogs := getQuotaResetLogs(t, globalHigh.Id)
 		require.Len(t, globalHighLogs, 1)
-		assert.Equal(t, "额度重置（定时）：800000 -> 500000", globalHighLogs[0].Content)
+		assert.Equal(t, "Quota reset (scheduled): 800000 -> 500000", globalHighLogs[0].Content)
 
 		exclusiveLogs := getQuotaResetLogs(t, exclusive.Id)
 		require.Len(t, exclusiveLogs, 1)
-		assert.Equal(t, "额度重置（定时）：50 -> 100000", exclusiveLogs[0].Content)
+		assert.Equal(t, "Quota reset (scheduled): 50 -> 100000", exclusiveLogs[0].Content)
 	})
 
 	t.Run("periods_filter_excludes_non_matching_effective_period", func(t *testing.T) {
@@ -378,7 +378,7 @@ func TestRunQuotaResetPass(t *testing.T) {
 
 		logs := getQuotaResetLogs(t, user.Id)
 		require.Len(t, logs, 1)
-		assert.Equal(t, "额度重置（手动）：42 -> 0", logs[0].Content)
+		assert.Equal(t, "Quota reset (manual): 42 -> 0", logs[0].Content)
 	})
 
 	t.Run("two_consecutive_passes_with_same_reset_value_are_idempotent", func(t *testing.T) {
@@ -399,8 +399,8 @@ func TestRunQuotaResetPass(t *testing.T) {
 
 		logs := getQuotaResetLogs(t, user.Id)
 		require.Len(t, logs, 2)
-		assert.Equal(t, "额度重置（定时）：300000 -> 500000", logs[0].Content)
-		assert.Equal(t, "额度重置（定时）：500000 -> 500000", logs[1].Content)
+		assert.Equal(t, "Quota reset (scheduled): 300000 -> 500000", logs[0].Content)
+		assert.Equal(t, "Quota reset (scheduled): 500000 -> 500000", logs[1].Content)
 	})
 }
 

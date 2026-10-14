@@ -80,13 +80,13 @@ func GetClaudeChannelUsage(c *gin.Context) {
 func ResetClaudeChannelLimit(c *gin.Context) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgChannelIdFormatError)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 
 	ch, err := model.GetChannelById(channelId, true)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		common.ApiErrorI18n(c, i18n.MsgChannelNotExists)
+		common.ApiErrorT(c, "Channel does not exist")
 		return
 	}
 	if err != nil {

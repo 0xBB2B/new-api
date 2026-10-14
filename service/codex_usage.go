@@ -35,7 +35,8 @@ func CodexChannelCredential(ch *model.Channel) (*CodexOAuthKey, error) {
 
 // FetchCodexChannelWham 调用 wham 接口；access token 失效且持有 refresh token 时刷新凭证后重试一次。
 func FetchCodexChannelWham(ctx context.Context, ch *model.Channel, oauthKey *CodexOAuthKey, fetch CodexWhamFetchFunc) (int, []byte, error) {
-	client, err := GetHttpClientWithProxy(ch.GetSetting().Proxy)
+	setting := ch.GetSetting()
+	client, err := GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
 		return 0, nil, err
 	}

@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -51,17 +50,16 @@ func TestValidateChannel_ClaudeSubscription_AcceptsValidOAuthKey(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestResetClaudeChannelLimit_ErrorMessagesAreTranslated(t *testing.T) {
+func TestResetClaudeChannelLimit_ErrorMessagesAreWebConsoleKeys(t *testing.T) {
 	setupTaskPluginBindChannelTest(t)
-	require.NoError(t, i18n.Init())
 
 	tests := []struct {
 		name    string
 		id      string
 		wantMsg string
 	}{
-		{"id not integer", "abc", i18n.Translate("zh-CN", i18n.MsgChannelIdFormatError)},
-		{"channel missing", "999999", "渠道不存在"},
+		{"id not integer", "abc", "Invalid parameters"},
+		{"channel missing", "999999", "Channel does not exist"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,17 +69,18 @@ func TestResetClaudeChannelLimit_ErrorMessagesAreTranslated(t *testing.T) {
 			c.Params = gin.Params{{Key: "id", Value: tt.id}}
 			c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/"+tt.id+"/claude/usage/reset", strings.NewReader(`{"program":"juniper_tide"}`))
 			c.Request.Header.Set("Content-Type", "application/json")
-			c.Request.Header.Set("Accept-Language", "zh-CN")
 
 			ResetClaudeChannelLimit(c)
 
 			var resp struct {
-				Success bool   `json:"success"`
-				Message string `json:"message"`
+				Success    bool   `json:"success"`
+				Message    string `json:"message"`
+				MessageKey string `json:"message_key"`
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
 			assert.False(t, resp.Success)
 			assert.Equal(t, tt.wantMsg, resp.Message)
+			assert.Equal(t, tt.wantMsg, resp.MessageKey)
 			assert.NotContains(t, resp.Message, "record not found")
 		})
 	}

@@ -28,6 +28,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { UserIdentityLabel } from '@/components/user-identity-label'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
+import { translateServerText } from '@/lib/server-error-message'
 import { resolveUserName } from '@/lib/user-identity'
 import { cn } from '@/lib/utils'
 
@@ -69,7 +70,7 @@ function TaskDetailsCell(props: {
         </button>
         {props.log.fail_reason ? (
           <span className='max-w-full truncate text-xs text-red-600 dark:text-red-400'>
-            {props.log.fail_reason}
+            {translateServerText(t, props.log.fail_reason)}
           </span>
         ) : null}
       </div>
