@@ -1679,7 +1679,7 @@
     "Creem Payment": "Платеж Creem",
     "Creem product ID from your Creem dashboard.": "ID продукта Creem из вашего дашборда Creem.",
     "Creem products must be a JSON array": "Продукты Creem должны быть JSON-массивом",
-    "Data dashboard is off, statistics are incomplete": "Панель данных выключена, статистика неполная",
+    "Data dashboard is off, statistics are incomplete": "Панель мониторинга данных выключена, статистика неполная",
     "Database connection failed": "Не удалось подключиться к базе данных",
     "Database error, please contact the administrator": "Ошибка базы данных, обратитесь к администратору",
     "Cross-group": "Межгрупповой",
