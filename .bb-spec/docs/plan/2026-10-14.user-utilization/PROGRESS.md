@@ -2,9 +2,9 @@
 | 序号 | Plan | 状态 | 完成时间 |
 |---|---|---|---|
 | 01 | 01-utilization-api | done | 2026-10-14 |
-| 02 | 02-user-analytics-default-tokens | in-progress | — |
-| 03 | 03-utilization-section-ui | pending | — |
+| 02 | 02-user-analytics-default-tokens | done | 2026-10-14 |
+| 03 | 03-utilization-section-ui | done | 2026-10-14 |
 ## 当前
-01 已完成（审查后自修 2 处：测试里的 concat 换成 slices.Concat；两次查询合成一条，避免开通人数和分类人数读到不一致的数据）。02 代码已改、typecheck + build 通过，浏览器验证与 03 一起做。下一步：03。
+全部完成。03 审查后自修：占比改为先乘后除（29/200 显示 15%）；测试移到 lib/__tests__/；formatNumber 传界面语言；窄屏数字缩小字号；提示里的菜单路径改成「系统设置 → 控制台内容 → 数据仪表板」；警告图标颜色与虚线框颜色按预览修正。浏览器已验收 02、03。
 ## 阻塞
 （无）
