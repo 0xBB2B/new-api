@@ -1518,7 +1518,7 @@ func UpdateUserQuotaResetRule(c *gin.Context) {
 		return
 	}
 
-	params := map[string]interface{}{"opt_out": req.OptOut}
+	params := map[string]any{"opt_out": req.OptOut}
 	if req.Rule != nil {
 		params["rule"] = fmt.Sprintf("%s:%d", req.Rule.Period, req.Rule.Value)
 	}
@@ -1534,6 +1534,6 @@ func RunQuotaResetNow(c *gin.Context) {
 		return
 	}
 
-	recordManageAuditFor(c, c.GetInt("id"), "user.quota_reset_run", map[string]interface{}{"count": count})
+	recordManageAuditFor(c, c.GetInt("id"), "user.quota_reset_run", map[string]any{"count": count})
 	common.ApiSuccess(c, gin.H{"reset_count": count})
 }

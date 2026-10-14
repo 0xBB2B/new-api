@@ -1200,7 +1200,7 @@ export function ChannelMutateDrawer({
         queryKey: channelsQueryKeys.detail(channelId),
       })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Refresh failed'))
+      handleServerError(error, t('Refresh failed'))
     } finally {
       setIsClaudeCredentialRefreshing(false)
     }
