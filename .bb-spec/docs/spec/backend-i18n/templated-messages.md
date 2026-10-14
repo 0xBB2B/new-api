@@ -1,42 +1,46 @@
 ---
 name: templated-messages
-description: 带动态数据的翻译消息用 {{.Placeholder}} 模板 + map[string]any 注入；禁 fmt.Sprintf 或拼接。
+description: 带动态数据的提示用占位符 + 参数 map 传入，禁 fmt.Sprintf 或拼接；后端 yaml 用 {{.Xxx}}，网页控制台提示用 {{xxx}}。
 ---
 
-# 模板化翻译消息
+# 带参数的提示
 
 ## 目的
 
-让占位符位置随语言语序变化（中英句式差异）；保证同一 key 在所有 locale 里的参数集合一致；避免多语言下的参数漂移。
+让占位符的位置可以随语言的语序变化；保证同一条提示在各语言里的参数一致；避免把参数先拼进句子导致无法翻译。
 
 ## 逻辑
 
-locale YAML 中带动态部分的消息，用 `go-i18n/v2` 模板语法写占位符 `{{.Xxx}}`（例如 `"批量请求数量过多，最多 {{.Max}} 条"` / `"Too many items in batch request, maximum is {{.Max}}"`）。
+项目里有两种要翻译的提示，占位符写法不同。
 
-调用点用 `i18n.T(c, key, map[string]any{"Xxx": value})` 传入同名 key 的参数 map。
+**后端自己翻译的文字**（`i18n/locales/*.yaml`，给 AI 客户端的错误、邮件、通知）：用 go-i18n 模板语法 `{{.Xxx}}`，参数名首字母大写（例如 `"Insufficient user quota, remaining quota: {{.Remaining}}"`）。调用点写 `i18n.T(c, key, map[string]any{"Remaining": value})`，后台任务写 `i18n.Translate(lang, key, map[string]any{...})`。
 
-同一 message key 在 en / zh-CN / zh-TW 三份 locale 里的占位符名称必须完全一致——只有译文变、占位符不变。
+**网页控制台的提示**（英文原文作 key，前端翻译）：占位符写 `{{xxx}}`，参数名用小写加下划线（例如 `{{quota}}`、`{{group_ratio}}`）。调用点写 `common.NewMessage("Daily check-in, received {{quota}}", map[string]any{"quota": logger.FormatQuota(q)})` 或 `common.ApiErrorT(c, key, params)`。
 
-禁在调用方用 `fmt.Sprintf(i18n.T(c, key), value)` 或字符串拼接把动态部分塞进翻译串——这会把参数固定到某个语序上。
+后端用 `Message.Error()` 把参数填进英文原文，给不经过网页的调用方看；响应里同时带 `message_key` 和 `message_params`，前端用 i18next 按当前语言翻译并填参数。参数要传可以直接显示的值，额度先用 `logger.FormatQuota` 格式化。
 
-占位符命名首字母大写（`Error` / `Model` / `Group` / `Provider` / `Max`），与 Go 结构体字段导出约定一致，便于阅读。
+两种写法都禁止先翻译、再用 `fmt.Sprintf` 或字符串拼接塞参数，那样会把参数固定在某一种语序上。
 
 ## 约束
 
-- 带动态数据的消息必须在 locale 用 `{{.Xxx}}`，禁用 `%s` / `%d` 之类 printf 风格。
-- 禁把已翻译串再走 `fmt.Sprintf` 二次填充；动态数据只能通过 args map 传入。
-- 所有 locale 文件里同一 key 的占位符集合必须完全相同（三份对齐）。
-- 占位符 key 大写驼峰、与业务语义一致；禁 `p1` / `p2` 之类无语义命名。
+- 带动态数据的提示必须用占位符，禁用 `%s` / `%d` 这类 printf 写法。
+- 禁把翻译结果再用 `fmt.Sprintf` 填参数；参数只能通过参数 map 传入。
+- 后端 yaml：同一个 key 在 en / zh-CN / zh-TW 三份文件里的 `{{.Xxx}}` 集合必须相同，参数名首字母大写。
+- 网页控制台提示：同一个 key 在前端 7 个语言文件里的译文必须保留全部 `{{xxx}}` 占位符，参数名小写加下划线。
+- 参数名要表达业务含义，禁用 `p1` / `p2` 这类名字。
 
 ## 例子
 
-- 输入：用户 token 无权访问模型 `gpt-4o`。
-- 过程：locale 定义 `distributor.token_model_forbidden: "该令牌无权访问模型 {{.Model}}"` 与英文对应；业务代码 `i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model})`。
-- 预期结果：中文得到「该令牌无权访问模型 gpt-4o」；英文得到 "Token has no access to model gpt-4o"；语序自然。
+- 输入一：令牌无权访问模型 `gpt-4o`，错误返回给 AI 客户端。
+- 过程：yaml 定义 `distributor.token_model_forbidden: "该令牌无权访问模型 {{.Model}}"` 及英文对应；调用点 `i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelName})`。
+- 预期结果：中文客户端收到「该令牌无权访问模型 gpt-4o」，英文客户端收到对应英文。
+- 输入二：Claude 订阅渠道限额重置时，上游返回 HTTP 500。
+- 过程：后端 `common.NewMessage("Upstream returned HTTP {{status}}", map[string]any{"status": 500})`；前端 zh.json 里有 `"Upstream returned HTTP {{status}}": "上游返回 HTTP {{status}}"`。
+- 预期结果：响应 `message` 是 `Upstream returned HTTP 500`，`message_key` 是原文，`message_params` 是 `{"status":500}`；中文界面显示「上游返回 HTTP 500」。
 
 ## 验收
 
-- [ ] locale 文件里 grep `%s` / `%d` 用于翻译串的命中数为 0。
+- [ ] 语言文件里没有用 `%s` / `%d` 作占位符的译文。
 - [ ] 业务代码 grep `fmt.Sprintf\(.*i18n\.T\(` 命中数为 0。
-- [ ] 三份 locale 里同一 key 的 `{{.Xxx}}` 占位符集合完全相同（可写脚本对比 diff）。
-- [ ] 占位符命名均首字母大写领域词，无 `p1` / `p2` 之类无语义名。
+- [ ] `go test ./i18n/ -run TestLocalesRenderEveryKey` 通过（yaml 渲染后不残留 `{{`）。
+- [ ] 前端 7 个语言文件里，带 `{{xxx}}` 的 key 的译文都保留了同样的占位符。
