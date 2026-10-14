@@ -573,7 +573,7 @@
   "failed to refund the funding source, task %s: %s": "退还资金来源失败 task %s: %s",
   "failed to reload authz policy: %s": "重新加载授权策略失败: %s",
   "failed to reset claude limit: %s": "重置 Claude 限额失败: %s",
-  "failed to reset claude rate limits: %s": "重置 Claude 限额失败: %s",
+  "failed to reset claude rate limits: %s": "调用上游重置 Claude 限额失败: %s",
   "failed to reset codex usage": "重置 Codex 用量失败",
   "failed to reset quota for user %d: %s": "重置用户 %d 的额度失败: %s",
   "failed to save backup codes: %s": "保存备用码失败: %s",
