@@ -30,6 +30,7 @@ import type {
   DashboardChartPreferences,
   DashboardFilters,
   ModelAnalyticsChartTab,
+  UserChartsFilters,
 } from '@/features/dashboard/types'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 
@@ -149,6 +150,16 @@ export function buildDefaultDashboardFilters(
     start_timestamp: start,
     end_timestamp: end,
     time_granularity: preferences.defaultTimeGranularity,
+  }
+}
+
+export function buildDefaultUserChartsFilters(): UserChartsFilters {
+  const timeGranularity = getSavedGranularity()
+  return {
+    timeGranularity,
+    selectedRange: getDefaultDays(timeGranularity),
+    topUserLimit: 10,
+    metric: 'tokens',
   }
 }
 

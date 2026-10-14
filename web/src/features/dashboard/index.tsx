@@ -41,9 +41,8 @@ import { OverviewDashboard } from './components/overview/overview-dashboard'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
   buildDefaultDashboardFilters,
-  getDefaultDays,
+  buildDefaultUserChartsFilters,
   getSavedChartPreferences,
-  getSavedGranularity,
   saveChartPreferences,
 } from './lib'
 import {
@@ -217,15 +216,7 @@ export function Dashboard() {
     buildDefaultDashboardFilters(getSavedChartPreferences())
   )
   const [userChartsFilters, setUserChartsFilters] = useState<UserChartsFilters>(
-    () => {
-      const granularity = getSavedGranularity()
-      return {
-        timeGranularity: granularity,
-        selectedRange: getDefaultDays(granularity),
-        topUserLimit: 10,
-        metric: 'tokens',
-      }
-    }
+    buildDefaultUserChartsFilters
   )
   const [flowSensitiveVisible, setFlowSensitiveVisible] = useState(true)
 
