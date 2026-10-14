@@ -206,3 +206,50 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").Where("created_at >= ? and created_at <= ?", startTime, endTime).Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }
+
+type UserUtilization struct {
+	TotalUsers    int64 `json:"total_users"`
+	DeepUsers     int64 `json:"deep_users"`
+	FrequentUsers int64 `json:"frequent_users"`
+	ModerateUsers int64 `json:"moderate_users"`
+	InactiveUsers int64 `json:"inactive_users"`
+}
+
+func GetUserUtilization(now int64) (*UserUtilization, error) {
+	const (
+		day            = int64(24 * 3600)
+		deepThreshold  = int64(100_000_000)
+		activeFloor    = int64(1_000_000)
+		recentDays     = 7
+		observableDays = 30
+	)
+
+	var usages []struct {
+		Recent int64
+		Total  int64
+	}
+	err := DB.Model(&User{}).
+		Select("COALESCE(SUM(CASE WHEN quota_data.created_at >= ? THEN quota_data.token_used ELSE 0 END), 0) AS recent, COALESCE(SUM(quota_data.token_used), 0) AS total", now-recentDays*day).
+		Joins("LEFT JOIN quota_data ON quota_data.user_id = users.id AND quota_data.created_at >= ?", now-observableDays*day).
+		Where("users.role = ? AND users.status = ?", common.RoleCommonUser, common.UserStatusEnabled).
+		Group("users.id").
+		Scan(&usages).Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := &UserUtilization{TotalUsers: int64(len(usages))}
+	for _, usage := range usages {
+		switch {
+		case usage.Recent > deepThreshold:
+			result.DeepUsers++
+			result.FrequentUsers++
+		case usage.Recent > activeFloor:
+			result.FrequentUsers++
+		case usage.Total > activeFloor:
+			result.ModerateUsers++
+		}
+	}
+	result.InactiveUsers = result.TotalUsers - result.FrequentUsers - result.ModerateUsers
+	return result, nil
+}
