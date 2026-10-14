@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -93,7 +92,7 @@ func RunQuotaResetPass(periods []string, trigger QuotaResetTrigger) (int, error)
 			}
 			oldQuota, err := model.ResetUserQuota(user.Id, value)
 			if err != nil {
-				common.SysLog(fmt.Sprintf("failed to reset quota for user %d: %s", user.Id, err.Error()))
+				common.SysLog(common.LogText("failed to reset quota for user %d: %s", user.Id, err.Error()))
 				continue
 			}
 			model.RecordLog(user.Id, model.LogTypeSystem, common.NewMessage(logKey, map[string]any{"old": oldQuota, "new": value}))

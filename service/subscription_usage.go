@@ -1,8 +1,6 @@
 package service
 
 import (
-	"fmt"
-
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
@@ -29,6 +27,6 @@ func clampUsagePercent(v float64) float64 {
 
 func saveSubscriptionUsageSnapshot(channelID int, snapshot *SubscriptionUsageSnapshot) {
 	if err := model.SetChannelOtherInfoEntry(channelID, subscriptionUsageOtherInfoKey, snapshot); err != nil {
-		common.SysError(fmt.Sprintf("subscription usage: save snapshot failed: channel_id=%d err=%v", channelID, err))
+		common.SysError(common.LogText("subscription usage: save snapshot failed: channel_id=%d err=%v", channelID, err))
 	}
 }

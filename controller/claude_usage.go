@@ -42,14 +42,14 @@ func GetClaudeChannelUsage(c *gin.Context) {
 
 	cred, err := service.ClaudeChannelCredential(ch)
 	if err != nil {
-		common.SysError("failed to parse claude credential: " + err.Error())
+		common.SysError(common.LogText("failed to parse claude credential: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
 		return
 	}
 
 	statusCode, body, snapshot, hasVersion, err := service.SyncClaudeChannelUsage(c.Request.Context(), ch, cred)
 	if err != nil {
-		common.SysError("failed to fetch claude usage: " + err.Error())
+		common.SysError(common.LogText("failed to fetch claude usage: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to fetch usage. Please try again later")
 		return
 	}
@@ -91,7 +91,7 @@ func ResetClaudeChannelLimit(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		common.SysError("failed to get channel: " + err.Error())
+		common.SysError(common.LogText("failed to get channel: %s", err.Error()))
 		common.ApiErrorT(c, "Reset failed, please try again later")
 		return
 	}
@@ -106,7 +106,7 @@ func ResetClaudeChannelLimit(c *gin.Context) {
 
 	cred, err := service.ClaudeChannelCredential(ch)
 	if err != nil {
-		common.SysError("failed to parse claude credential: " + err.Error())
+		common.SysError(common.LogText("failed to parse claude credential: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
 		return
 	}
@@ -119,7 +119,7 @@ func ResetClaudeChannelLimit(c *gin.Context) {
 
 	res, err := service.ResetClaudeChannelLimit(c.Request.Context(), ch, cred, req)
 	if err != nil {
-		common.SysError("failed to reset claude limit: " + err.Error())
+		common.SysError(common.LogText("failed to reset claude limit: %s", err.Error()))
 		common.ApiErrorT(c, "Reset failed, please try again later")
 		return
 	}

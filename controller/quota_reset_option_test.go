@@ -18,8 +18,9 @@ import (
 )
 
 type quotaResetOptionAPIResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	MessageKey string `json:"message_key"`
 }
 
 func openQuotaResetOptionTestDB(t *testing.T) *gorm.DB {
@@ -120,6 +121,7 @@ func TestUpdateOption_QuotaResetSettingPeriod(t *testing.T) {
 			if tt.wantSuccess {
 				assert.Equal(t, tt.period, readOptionMapValue(t, "quota_reset_setting.period"))
 			} else {
+				assert.Equal(t, "Invalid reset period. Valid values: daily, weekly, monthly", response.MessageKey)
 				assert.Equal(t, "monthly", readOptionMapValue(t, "quota_reset_setting.period"))
 			}
 		})
@@ -137,6 +139,7 @@ func TestUpdateOption_QuotaResetSettingResetValue(t *testing.T) {
 		{"negative one rejected", "-1", false},
 		{"large negative rejected", "-100", false},
 		{"non-integer rejected", "1.5", false},
+		{"text rejected", "abc", false},
 	}
 
 	for _, tt := range tests {
@@ -153,6 +156,7 @@ func TestUpdateOption_QuotaResetSettingResetValue(t *testing.T) {
 			if tt.wantSuccess {
 				assert.Equal(t, tt.resetValue, readOptionMapValue(t, "quota_reset_setting.reset_value"))
 			} else {
+				assert.Equal(t, "Reset value must be an integer of 0 or more", response.MessageKey)
 				assert.Equal(t, "500", readOptionMapValue(t, "quota_reset_setting.reset_value"))
 			}
 		})

@@ -46,7 +46,7 @@ func StartSubscriptionUsagePollTask() {
 			return
 		}
 		gopool.Go(func() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("subscription usage poll task started: interval=%s", subscriptionUsagePollInterval))
+			logger.LogInfo(context.Background(), common.LogText("subscription usage poll task started: interval=%s", subscriptionUsagePollInterval))
 			ticker := time.NewTicker(subscriptionUsagePollInterval)
 			defer ticker.Stop()
 
@@ -74,7 +74,7 @@ func runSubscriptionUsagePollOnce() {
 		Order("id asc").
 		Find(&channels).Error
 	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("subscription usage poll: query channels failed: %v", err))
+		logger.LogError(ctx, common.LogText("subscription usage poll: query channels failed: %v", err))
 		return
 	}
 
@@ -90,11 +90,11 @@ func runSubscriptionUsagePollOnce() {
 		subscriptionUsageLastAttempt[ch.Id] = time.Now()
 		statusCode, err := syncSubscriptionChannelUsage(ctx, ch)
 		if err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("subscription usage poll: channel_id=%d name=%s fetch failed: %v", ch.Id, ch.Name, err))
+			logger.LogWarn(ctx, common.LogText("subscription usage poll: channel_id=%d name=%s fetch failed: %v", ch.Id, ch.Name, err))
 			continue
 		}
 		if statusCode < 200 || statusCode >= 300 {
-			logger.LogWarn(ctx, fmt.Sprintf("subscription usage poll: channel_id=%d name=%s upstream status %d", ch.Id, ch.Name, statusCode))
+			logger.LogWarn(ctx, common.LogText("subscription usage poll: channel_id=%d name=%s upstream status %d", ch.Id, ch.Name, statusCode))
 			continue
 		}
 		synced++

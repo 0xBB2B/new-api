@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -44,7 +43,7 @@ func MigrateClaudeSubscriptionChannelType() error {
 				return result.Error
 			}
 			if result.RowsAffected > 0 {
-				common.SysLog(fmt.Sprintf("renumbered %d Claude subscription channels from type %d to %d",
+				common.SysLog(common.LogText("renumbered %d Claude subscription channels from type %d to %d",
 					result.RowsAffected, stage.supersededType, constant.ChannelTypeClaudeSubscription))
 			}
 			return tx.Create(&Option{Key: stage.markerOptionKey, Value: "1"}).Error

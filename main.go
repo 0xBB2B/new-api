@@ -340,7 +340,7 @@ func InitResources() error {
 			common.SysError(common.LogText("failed to migrate retired frontend options: %s", err.Error()))
 		}
 		if err := model.MigrateClaudeSubscriptionChannelType(); err != nil {
-			common.SysError("failed to migrate Claude subscription channel type: " + err.Error())
+			common.SysError(common.LogText("failed to migrate Claude subscription channel type: %s", err.Error()))
 		}
 	}
 	model.InitOptionMap()

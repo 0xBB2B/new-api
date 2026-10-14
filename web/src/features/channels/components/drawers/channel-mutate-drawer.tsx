@@ -1193,7 +1193,7 @@ export function ChannelMutateDrawer({
     try {
       const res = await refreshClaudeCredential(channelId)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to refresh credential'))
+        throw createServerError(res, t('Failed to refresh credential'))
       }
       toast.success(t('Credential refreshed'))
       queryClient.invalidateQueries({

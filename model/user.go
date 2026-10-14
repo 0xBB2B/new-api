@@ -1470,7 +1470,7 @@ func ResetUserQuota(id int, value int) (oldQuota int, err error) {
 		return 0, err
 	}
 	if err := invalidateUserCache(id); err != nil {
-		common.SysLog("failed to invalidate user cache: " + err.Error())
+		common.SysLog(common.LogText("failed to invalidate user cache: %s", err.Error()))
 	}
 	return oldQuota, nil
 }

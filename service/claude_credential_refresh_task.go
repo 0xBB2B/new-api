@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,7 +34,7 @@ func StartClaudeCredentialAutoRefreshTask() {
 		}
 
 		gopool.Go(func() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("claude subscription credential auto-refresh task started: tick=%s threshold=%s", claudeCredentialRefreshTickInterval, claudeCredentialRefreshThreshold))
+			logger.LogInfo(context.Background(), common.LogText("claude subscription credential auto-refresh task started: tick=%s threshold=%s", claudeCredentialRefreshTickInterval, claudeCredentialRefreshThreshold))
 
 			ticker := time.NewTicker(claudeCredentialRefreshTickInterval)
 			defer ticker.Stop()
@@ -75,7 +74,7 @@ func runClaudeCredentialAutoRefreshOnce() {
 			Offset(offset).
 			Find(&channels).Error
 		if err != nil {
-			logger.LogError(ctx, fmt.Sprintf("claude credential auto-refresh: query channels failed: %v", err))
+			logger.LogError(ctx, common.LogText("claude credential auto-refresh: query channels failed: %v", err))
 			return
 		}
 		if len(channels) == 0 {
@@ -115,12 +114,12 @@ func runClaudeCredentialAutoRefreshOnce() {
 			newCred, _, err := RefreshClaudeChannelCredential(refreshCtx, ch.Id, ClaudeCredentialRefreshOptions{ResetCaches: false})
 			cancel()
 			if err != nil {
-				logger.LogWarn(ctx, fmt.Sprintf("claude credential auto-refresh: channel_id=%d name=%s refresh failed: %v", ch.Id, ch.Name, err))
+				logger.LogWarn(ctx, common.LogText("claude credential auto-refresh: channel_id=%d name=%s refresh failed: %v", ch.Id, ch.Name, err))
 				continue
 			}
 
 			refreshed++
-			logger.LogInfo(ctx, fmt.Sprintf("claude credential auto-refresh: channel_id=%d name=%s refreshed, expires_at=%d", ch.Id, ch.Name, newCred.ExpiresAt))
+			logger.LogInfo(ctx, common.LogText("claude credential auto-refresh: channel_id=%d name=%s refreshed, expires_at=%d", ch.Id, ch.Name, newCred.ExpiresAt))
 		}
 	}
 
@@ -128,7 +127,7 @@ func runClaudeCredentialAutoRefreshOnce() {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("claude credential auto-refresh: InitChannelCache panic: %v", r))
+					logger.LogWarn(ctx, common.LogText("claude credential auto-refresh: InitChannelCache panic: %v", r))
 				}
 			}()
 			model.InitChannelCache()
