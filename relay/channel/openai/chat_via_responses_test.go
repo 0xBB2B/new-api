@@ -164,14 +164,57 @@ func TestOaiResponsesToChatBufferedStreamHandlerReturnsJSONFromSSE(t *testing.T)
 	require.Nil(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 3, usage.TotalTokens)
+	require.NotNil(t, info.StreamStatus)
+	assert.True(t, info.StreamStatus.IsNormalEnd())
 
 	got := recorder.Body.String()
+	assert.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+	assert.NotContains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
 	require.NotContains(t, got, `data:`)
 	require.Contains(t, got, `"object":"chat.completion"`)
 	require.Contains(t, got, `"content":"buffered text"`)
 	require.Contains(t, got, `"name":"lookup"`)
 	require.Contains(t, got, `"arguments":"{\"q\":\"x\"}"`)
 	require.Contains(t, got, `"finish_reason":"tool_calls"`)
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerUpstreamFailure(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	tests := []struct {
+		name    string
+		event   string
+		wantMsg string
+	}{
+		{
+			"top-level error event",
+			`{"type":"error","code":"rate_limit_exceeded","message":"slow down","param":null}`,
+			"slow down",
+		},
+		{
+			"response.failed without error type",
+			`{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"server_is_overloaded","message":"upstream boom"}}}`,
+			"upstream boom",
+		},
+		{
+			"response.failed with error type",
+			`{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"type":"server_error","message":"typed boom"}}}`,
+			"typed boom",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, recorder, resp, info := newResponsesChatTestContext(t, "data: "+tt.event+"\n\n", false)
+
+			usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+			require.NotNil(t, apiErr)
+			assert.Nil(t, usage)
+			assert.Contains(t, apiErr.Error(), tt.wantMsg)
+			assert.Empty(t, recorder.Body.String())
+		})
+	}
 }
 
 func TestOaiResponsesToChatBufferedStreamHandlerPreservesInterleavedClaudeContent(t *testing.T) {

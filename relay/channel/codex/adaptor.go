@@ -99,6 +99,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if isCompact {
 		return request, nil
 	}
+	// Codex upstream only answers with SSE; non-stream clients are served by buffering it.
+	stream := true
+	request.Stream = &stream
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
 	// rm max_output_tokens
@@ -124,7 +127,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		if info.IsStream {
 			return openai.OaiResponsesStreamHandler(c, info, resp)
 		}
-		return openai.OaiResponsesHandler(c, info, resp)
+		return openai.OaiResponsesBufferedStreamHandler(c, info, resp)
 	default:
 		return nil, types.NewError(errors.New("codex channel: endpoint not supported"), types.ErrorCodeInvalidRequest)
 	}
@@ -190,7 +193,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	// Clients may omit it or include parameters like `application/json; charset=utf-8`,
 	// which can be rejected by the upstream. Force the exact media type.
 	req.Set("Content-Type", "application/json")
-	if info.IsStream {
+	if info.IsStream || info.RelayMode == relayconstant.RelayModeResponses {
 		req.Set("Accept", "text/event-stream")
 	} else if req.Get("Accept") == "" {
 		req.Set("Accept", "application/json")
