@@ -105,12 +105,16 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 					finalResponse.Status = []byte(`"incomplete"`)
 				}
 			}
-		case "response.failed", "response.error":
+		case "response.failed", "response.error", "error":
 			if streamResp.Response != nil {
-				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil {
 					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
 					break
 				}
+			}
+			if streamResp.Type == "error" && streamResp.Message != "" {
+				streamErr = types.WithOpenAIError(types.OpenAIError{Message: streamResp.Message, Code: streamResp.Code, Param: streamResp.Param}, http.StatusInternalServerError)
+				break
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
@@ -143,6 +147,8 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	resp.Header.Set("Content-Type", "application/json")
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
 }
