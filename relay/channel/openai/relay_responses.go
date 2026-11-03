@@ -17,9 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -163,17 +162,17 @@ func OaiResponsesBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 
 		switch event.Type {
 		case dto.ResponsesOutputTypeItemDone:
-			item := gjson.Get(data, "item")
+			item := ojson.Get(data, "item")
 			if !item.Exists() {
 				continue
 			}
 			index := len(items)
-			if v := gjson.Get(data, "output_index"); v.Exists() {
+			if v := ojson.Get(data, "output_index"); v.Exists() {
 				index = int(v.Int())
 			}
 			items = append(items, bufferedOutputItem{index: index, raw: item.Raw})
 		case "response.completed", "response.done", "response.incomplete":
-			finalResponse = gjson.Get(data, "response").Raw
+			finalResponse = ojson.Get(data, "response").Raw
 		case "response.failed", "response.error", "error":
 			if event.Response != nil {
 				if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil {
@@ -202,13 +201,13 @@ func OaiResponsesBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	body := []byte(finalResponse)
-	if output := gjson.GetBytes(body, "output"); len(items) > 0 && (!output.Exists() || len(output.Array()) == 0) {
+	if output := ojson.GetBytes(body, "output"); len(items) > 0 && (!output.Exists() || len(output.Array()) == 0) {
 		slices.SortStableFunc(items, func(a, b bufferedOutputItem) int { return a.index - b.index })
 		raws := make([]string, len(items))
 		for i, item := range items {
 			raws[i] = item.raw
 		}
-		patched, err := sjson.SetRawBytes(body, "output", []byte("["+strings.Join(raws, ",")+"]"))
+		patched, err := ojson.SetRawBytes(body, "output", []byte("["+strings.Join(raws, ",")+"]"))
 		if err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
@@ -231,10 +230,10 @@ func rewriteSGLangResponsesCreatedAt(info *relaycommon.RelayInfo, payload []byte
 	if info.GetChannelType() != constant.ChannelTypeSGLang {
 		return payload
 	}
-	if !gjson.GetBytes(payload, path).Exists() {
+	if !ojson.GetBytes(payload, path).Exists() {
 		return payload
 	}
-	patched, err := sjson.SetBytes(payload, path, int(createdAt))
+	patched, err := ojson.SetBytes(payload, path, int(createdAt))
 	if err != nil {
 		return payload
 	}
