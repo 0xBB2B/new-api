@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -466,20 +467,20 @@ func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {
 	}
 }
 
-func TestReleaseChannelAffinityAfterStreamFailure(t *testing.T) {
+func TestReleaseChannelAffinityAfterRelayFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	failed := func(code, errorType string) *relaycommon.StreamStatus {
+	failed := func(code, errorType string) *relaycommon.RelayInfo {
 		stream := relaycommon.NewStreamStatus()
 		stream.MarkFailed(code, errorType, 0)
-		return stream
+		return &relaycommon.RelayInfo{StreamStatus: stream}
 	}
 	completed := relaycommon.NewStreamStatus()
 	completed.MarkCompleted()
-	incomplete := relaycommon.NewStreamStatus()
-	incomplete.MarkIncomplete("max_output_tokens")
-	cancelled := relaycommon.NewStreamStatus()
-	cancelled.MarkCancelled()
+	completed.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	upstream := func(status int) *types.NewAPIError {
+		return types.NewOpenAIError(errors.New("upstream error"), types.ErrorCodeBadResponseStatusCode, status)
+	}
 
 	modes := []struct {
 		name string
@@ -487,25 +488,20 @@ func TestReleaseChannelAffinityAfterStreamFailure(t *testing.T) {
 	}{
 		{name: "prefer", rule: operation_setting.ChannelAffinityRule{SessionMode: "prefer"}},
 		{name: "strict", rule: operation_setting.ChannelAffinityRule{SessionMode: "strict"}},
-		{name: "skip_retry_on_failure", rule: operation_setting.ChannelAffinityRule{SkipRetryOnFailure: true}},
 	}
-	streams := []struct {
-		name     string
-		stream   *relaycommon.StreamStatus
-		released bool
+	cases := []struct {
+		name          string
+		info          *relaycommon.RelayInfo
+		apiErr        *types.NewAPIError
+		cancelRequest bool
+		released      bool
 	}{
-		{name: "model_at_capacity", stream: failed("model_at_capacity", "server_error"), released: true},
-		{name: "server_is_overloaded", stream: failed("server_is_overloaded", ""), released: true},
-		{name: "bare_failure", stream: failed("", ""), released: true},
-		{name: "invalid_request_error", stream: failed("some_code", "invalid_request_error")},
-		{name: "invalid_request_error_without_code", stream: failed("", "invalid_request_error")},
-		{name: "context_length_exceeded", stream: failed("context_length_exceeded", "")},
-		{name: "invalid_prompt", stream: failed("invalid_prompt", "")},
-		{name: "nil_stream", stream: nil},
-		{name: "completed", stream: completed},
-		{name: "incomplete", stream: incomplete},
-		{name: "cancelled", stream: cancelled},
-		{name: "unmarked", stream: relaycommon.NewStreamStatus()},
+		{name: "stream_upstream_failure", info: failed("model_at_capacity", "server_error"), released: true},
+		{name: "upstream_http_503", info: &relaycommon.RelayInfo{}, apiErr: upstream(http.StatusServiceUnavailable), released: true},
+		{name: "request_error_context_length_exceeded", info: failed("context_length_exceeded", "")},
+		{name: "client_canceled_stream_failure", info: failed("model_at_capacity", "server_error"), cancelRequest: true},
+		{name: "success_completed", info: &relaycommon.RelayInfo{StreamStatus: completed}},
+		{name: "nil_info", info: nil},
 	}
 
 	setting := operation_setting.GetChannelAffinitySetting()
@@ -514,7 +510,7 @@ func TestReleaseChannelAffinityAfterStreamFailure(t *testing.T) {
 	cache := getChannelAffinityCache()
 
 	for _, mode := range modes {
-		for _, tc := range streams {
+		for _, tc := range cases {
 			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
 				rule := mode.rule
 				rule.Name = "release-" + mode.name
@@ -541,7 +537,13 @@ func TestReleaseChannelAffinityAfterStreamFailure(t *testing.T) {
 				require.True(t, found)
 				require.Equal(t, 7, channelID)
 
-				released := ReleaseChannelAffinityAfterStreamFailure(ctx, tc.stream)
+				if tc.cancelRequest {
+					canceled, cancel := context.WithCancel(ctx.Request.Context())
+					cancel()
+					ctx.Request = ctx.Request.WithContext(canceled)
+				}
+
+				released := ReleaseChannelAffinityAfterRelayFailure(ctx, tc.info, tc.apiErr)
 				assert.Equal(t, tc.released, released)
 
 				_, found = GetPreferredChannelByAffinity(newRequestContext(), "gpt-5", "default")

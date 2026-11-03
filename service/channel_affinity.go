@@ -4,7 +4,6 @@ import (
 	"hash/fnv"
 	"maps"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -729,18 +729,24 @@ func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
 	other.SetAdmin("channel_affinity", anyInfo)
 }
 
-func ReleaseChannelAffinityAfterStreamFailure(c *gin.Context, stream *relaycommon.StreamStatus) bool {
-	if stream == nil || !stream.ResponseFailed() {
-		return false
-	}
-	outcome := stream.OutcomeSnapshot()
-	if outcome.ErrorType == "invalid_request_error" ||
-		slices.Contains([]string{"context_length_exceeded", "invalid_prompt"}, outcome.ErrorCode) {
+func ReleaseChannelAffinityAfterRelayFailure(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
+	if perfmetrics.ClassifyRelayOutcome(c.Request.Context(), info, apiErr) != perfmetrics.OutcomeFailure {
 		return false
 	}
 	ClearCurrentChannelAffinityCache(c)
 	c.Set(ginKeyChannelAffinityReleased, true)
 	return true
+}
+
+func ChannelAffinityCacheKey(c *gin.Context) string {
+	key, _, _ := getChannelAffinityContext(c)
+	return key
+}
+
+func RestoreChannelAffinityCacheKey(c *gin.Context, key string) {
+	if key != "" {
+		c.Set(ginKeyChannelAffinityCacheKey, key)
+	}
 }
 
 func RecordChannelAffinity(c *gin.Context, channelID int) {

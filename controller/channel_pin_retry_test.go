@@ -9,19 +9,24 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -329,6 +334,121 @@ func TestRequestPolicyRoutingDatabaseMatrix(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+func TestRelayChannelAffinityAfterFinalError(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	const overload = `{"error":{"type":"server_error","code":"server_error","message":"test overload"}}`
+	for _, tc := range []struct {
+		name       string
+		stream     bool
+		upstream   func(http.ResponseWriter, *http.Request)
+		unpriced   bool
+		wantStatus int
+		wantBound  bool
+	}{
+		{
+			name: "upstream 503 releases the binding",
+			upstream: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, overload)
+			},
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:   "stream response.failed after 200 releases the binding",
+			stream: true,
+			upstream: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: "+`{"type":"response.created","response":{"id":"resp_1","status":"in_progress","model":"ws-billing"}}`+"\n\n")
+				_, _ = io.WriteString(w, "data: "+`{"type":"response.failed","response":{"id":"resp_1","status":"failed","model":"ws-billing","error":{"code":"model_at_capacity","type":"server_error","message":"test overload"}}}`+"\n\n")
+				_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:     "local pricing error before upstream keeps the binding",
+			unpriced: true,
+			upstream: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"resp_1","object":"response","status":"completed","model":"ws-billing","output":[]}`)
+			},
+			wantStatus: http.StatusBadRequest, wantBound: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
+			useInMemoryChannelAffinity(t)
+			if tc.unpriced {
+				require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"billing_setting.billing_mode": `{}`}))
+			}
+			var upstreamRequests atomic.Int32
+			fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
+				upstreamRequests.Add(1)
+				tc.upstream(w, r)
+			}
+			oldRetries := common.RetryTimes
+			common.RetryTimes = 1
+			affinity := operation_setting.GetChannelAffinitySetting()
+			previousAffinity := *affinity
+			t.Cleanup(func() {
+				common.RetryTimes = oldRetries
+				*affinity = previousAffinity
+			})
+			*affinity = operation_setting.ChannelAffinitySetting{
+				Enabled: true, DefaultTTLSeconds: 60, MaxEntries: 100,
+				Rules: []operation_setting.ChannelAffinityRule{{
+					Name: t.Name(), ModelRegex: []string{"^ws-billing$"}, SessionMode: "strict",
+					KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Session"}},
+				}},
+			}
+
+			newSessionContext := func() *gin.Context {
+				ctx := newPinRetryContext()
+				ctx.Request.Header.Set("X-Session", t.Name())
+				common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+				return ctx
+			}
+			seed := newSessionContext()
+			_, found := service.GetPreferredChannelByAffinity(seed, "ws-billing", "default")
+			require.False(t, found)
+			service.RecordChannelAffinity(seed, fixture.channel.Id)
+			t.Cleanup(func() { service.ClearCurrentChannelAffinityCache(seed) })
+			bound, found := service.GetPreferredChannelByAffinity(newSessionContext(), "ws-billing", "default")
+			require.True(t, found)
+			require.Equal(t, fixture.channel.Id, bound)
+
+			body := `{"model":"ws-billing","input":"hello"}`
+			if tc.stream {
+				body = `{"model":"ws-billing","input":"hello","stream":true}`
+			}
+			request, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(body))
+			require.NoError(t, err)
+			request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Session", t.Name())
+			response, err := http.DefaultClient.Do(request)
+			require.NoError(t, err)
+			_, err = io.Copy(io.Discard, response.Body)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, tc.wantStatus, response.StatusCode)
+			select {
+			case <-fixture.httpDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("HTTP request did not finish")
+			}
+
+			if tc.unpriced {
+				assert.Zero(t, upstreamRequests.Load(), "a local error must not reach the upstream")
+			} else {
+				assert.NotZero(t, upstreamRequests.Load())
+			}
+			_, found = service.GetPreferredChannelByAffinity(newSessionContext(), "ws-billing", "default")
+			assert.Equal(t, tc.wantBound, found)
 		})
 	}
 }

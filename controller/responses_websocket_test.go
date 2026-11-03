@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -325,6 +326,17 @@ func waitPerfCounters(t *testing.T, wantRequests int64) (requests, successes int
 		return requests >= wantRequests
 	}, 3*time.Second, 10*time.Millisecond)
 	return requests, successes
+}
+
+// useInMemoryChannelAffinity 让亲和缓存改用内存。亲和缓存首次使用时绑定当前 Redis 客户端，
+// 夹具的 miniredis 在用例结束后关闭会拖垮后续用例；同时关闭健康统计，
+// 否则其后台 goroutine 读 common.RedisEnabled，与这里的写入和还原产生数据竞争。
+func useInMemoryChannelAffinity(t *testing.T) {
+	t.Helper()
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": "false"}))
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
 }
 
 func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*websocket.Conn, *http.Request), httpEvents ...string) *responsesWSBillingTest {
@@ -1427,4 +1439,55 @@ func TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification(t *tes
 			assert.Zero(t, successes)
 		})
 	}
+}
+
+func TestResponsesWebSocketReleasesChannelAffinityWhenLaterTurnFails(t *testing.T) {
+	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+		replies := []string{
+			`{"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"ws-billing","output":[],"usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`,
+			`{"type":"response.failed","response":{"id":"resp_2","status":"failed","model":"ws-billing","error":{"code":"model_at_capacity","type":"server_error","message":"test overload"}}}`,
+		}
+		for _, reply := range replies {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				return
+			}
+			if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(reply))) {
+				return
+			}
+		}
+		_, _, _ = ws.ReadMessage()
+	})
+	useInMemoryChannelAffinity(t)
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAffinity := *affinity
+	t.Cleanup(func() { *affinity = previousAffinity })
+	*affinity = operation_setting.ChannelAffinitySetting{
+		Enabled: true, DefaultTTLSeconds: 60, MaxEntries: 100,
+		Rules: []operation_setting.ChannelAffinityRule{{
+			Name: t.Name(), ModelRegex: []string{"^ws-billing$"}, SessionMode: "prefer",
+			KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "gjson", Path: "prompt_cache_key"}},
+		}},
+	}
+	sessionKey := t.Name()
+	newSessionContext := func() *gin.Context {
+		ctx := newPinRetryContext()
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"ws-billing","prompt_cache_key":"`+sessionKey+`"}`))
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+		return ctx
+	}
+	t.Cleanup(func() { service.ClearCurrentChannelAffinityCache(newSessionContext()) })
+
+	create := `{"type":"response.create","model":"ws-billing","input":"hi","prompt_cache_key":"` + sessionKey + `"}`
+	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(create)))
+	assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
+	bound, found := service.GetPreferredChannelByAffinity(newSessionContext(), "ws-billing", "default")
+	require.True(t, found, "the first turn binds the session")
+	require.Equal(t, fixture.channel.Id, bound)
+
+	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(create)))
+	assert.Equal(t, "response.failed", readResponsesWSTestEvent(t, fixture.client)["type"])
+	assert.Eventually(t, func() bool {
+		_, found := service.GetPreferredChannelByAffinity(newSessionContext(), "ws-billing", "default")
+		return !found
+	}, 2*time.Second, 20*time.Millisecond, "a failed later turn releases the session binding")
 }
