@@ -113,14 +113,15 @@ type responsesWSSession struct {
 
 	// These fields belong to the serial request worker and describe the actual
 	// established connection. Per-request token/user data is never stored here.
-	lastResponseID  string
-	lockedModel     string
-	lockedChannelID int
-	lockedGroup     string
-	lockedKey       string
-	lockedKeyIndex  int
-	lockedContext   map[appconstant.ContextKey]any
-	lockedRoute     dto.AdvancedCustomRoute
+	lastResponseID    string
+	lockedModel       string
+	lockedChannelID   int
+	lockedGroup       string
+	lockedAffinityKey string
+	lockedKey         string
+	lockedKeyIndex    int
+	lockedContext     map[appconstant.ContextKey]any
+	lockedRoute       dto.AdvancedCustomRoute
 }
 
 func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner ResponsesWSRequestRunner) *types.NewAPIError {
@@ -244,6 +245,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	started := time.Now()
 	var info *relaycommon.RelayInfo
 	billingPrepared := false
+	upstreamAttempted := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			apiErr = types.NewError(fmt.Errorf("responses websocket call panic: %v", recovered), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -253,6 +255,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			info = &relaycommon.RelayInfo{OriginModelName: modelName, UsingGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), StartTime: started}
 		}
 		perfmetrics.RecordRelayResult(c.Request.Context(), info, apiErr)
+		// 锁定渠道后的轮次不经过渠道选择，上下文里没有亲和键
+		if upstreamAttempted {
+			service.RestoreChannelAffinityCacheKey(c, s.lockedAffinityKey)
+			service.ReleaseChannelAffinityAfterRelayFailure(c, info, apiErr)
+		}
 		// Settlement already marks the request policy successful, and nothing
 		// reads a termination decision after this point on the WebSocket path,
 		// so neither policy record belongs here.
@@ -289,6 +296,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr != nil {
 			return apiErr
 		}
+		upstreamAttempted = true
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 			state.closeCode = websocket.CloseInternalServerErr
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -325,6 +333,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			}
 			adaptor := GetAdaptor(info.ApiType)
 			adaptor.Init(info)
+			upstreamAttempted = true
 			target, dialErr := relaychannel.DoWssRequest(adaptor, c, info, nil)
 			if dialErr != nil {
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
@@ -346,6 +355,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
 			s.lockedModel, s.lockedChannelID, s.lockedGroup = modelName, channel.Id, info.UsingGroup
+			s.lockedAffinityKey = service.ChannelAffinityCacheKey(c)
 			s.lockedKey, s.lockedKeyIndex = info.ApiKey, info.ChannelMultiKeyIndex
 			s.lockedRoute, _ = channel.GetOtherSettings().AdvancedCustom.MatchPathForModel(c.Request.URL.Path, modelName)
 			s.lockedContext = make(map[appconstant.ContextKey]any)

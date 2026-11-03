@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -27,6 +29,7 @@ const (
 	ginKeyChannelAffinityLogInfo     = "channel_affinity_log_info"
 	ginKeyChannelAffinitySkipRetry   = "channel_affinity_skip_retry_on_failure"
 	ginKeyChannelAffinityRetryOffset = "channel_affinity_retry_offset"
+	ginKeyChannelAffinityReleased    = "channel_affinity_released"
 
 	channelAffinityCacheNamespace           = "new-api:channel_affinity:v1"
 	channelAffinityUsageCacheStatsNamespace = "new-api:channel_affinity_usage_cache_stats:v1"
@@ -726,8 +729,31 @@ func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
 	other.SetAdmin("channel_affinity", anyInfo)
 }
 
+func ReleaseChannelAffinityAfterRelayFailure(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
+	if perfmetrics.ClassifyRelayOutcome(c.Request.Context(), info, apiErr) != perfmetrics.OutcomeFailure {
+		return false
+	}
+	ClearCurrentChannelAffinityCache(c)
+	c.Set(ginKeyChannelAffinityReleased, true)
+	return true
+}
+
+func ChannelAffinityCacheKey(c *gin.Context) string {
+	key, _, _ := getChannelAffinityContext(c)
+	return key
+}
+
+func RestoreChannelAffinityCacheKey(c *gin.Context, key string) {
+	if key != "" {
+		c.Set(ginKeyChannelAffinityCacheKey, key)
+	}
+}
+
 func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if channelID <= 0 {
+		return
+	}
+	if c != nil && c.GetBool(ginKeyChannelAffinityReleased) {
 		return
 	}
 	setting := operation_setting.GetChannelAffinitySetting()

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -461,6 +462,102 @@ func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {
 					require.NoError(t, err)
 					assert.False(t, found, "off does not establish session bindings")
 				}
+			})
+		}
+	}
+}
+
+func TestReleaseChannelAffinityAfterRelayFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	failed := func(code, errorType string) *relaycommon.RelayInfo {
+		stream := relaycommon.NewStreamStatus()
+		stream.MarkFailed(code, errorType, 0)
+		return &relaycommon.RelayInfo{StreamStatus: stream}
+	}
+	completed := relaycommon.NewStreamStatus()
+	completed.MarkCompleted()
+	completed.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	upstream := func(status int) *types.NewAPIError {
+		return types.NewOpenAIError(errors.New("upstream error"), types.ErrorCodeBadResponseStatusCode, status)
+	}
+
+	modes := []struct {
+		name string
+		rule operation_setting.ChannelAffinityRule
+	}{
+		{name: "prefer", rule: operation_setting.ChannelAffinityRule{SessionMode: "prefer"}},
+		{name: "strict", rule: operation_setting.ChannelAffinityRule{SessionMode: "strict"}},
+	}
+	cases := []struct {
+		name          string
+		info          *relaycommon.RelayInfo
+		apiErr        *types.NewAPIError
+		cancelRequest bool
+		released      bool
+	}{
+		{name: "stream_upstream_failure", info: failed("model_at_capacity", "server_error"), released: true},
+		{name: "upstream_http_503", info: &relaycommon.RelayInfo{}, apiErr: upstream(http.StatusServiceUnavailable), released: true},
+		{name: "request_error_context_length_exceeded", info: failed("context_length_exceeded", "")},
+		{name: "client_canceled_stream_failure", info: failed("model_at_capacity", "server_error"), cancelRequest: true},
+		{name: "success_completed", info: &relaycommon.RelayInfo{StreamStatus: completed}},
+		{name: "nil_info", info: nil},
+	}
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	previous := *setting
+	t.Cleanup(func() { *setting = previous })
+	cache := getChannelAffinityCache()
+
+	for _, mode := range modes {
+		for _, tc := range cases {
+			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
+				rule := mode.rule
+				rule.Name = "release-" + mode.name
+				rule.ModelRegex = []string{"^gpt-5$"}
+				rule.KeySources = []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Affinity-Key"}}
+				rule.IncludeRuleName = true
+				setting.Enabled = true
+				setting.Rules = []operation_setting.ChannelAffinityRule{rule}
+
+				affinityValue := fmt.Sprintf("release-%s-%d", t.Name(), time.Now().UnixNano())
+				cacheKey := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
+				require.NoError(t, cache.SetWithTTL(cacheKey, 7, time.Minute))
+				t.Cleanup(func() { _, _ = cache.DeleteMany([]string{cacheKey}) })
+
+				newRequestContext := func() *gin.Context {
+					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+					ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+					ctx.Request.Header.Set("X-Affinity-Key", affinityValue)
+					return ctx
+				}
+
+				ctx := newRequestContext()
+				channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
+				require.True(t, found)
+				require.Equal(t, 7, channelID)
+
+				if tc.cancelRequest {
+					canceled, cancel := context.WithCancel(ctx.Request.Context())
+					cancel()
+					ctx.Request = ctx.Request.WithContext(canceled)
+				}
+
+				released := ReleaseChannelAffinityAfterRelayFailure(ctx, tc.info, tc.apiErr)
+				assert.Equal(t, tc.released, released)
+
+				_, found = GetPreferredChannelByAffinity(newRequestContext(), "gpt-5", "default")
+				assert.Equal(t, !tc.released, found, "release deletes the cached binding")
+
+				ctx.Set("channel_id", 9)
+				RecordChannelAffinity(ctx, 9)
+				channelID, found = GetPreferredChannelByAffinity(newRequestContext(), "gpt-5", "default")
+				if tc.released {
+					assert.False(t, found, "released request must not write the binding back")
+					return
+				}
+				assert.True(t, found)
+				assert.Equal(t, 9, channelID)
 			})
 		}
 	}

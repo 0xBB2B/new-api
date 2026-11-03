@@ -137,6 +137,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	upstreamAttempted := false
 	defer func() {
 		recovered := recover()
 		resultErr := newAPIError
@@ -145,6 +146,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if relayFormat != types.RelayFormatOpenAIRealtime {
 			perfmetrics.RecordRelayResult(c.Request.Context(), relayInfo, resultErr)
+			if upstreamAttempted {
+				service.ReleaseChannelAffinityAfterRelayFailure(c, relayInfo, resultErr)
+			}
 		}
 		if recovered != nil {
 			panic(recovered)
@@ -203,6 +207,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		upstreamAttempted = true
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
