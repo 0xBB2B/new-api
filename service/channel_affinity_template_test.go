@@ -465,3 +465,98 @@ func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseChannelAffinityAfterStreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	failed := func(code, errorType string) *relaycommon.StreamStatus {
+		stream := relaycommon.NewStreamStatus()
+		stream.MarkFailed(code, errorType, 0)
+		return stream
+	}
+	completed := relaycommon.NewStreamStatus()
+	completed.MarkCompleted()
+	incomplete := relaycommon.NewStreamStatus()
+	incomplete.MarkIncomplete("max_output_tokens")
+	cancelled := relaycommon.NewStreamStatus()
+	cancelled.MarkCancelled()
+
+	modes := []struct {
+		name string
+		rule operation_setting.ChannelAffinityRule
+	}{
+		{name: "prefer", rule: operation_setting.ChannelAffinityRule{SessionMode: "prefer"}},
+		{name: "strict", rule: operation_setting.ChannelAffinityRule{SessionMode: "strict"}},
+		{name: "skip_retry_on_failure", rule: operation_setting.ChannelAffinityRule{SkipRetryOnFailure: true}},
+	}
+	streams := []struct {
+		name     string
+		stream   *relaycommon.StreamStatus
+		released bool
+	}{
+		{name: "model_at_capacity", stream: failed("model_at_capacity", "server_error"), released: true},
+		{name: "server_is_overloaded", stream: failed("server_is_overloaded", ""), released: true},
+		{name: "bare_failure", stream: failed("", ""), released: true},
+		{name: "invalid_request_error", stream: failed("some_code", "invalid_request_error")},
+		{name: "invalid_request_error_without_code", stream: failed("", "invalid_request_error")},
+		{name: "context_length_exceeded", stream: failed("context_length_exceeded", "")},
+		{name: "invalid_prompt", stream: failed("invalid_prompt", "")},
+		{name: "nil_stream", stream: nil},
+		{name: "completed", stream: completed},
+		{name: "incomplete", stream: incomplete},
+		{name: "cancelled", stream: cancelled},
+		{name: "unmarked", stream: relaycommon.NewStreamStatus()},
+	}
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	previous := *setting
+	t.Cleanup(func() { *setting = previous })
+	cache := getChannelAffinityCache()
+
+	for _, mode := range modes {
+		for _, tc := range streams {
+			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
+				rule := mode.rule
+				rule.Name = "release-" + mode.name
+				rule.ModelRegex = []string{"^gpt-5$"}
+				rule.KeySources = []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Affinity-Key"}}
+				rule.IncludeRuleName = true
+				setting.Enabled = true
+				setting.Rules = []operation_setting.ChannelAffinityRule{rule}
+
+				affinityValue := fmt.Sprintf("release-%s-%d", t.Name(), time.Now().UnixNano())
+				cacheKey := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
+				require.NoError(t, cache.SetWithTTL(cacheKey, 7, time.Minute))
+				t.Cleanup(func() { _, _ = cache.DeleteMany([]string{cacheKey}) })
+
+				newRequestContext := func() *gin.Context {
+					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+					ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+					ctx.Request.Header.Set("X-Affinity-Key", affinityValue)
+					return ctx
+				}
+
+				ctx := newRequestContext()
+				channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
+				require.True(t, found)
+				require.Equal(t, 7, channelID)
+
+				released := ReleaseChannelAffinityAfterStreamFailure(ctx, tc.stream)
+				assert.Equal(t, tc.released, released)
+
+				_, found = GetPreferredChannelByAffinity(newRequestContext(), "gpt-5", "default")
+				assert.Equal(t, !tc.released, found, "release deletes the cached binding")
+
+				ctx.Set("channel_id", 9)
+				RecordChannelAffinity(ctx, 9)
+				channelID, found = GetPreferredChannelByAffinity(newRequestContext(), "gpt-5", "default")
+				if tc.released {
+					assert.False(t, found, "released request must not write the binding back")
+					return
+				}
+				assert.True(t, found)
+				assert.Equal(t, 9, channelID)
+			})
+		}
+	}
+}
