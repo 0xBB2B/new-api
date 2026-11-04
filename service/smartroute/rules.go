@@ -50,6 +50,7 @@ type TierChoice struct {
 type SessionRecord struct {
 	CurrentRoute   string
 	LastNonAdvisor string
+	LastChannelID  int
 }
 
 type DecideInput struct {
@@ -187,6 +188,9 @@ func DecideRoute(in DecideInput) Decision {
 	var choice TierChoice
 	if in.ScorerFailure != "" || in.Labels == nil {
 		choice = TierChoice{Tier: in.Cfg.DefaultTier, Reason: in.ScorerFailure}
+		if in.ScorerFailure == FailureScorerTimeout {
+			choice.Params = map[string]any{"timeout_ms": in.Cfg.Scorer.TimeoutMs}
+		}
 	} else {
 		choice = SelectTier(in.Cfg, *in.Labels, in.LatestChars)
 	}

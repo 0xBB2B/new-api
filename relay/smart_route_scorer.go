@@ -213,11 +213,6 @@ func callScorerUpstream(c *gin.Context, info *relaycommon.RelayInfo, request *dt
 }
 
 func settleSmartRouteScorer(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, virtualModel, mainTier, mainModel string) {
-	common.SetContextKey(c, constant.ContextKeySmartRouteLog, map[string]any{
-		"role":          "scorer",
-		"virtual_model": virtualModel,
-		"main_tier":     mainTier,
-		"main_model":    mainModel,
-	})
+	common.SetContextKey(c, constant.ContextKeySmartRouteLog, smartroute.ScorerLogFields(virtualModel, mainTier, mainModel))
 	service.PostTextConsumeQuota(c, info, usage, nil)
 }

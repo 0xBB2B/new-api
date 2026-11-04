@@ -1340,3 +1340,141 @@ func TestRunScorer_UnregisteredRunnerFailsAsScorerError(t *testing.T) {
 	assert.Nil(t, outcome.Labels)
 	assert.Nil(t, outcome.Settle)
 }
+
+func TestMainLogFields(t *testing.T) {
+	cases := []struct {
+		name            string
+		result          smartroute.RouteResult
+		cleanedReasoing int
+		want            string
+	}{
+		{
+			name: "downgrade blocked keeps full structure",
+			result: smartroute.RouteResult{
+				VirtualModel: "auto-gpt",
+				Tier:         "hard",
+				ScoredTier:   "simple",
+				Reason:       smartroute.ReasonDowngradeBlocked,
+				Params:       map[string]any{"history_tokens": 86420, "limit": 20000, "kept_tier": "hard", "scored_tier": "simple"},
+				Labels: &smartroute.ScorerLabels{
+					TaskType: "lookup", Reasoning: "low", Workload: "one_step", Risk: "low", Domain: "code",
+					Confidence: 0.91, Feedback: []string{"neutral", "satisfied"},
+				},
+				ScorerStatus: smartroute.ScorerStatusOK,
+				ScorerBilled: true,
+			},
+			cleanedReasoing: 2,
+			want: `{
+				"role":"main","virtual_model":"auto-gpt","tier":"hard","scored_tier":"simple",
+				"reason":"downgrade_blocked",
+				"reason_params":{"history_tokens":86420,"limit":20000,"kept_tier":"hard","scored_tier":"simple"},
+				"labels":{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.91,"feedback":"satisfied"},
+				"scorer":{"status":"ok","billed":true},
+				"cleaned_reasoning":2
+			}`,
+		},
+		{
+			name: "tool continuation has no labels and scorer is skipped",
+			result: smartroute.RouteResult{
+				VirtualModel: "auto-gpt",
+				Tier:         "normal",
+				Reason:       smartroute.ReasonToolContinuation,
+				ScorerStatus: smartroute.ScorerStatusSkipped,
+			},
+			want: `{
+				"role":"main","virtual_model":"auto-gpt","tier":"normal",
+				"reason":"tool_continuation","reason_params":{},
+				"scorer":{"status":"skipped","billed":false}
+			}`,
+		},
+		{
+			name: "scorer timeout records timeout_ms and is not billed",
+			result: smartroute.RouteResult{
+				VirtualModel: "auto-gpt",
+				Tier:         "normal",
+				Reason:       smartroute.FailureScorerTimeout,
+				Params:       map[string]any{"timeout_ms": 2000},
+				ScorerStatus: smartroute.ScorerStatusTimeout,
+			},
+			want: `{
+				"role":"main","virtual_model":"auto-gpt","tier":"normal",
+				"reason":"scorer_timeout","reason_params":{"timeout_ms":2000},
+				"scorer":{"status":"timeout","billed":false,"timeout_ms":2000}
+			}`,
+		},
+		{
+			name: "labels without feedback omit the feedback field",
+			result: smartroute.RouteResult{
+				VirtualModel: "auto-gpt",
+				Tier:         "simple",
+				Reason:       smartroute.ReasonRuleSimple,
+				Labels:       &smartroute.ScorerLabels{TaskType: "chat_qa", Reasoning: "low", Workload: "one_step", Risk: "low", Domain: "other", Confidence: 0.8},
+				ScorerStatus: smartroute.ScorerStatusOK,
+				ScorerBilled: true,
+			},
+			want: `{
+				"role":"main","virtual_model":"auto-gpt","tier":"simple",
+				"reason":"rule_simple","reason_params":{},
+				"labels":{"task_type":"chat_qa","reasoning":"low","workload":"one_step","risk":"low","domain":"other","confidence":0.8},
+				"scorer":{"status":"ok","billed":true}
+			}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := common.Marshal(smartroute.MainLogFields(tc.result, tc.cleanedReasoing))
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.want, string(got))
+		})
+	}
+}
+
+func TestMainLogFieldsHasNoConversationText(t *testing.T) {
+	result := smartroute.RouteResult{
+		VirtualModel: "auto-gpt",
+		Tier:         "hard",
+		Reason:       smartroute.ReasonRuleHard,
+		Params:       map[string]any{"matched": []string{"risk"}},
+		Labels:       &smartroute.ScorerLabels{TaskType: "plan", Reasoning: "high", Workload: "many_steps", Risk: "high", Domain: "finance", Confidence: 0.9, Feedback: []string{"dissatisfied"}},
+		ScorerStatus: smartroute.ScorerStatusOK,
+		ScorerBilled: true,
+		SessionKey:   "session-secret-key",
+	}
+
+	got, err := common.Marshal(smartroute.MainLogFields(result, 0))
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(got), "session-secret-key")
+	assert.NotContains(t, string(got), "cleaned_reasoning")
+}
+
+func TestScorerLogFields(t *testing.T) {
+	got, err := common.Marshal(smartroute.ScorerLogFields("auto-gpt", "hard", "gpt-5.6-sol"))
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{"role":"scorer","virtual_model":"auto-gpt","main_tier":"hard","main_model":"gpt-5.6-sol"}`, string(got))
+}
+
+func TestSetRouteResultPublishesMainLogFields(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	result := smartroute.RouteResult{
+		VirtualModel: "auto-gpt",
+		Tier:         "normal",
+		Reason:       smartroute.ReasonToolContinuation,
+		ScorerStatus: smartroute.ScorerStatusSkipped,
+	}
+
+	smartroute.SetRouteResult(ctx, result)
+
+	logFields, ok := common.GetContextKey(ctx, constant.ContextKeySmartRouteLog)
+	require.True(t, ok)
+	assert.Equal(t, smartroute.MainLogFields(result, 0), logFields)
+}
+
+func TestDecideRoute_ScorerTimeoutCarriesTimeoutMs(t *testing.T) {
+	cfg := smartRouteCfg()
+	cfg.Scorer.TimeoutMs = 2000
+	got := smartroute.DecideRoute(smartroute.DecideInput{Cfg: cfg, IsUserTurn: true, ScorerFailure: "scorer_timeout", LatestChars: 10})
+	assert.Equal(t, "scorer_timeout", got.Reason)
+	assert.Equal(t, map[string]any{"timeout_ms": 2000}, got.Params)
+}

@@ -7,17 +7,18 @@ import (
 )
 
 type RouteResult struct {
-	VirtualModel string
-	Tier         string
-	ScoredTier   string
-	Reason       string
-	Params       map[string]any
-	Labels       *ScorerLabels
-	ScorerStatus string
-	ScorerBilled bool
-	IsUserTurn   bool
-	SessionKey   string
-	Session      *SessionRecord
+	VirtualModel           string
+	Tier                   string
+	ScoredTier             string
+	Reason                 string
+	Params                 map[string]any
+	Labels                 *ScorerLabels
+	ScorerStatus           string
+	ScorerBilled           bool
+	IsUserTurn             bool
+	SessionKey             string
+	Session                *SessionRecord
+	StrippedReasoningCount int
 }
 
 const (
@@ -30,6 +31,7 @@ const (
 
 func SetRouteResult(c *gin.Context, result RouteResult) {
 	common.SetContextKey(c, constant.ContextKeySmartRouteResult, result)
+	common.SetContextKey(c, constant.ContextKeySmartRouteLog, MainLogFields(result, result.StrippedReasoningCount))
 }
 
 func GetRouteResult(c *gin.Context) (RouteResult, bool) {
