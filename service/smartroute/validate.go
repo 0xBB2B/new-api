@@ -41,6 +41,19 @@ func modelEndpoints(modelName string) []string {
 	return endpoints
 }
 
+func endpointDisplayNames(endpoints []string) string {
+	names := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		switch constant.EndpointType(endpoint) {
+		case constant.EndpointTypeOpenAIResponse:
+			names = append(names, "Responses")
+		case constant.EndpointTypeOpenAI:
+			names = append(names, "Chat Completions")
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
 // 打分模型由 new-api 自己按 Chat Completions 调用，不受虚拟模型接口限制，所以不在这里。
 func endpointSlots(route operation_setting.SmartRoute) []routeModelSlot {
 	slots := make([]routeModelSlot, 0, len(tierOrder)+1)
@@ -161,7 +174,7 @@ func ValidateRoute(route operation_setting.SmartRoute, originalName string) ([]F
 				add(conflict.field, "{{model}} supports neither Responses nor Chat Completions", map[string]any{"model": conflict.model})
 			} else {
 				add(conflict.field, "{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}",
-					map[string]any{"model": conflict.model, "endpoint": strings.Join(endpoints, ", "), "other": strings.Join(before, ", ")})
+					map[string]any{"model": conflict.model, "endpoint": endpointDisplayNames(endpoints), "other": endpointDisplayNames(before)})
 			}
 		}
 	}

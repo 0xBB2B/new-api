@@ -12,10 +12,10 @@
 | 09 | routing-log-fields | done | 2026-11-05 |
 | 10 | model-list | done | 2026-11-04 |
 | 11 | frontend-config-page | done | 2026-11-05 |
-| 12 | frontend-route-dialog | in-progress | — |
+| 12 | frontend-route-dialog | done | 2026-11-05 |
 | 13 | frontend-log-display | pending | — |
 ## 当前
-第 8 组：`12-frontend-route-dialog.md`（准备 Red）。
+第 9 组：`13-frontend-log-display.md`（准备 Red）。
 记录：01 审查发现热更新并发读写会导致进程崩溃，已改为原子指针整体替换并只放行 routes 一个键；03 修了首条无文字时会话串号、长消息内存开销、改用现有接口常量；04 修正了 domain 选项，审查后补了"打分格式不对不交顾问""顾问优先于把握不足"两条用例、删掉多余判断、选档结果增加经降档保护的备用档位（这次修复由主 Agent 自查 diff，未另派审查）；PRD 02 C2 经用户确认改为"往前 N 条，共 N+1 条"。
 05：审查发现 Redis 读失败时会把已有记录覆盖成空，已改为读失败只记日志不写入；配套修了续跑时会话记录档位为空会选出空档位的问题（rules.go）。
 02：审查后修了接口冲突挂错字段（改为逐个取交集、挂在使交集变空的模型上）、补了思考力度取值检查和默认档检查、模型接口查询前先刷新定价缓存；定价判断下沉到 billing_setting.HasModelBillingConfig 供 relay/helper、controller、smartroute 共用（原样搬移）；测试数据修正后重名检查与其他检查同时进行。保存失败时 detail 仍是英文（只在 JSON 视图保存时出现），收尾时告诉用户。
@@ -24,6 +24,7 @@
 09：主 Agent 审代码；补了打分超时时原因参数带 timeout_ms（07 与 09 衔接遗漏）；打分日志改用 ScorerLogFields。
 08：审查后改为处理所有 reasoning 条目（服务端存储模式只带 id 的条目换账号同样会 404）；清理条数以最终发出的尝试为准（计划措辞已改）；主 Agent 给路由结果补了 Session.LastChannelID 与 StrippedReasoningCount。
 11：分区入口按项目惯例放 request-policies/smart-routing-section.tsx；提示改回与同页一致的 toast；审查后修了接口显示只留 Responses/Chat Completions 且 Responses 在前、JSON 元素缺字段时不崩、同名记录删除互不影响、操作列 role=group、第二行改为截断加提示框写法、内联单调用方函数、补登记 static-keys。
+12：两轮审查后按预览改了弹窗宽度、高级设置三列、区块改分隔线、名称必填、接口标签新键、不覆盖说明只在简单档；思考力度和默认档出错标在下拉框上；编辑缺字段的旧配置按字段补默认值（降档上限和可信度门槛缺失时补 0，与后端运行值一致）；关闭弹窗后迟到的检查结果丢弃；补登记后端消息键、修正四种语言译文；后端接口不一致报错改显示 Responses / Chat Completions。
 待用户决定（收尾时汇总）：① previous_response_id 且不带 prompt_cache_key 的 Responses 请求每轮都被当成新会话；② 令牌白名单只查虚拟模型名，员工可通过提示词诱导打分模型稳定用上困难档或顾问。
 执行分组：①01∥03 ②04 ③05 ④02 ⑤06 ⑥07∥10 ⑦08∥09∥11 ⑧12 ⑨13。
 ## 阻塞

@@ -51,6 +51,7 @@ import {
   smartRoutesErrorMessage,
   SMART_TIER_IDS,
 } from './lib'
+import { RouteEditorDialog } from './route-editor-dialog'
 import type { SmartRoute } from './types'
 
 type SmartRoutesCardProps = {
@@ -65,9 +66,10 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
     index: number
     name: string
   } | null>(null)
-  const [, setEditorTarget] = useState<{ route: SmartRoute | null } | null>(
-    null
-  )
+  const [editorTarget, setEditorTarget] = useState<{
+    route: SmartRoute | null
+    index: number
+  } | null>(null)
   const { routes } = parseSmartRoutes(props.value)
 
   const changeMode = (next: string) => {
@@ -117,7 +119,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
             </TabsList>
             <Button
               disabled={mode === 'json'}
-              onClick={() => setEditorTarget({ route: null })}
+              onClick={() => setEditorTarget({ route: null, index: -1 })}
             >
               <Plus aria-hidden='true' data-icon='inline-start' />
               {t('Add virtual model')}
@@ -127,8 +129,10 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
           <TabsContent value='visual' className='min-w-0'>
             <SmartRoutesTable
               routes={routes}
-              onAdd={() => setEditorTarget({ route: null })}
-              onEdit={(route) => setEditorTarget({ route })}
+              onAdd={() => setEditorTarget({ route: null, index: -1 })}
+              onEdit={(route) =>
+                setEditorTarget({ route, index: routes.indexOf(route) })
+              }
               onDelete={(route) =>
                 setDeleting({ index: routes.indexOf(route), name: route.name })
               }
@@ -146,6 +150,24 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
           </TabsContent>
         </Tabs>
       </section>
+
+      {editorTarget !== null && (
+        <RouteEditorDialog
+          route={editorTarget.route}
+          onOpenChange={(open) => !open && setEditorTarget(null)}
+          onSave={(route) =>
+            props.onChange(
+              serializeSmartRoutes(
+                editorTarget.route === null
+                  ? [...routes, route]
+                  : routes.map((item, index) =>
+                      index === editorTarget.index ? route : item
+                    )
+              )
+            )
+          }
+        />
+      )}
 
       {deleting !== null && (
         <ConfirmDialog

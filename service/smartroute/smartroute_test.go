@@ -1059,14 +1059,14 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 			}
 			r.Advisor.Model = "m-resp"
 		}, "", "advisor.model",
-			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "openai-response", "other": "openai"}},
+			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "Responses", "other": "Chat Completions"}},
 		{"endpoint conflict points at the model that empties the shared set", func(r *operation_setting.SmartRoute) {
 			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
 			setTier(r, operation_setting.SmartTierNormal, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
 			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
 			r.Advisor.Model = "m-both"
 		}, "", "tiers.hard.model",
-			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "openai-response", "other": "openai"}},
+			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "Responses", "other": "Chat Completions"}},
 		{"unknown reasoning effort", func(r *operation_setting.SmartRoute) {
 			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Effort = "ultra" })
 		}, "", "tiers.hard.effort", "Select a valid reasoning effort", nil},
