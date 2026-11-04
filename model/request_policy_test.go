@@ -120,3 +120,73 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRequestPolicyOption_SmartRouting(t *testing.T) {
+	assert.True(t, IsRequestPolicyOption("smart_routing_setting.routes"))
+	assert.False(t, IsRequestPolicyOption("smart_routing_setting.route"))
+	assert.False(t, IsRequestPolicyOption("smart_routing_x"))
+}
+
+func TestSmartRoutingRoutesOptionReload(t *testing.T) {
+	const key = "smart_routing_setting.routes"
+	const fullRoutes = `[{"name":"auto-gpt","tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"],"effort":"low"},"normal":{"model":"gpt-5.5","groups":["subscription","api"],"effort":""},"hard":{"model":"gpt-5.6-sol","groups":["subscription","api"],"effort":"high"}},"default_tier":"normal","scorer":{"model":"gpt-5.6-luna","groups":["api"],"timeout_ms":1500},"advisor":{"model":"gpt-5.6-pro","groups":["subscription"],"after_dissatisfied":3},"downgrade_max_history_tokens":30000,"confidence_threshold":0.7,"simple_max_message_chars":1500}]`
+	const otherRoutes = `[{"name":"auto-chat","tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"]}}}]`
+
+	originalMap := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() {
+		require.NoError(t, updateOptionMap(key, "[]"))
+		common.OptionMap = originalMap
+	})
+
+	require.NoError(t, updateOptionMap(key, fullRoutes))
+	route, ok := operation_setting.FindSmartRoute("auto-gpt")
+	require.True(t, ok)
+	assert.Equal(t, "gpt-5.6-sol", route.Tiers["hard"].Model)
+	assert.Equal(t, []string{"subscription", "api"}, route.Tiers["hard"].Groups)
+	assert.Equal(t, "high", route.Tiers["hard"].Effort)
+	assert.Equal(t, "", route.Tiers["normal"].Effort)
+	assert.Equal(t, "normal", route.DefaultTier)
+	assert.Equal(t, "gpt-5.6-luna", route.Scorer.Model)
+	assert.Equal(t, 1500, route.Scorer.TimeoutMs)
+	assert.Equal(t, "gpt-5.6-pro", route.Advisor.Model)
+	assert.Equal(t, 3, route.Advisor.AfterDissatisfied)
+	assert.Equal(t, 30000, route.DowngradeMaxHistoryTokens)
+	assert.InDelta(t, 0.7, route.ConfidenceThreshold, 1e-9)
+	assert.Equal(t, 1500, route.SimpleMaxMessageChars)
+	assert.JSONEq(t, fullRoutes, requestPolicyDefaultOptions()[key])
+
+	tests := []struct {
+		name  string
+		model string
+		found bool
+	}{
+		{name: "exact name", model: "auto-gpt", found: true},
+		{name: "name is case sensitive", model: "Auto-GPT", found: false},
+		{name: "real model name is not a route", model: "gpt-5.5", found: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := operation_setting.FindSmartRoute(tt.model)
+			assert.Equal(t, tt.found, ok)
+		})
+	}
+
+	require.NoError(t, updateOptionMap(key, otherRoutes))
+	_, ok = operation_setting.FindSmartRoute("auto-gpt")
+	assert.False(t, ok)
+	replaced, ok := operation_setting.FindSmartRoute("auto-chat")
+	require.True(t, ok)
+	assert.NotContains(t, replaced.Tiers, "hard")
+	assert.Zero(t, replaced.Scorer.TimeoutMs)
+
+	require.NoError(t, updateOptionMap(key, "{broken"))
+	_, ok = operation_setting.FindSmartRoute("auto-chat")
+	assert.True(t, ok)
+}
+
+func TestSmartTierRankOrder(t *testing.T) {
+	assert.Less(t, operation_setting.SmartTierRank("simple"), operation_setting.SmartTierRank("normal"))
+	assert.Less(t, operation_setting.SmartTierRank("normal"), operation_setting.SmartTierRank("hard"))
+	assert.Equal(t, -1, operation_setting.SmartTierRank("advisor"))
+}

@@ -15,10 +15,11 @@ new-api 能保存、热加载、读取"虚拟模型 → 三档 / 打分 / 顾问
 
 ## 涉及文件
 - setting/operation_setting/smart_routing_setting.go（新建）
-- model/request_policy.go（修改：`IsRequestPolicyOption` 放行 `smart_routing_setting.` 前缀；请求策略默认值里补上本配置的当前值）
+- model/request_policy.go（修改：`IsRequestPolicyOption` 只放行 `smart_routing_setting.routes` 这一个键；请求策略默认值里补上本配置的当前值）
+- model/option.go（修改：`handleConfigUpdate` 遇到这个键时调用 `LoadSmartRoutesFromJSONString`）
 
 ## 成品定义
-配置在 option 表里存成一个键：`smart_routing_setting.routes`，值是下面这种 JSON 数组的字符串。按 `config.GlobalConfig.Register("smart_routing_setting", &smartRoutingSetting)` 注册，结构体字段 `Routes` 的 json 标签是 `routes`。
+配置在 option 表里存成一个键：`smart_routing_setting.routes`（常量 `SmartRoutingRoutesOptionKey`），值是下面这种 JSON 数组的字符串。内存里用 `atomic.Pointer[[]SmartRoute]` 保存，每次更新都解码出一份新的数组再整体替换，读的一方拿到的数组永远不会被改写；JSON 解析失败时保留旧值并用 `common.SysError` 记录。
 
 ```json
 [
@@ -82,7 +83,8 @@ type SmartRoutingSetting struct {
 ### setting/operation_setting/smart_routing_setting.go
 | 函数名 | 职责 |
 |---|---|
-| `init` | 用 `config.GlobalConfig.Register` 注册 `smart_routing_setting` |
+| `init` | 把空数组存进原子指针 |
+| `LoadSmartRoutesFromJSONString` | 解码一份新数组并整体替换；失败时保留旧值并记录错误 |
 | `GetSmartRoutingSetting` | 返回当前配置（只读用） |
 | `FindSmartRoute` | 按虚拟模型名查找配置，找不到返回 false；名称比较区分大小写 |
 | `SmartRouteNames` | 返回所有虚拟模型名，供模型列表和重名检查使用 |
@@ -92,13 +94,13 @@ type SmartRoutingSetting struct {
 ### model/request_policy.go
 | 函数名 | 职责 |
 |---|---|
-| `IsRequestPolicyOption` | 新增：`smart_routing_setting.` 前缀返回 true |
+| `IsRequestPolicyOption` | 新增：`smart_routing_setting.routes` 返回 true，同前缀的其他键返回 false |
 | （默认值构造函数，即写 `defaults[...]` 的那个函数） | 补 `defaults["smart_routing_setting.routes"] = operation_setting.SmartRoutingRoutesToString()` |
 
 ## 协作关系
-- 保存：前端 `PATCH /api/option/request_policy` → `IsRequestPolicyOption` 放行 → 现有 option 保存流程 → `config.UpdateConfigFromMap` 热更新本结构。
+- 保存：前端 `PATCH /api/option/request_policy` → `IsRequestPolicyOption` 放行 → 现有 option 保存流程 → `model/option.go` 的 `handleConfigUpdate` → `LoadSmartRoutesFromJSONString` 整体替换。启动加载和每 60 秒的定时同步走同一个入口。
 - 读取方：02 校验、06 打分、07 路由、10 模型列表都通过 `FindSmartRoute` / `GetSmartRoutingSetting` 读取。
-- 并发：读写沿用 GlobalConfig 已有的方式，不另加锁。
+- 并发：靠原子指针整体替换保证读写安全，读取方不加锁。
 
 ## 验证方式
 - 测试入口：`model.IsRequestPolicyOption`；`PATCH /api/option/request_policy`、`GET /api/option/request_policy`；`operation_setting.FindSmartRoute`。

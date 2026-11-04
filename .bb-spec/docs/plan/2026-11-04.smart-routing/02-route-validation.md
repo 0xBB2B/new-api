@@ -27,7 +27,7 @@ description: 虚拟模型配置的逐项检查（字段级错误）、单条检�
 ## 涉及文件
 - service/smartroute/validate.go（新建）
 - controller/smart_routing.go（新建）
-- controller/option.go（修改：`UpdateRequestPolicy` 保存前，对 `smart_routing_setting.routes` 调用整体检查）
+- controller/option.go（修改：所有会写入 `smart_routing_setting.routes` 的入口在保存前都调用整体检查：`UpdateRequestPolicy`、通用的 `UpdateOption`（在它的 `switch option.Key` 里加一个 case），以及其他调用 `model.UpdateOptionsBulk` 写入这个键的入口（如有）。检查不通过就返回错误、不保存。这样负数等非法值无论走哪个接口都存不进去，运行时代码可以直接信任配置）
 - router/api-router.go（修改：在 optionRoute 下新增一条路由）
 - middleware/access_token_routes.go（修改：登记新路由）
 - service/smartroute/smartroute_test.go（新建，本功能后端唯一新增的测试文件，03~06 的用例也写在这里）
@@ -97,6 +97,7 @@ optionRoute.POST("/smart_routing/validate", controller.ValidateSmartRoute)
 | 函数名 | 职责 |
 |---|---|
 | `UpdateRequestPolicy` | 修改：提交的 options 里含 `smart_routing_setting.routes` 时，先解析并调用 `ValidateRoutes`，失败就返回错误、不保存 |
+| `UpdateOption` | 修改：`option.Key` 为 `smart_routing_setting.routes` 时，先调用 `ValidateRoutes`，失败就返回错误、不保存 |
 
 ## 协作关系
 - `ValidateRoute` 依赖：`operation_setting.SmartRouteNames`（重名检查）；`model.GetRandomSatisfiedChannel`（渠道检查，`retry=0`，不带过滤条件）；`helper.HasModelBillingConfig`（定价）；`model.GetModelSupportEndpointTypes`（接口）；`model.GetGroupEnabledModels` 或 abilities 查询（判断是否为真实模型名）。
@@ -110,4 +111,5 @@ optionRoute.POST("/smart_routing/validate", controller.ValidateSmartRoute)
 - [ ] 模型没选、分组为空、分组里有 `auto`
 - [ ] 某分组里没有可用渠道、没定价、接口没有交集（打分模型只支持 Chat Completions 时不报错）
 - [ ] 五个数字各取边界值和越界值
+- [ ] 通过通用的 `PUT /api/option/` 提交 `after_dissatisfied` 为 -1 的配置 → 返回错误，option 不变
 - [ ] 未登记 access token 路由时 `go test ./router/ ./middleware/` 会失败；登记后通过
