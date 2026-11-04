@@ -21,6 +21,7 @@ import { ChannelHealthSection } from './channel-health-section'
 import type { RequestPolicySettings } from './defaults'
 import { RequestChecksSection } from './request-checks-section'
 import { RoutingPolicySection } from './routing-section'
+import { SmartRoutingSection } from './smart-routing-section'
 
 const POLICY_SECTIONS = [
   {
@@ -47,6 +48,11 @@ const POLICY_SECTIONS = [
     build: (settings: RequestPolicySettings) => (
       <ChannelHealthSection defaultValues={settings} />
     ),
+  },
+  {
+    id: 'smart-routing',
+    titleKey: 'Smart routing',
+    build: () => <SmartRoutingSection />,
   },
 ] as const
 
