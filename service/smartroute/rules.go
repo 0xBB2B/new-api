@@ -173,7 +173,7 @@ func ApplyDowngradeGuard(cfg operation_setting.SmartRoute, choice TierChoice, la
 func DecideRoute(in DecideInput) Decision {
 	if !in.IsUserTurn {
 		selected := in.Cfg.DefaultTier
-		if in.Session != nil {
+		if in.Session != nil && in.Session.CurrentRoute != "" {
 			selected = in.Session.CurrentRoute
 		}
 		return Decision{Selected: selected, Reason: ReasonToolContinuation}

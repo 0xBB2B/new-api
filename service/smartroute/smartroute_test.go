@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
@@ -803,4 +804,90 @@ func TestDecideRoute_AdvisorEdgeCases(t *testing.T) {
 		assert.Equal(t, "hard", got.Fallback.Tier)
 		assert.Equal(t, "downgrade_blocked", got.Fallback.Reason)
 	})
+}
+
+func TestSessionStore(t *testing.T) {
+	common.RedisEnabled = false
+
+	t.Run("empty key is never stored", func(t *testing.T) {
+		smartroute.SaveSessionAfterSuccess("", true, "hard", 7)
+		_, ok := smartroute.LoadSession("")
+		assert.False(t, ok)
+	})
+
+	t.Run("unknown key is absent", func(t *testing.T) {
+		_, ok := smartroute.LoadSession("session-store-unknown")
+		assert.False(t, ok)
+	})
+
+	t.Run("user turn writes all three fields", func(t *testing.T) {
+		for _, route := range []string{"simple", "normal", "hard"} {
+			key := "session-store-user-turn-" + route
+			smartroute.SaveSessionAfterSuccess(key, true, route, 11)
+			got, ok := smartroute.LoadSession(key)
+			require.True(t, ok)
+			assert.Equal(t, smartroute.SessionState{CurrentRoute: route, LastNonAdvisor: route, LastChannelID: 11}, got)
+		}
+	})
+
+	t.Run("later user turn overwrites earlier one", func(t *testing.T) {
+		key := "session-store-overwrite"
+		smartroute.SaveSessionAfterSuccess(key, true, "simple", 1)
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", 2)
+		got, ok := smartroute.LoadSession(key)
+		require.True(t, ok)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "hard", LastChannelID: 2}, got)
+	})
+
+	t.Run("advisor turn keeps last non-advisor tier", func(t *testing.T) {
+		key := "session-store-advisor"
+		smartroute.SaveSessionAfterSuccess(key, true, "normal", 3)
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 4)
+		got, ok := smartroute.LoadSession(key)
+		require.True(t, ok)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "normal", LastChannelID: 4}, got)
+	})
+
+	t.Run("advisor turn without prior record leaves last non-advisor empty", func(t *testing.T) {
+		key := "session-store-advisor-first"
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 5)
+		got, ok := smartroute.LoadSession(key)
+		require.True(t, ok)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "", LastChannelID: 5}, got)
+	})
+
+	t.Run("tool result continuation only updates channel", func(t *testing.T) {
+		key := "session-store-tool-result"
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6)
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", 6)
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6)
+		smartroute.SaveSessionAfterSuccess(key, false, "hard", 9)
+		got, ok := smartroute.LoadSession(key)
+		require.True(t, ok)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "hard", LastChannelID: 9}, got)
+	})
+
+	t.Run("tool result continuation without record writes channel only", func(t *testing.T) {
+		key := "session-store-tool-result-first"
+		smartroute.SaveSessionAfterSuccess(key, false, "normal", 8)
+		got, ok := smartroute.LoadSession(key)
+		require.True(t, ok)
+		assert.Equal(t, smartroute.SessionState{LastChannelID: 8}, got)
+	})
+
+	t.Run("json tags match the stored contract", func(t *testing.T) {
+		raw, err := common.Marshal(smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "normal", LastChannelID: 3})
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"current_route":"hard","last_non_advisor":"normal","last_channel_id":3}`, string(raw))
+	})
+}
+
+func TestDecideRoute_ToolContinuationWithChannelOnlyRecord(t *testing.T) {
+	got := smartroute.DecideRoute(smartroute.DecideInput{
+		Cfg:        smartRouteCfg(),
+		IsUserTurn: false,
+		Session:    &smartroute.SessionRecord{CurrentRoute: "", LastNonAdvisor: ""},
+	})
+	assert.Equal(t, "normal", got.Selected)
+	assert.Equal(t, "tool_continuation", got.Reason)
 }
