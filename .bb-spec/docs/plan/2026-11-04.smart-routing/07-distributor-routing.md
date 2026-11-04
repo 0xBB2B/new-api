@@ -22,6 +22,10 @@ description: 在 Distribute 选渠道前接入智能路由：接口检查、打�
 - 选档完成后，立刻调用 06 打分结果里的结算函数，把主请求的最终档位和模型传进去；结算函数负责扣打分费用、写打分日志。后面的主请求即使失败，这次打分也照样扣费，因为打分已经实际产生了用量。
 - 把本次路由结果放进 gin context，给 08（清理思考内容）、09（写日志）读取。内容包括：虚拟模型名、最终档位、打分得出的档位、原因代码和参数、标签、打分状态、会话键、会话记录。
 - `c.Next()` 之后、状态码 < 400 时，调用 05 的 `SaveSessionAfterSuccess`，渠道 ID 取最终使用的渠道。位置紧挨现有的 `service.RecordChannelAffinity`（`middleware/distributor.go:137`）。
+- 压缩接口（请求路径 `/v1/responses/compact`）：虚拟模型支持 Responses 接口时放行；不打分，按工具结果续跑处理（沿用会话当前选定的模型，没有记录用默认档），只更新会话里的渠道。
+- Responses WebSocket（relay/responses_websocket.go 的 runCall）：请求的模型名是虚拟模型名时，返回面向 AI 客户端的 i18n 错误 `distributor.smart_route_websocket_unsupported`（en: "Virtual model {{.Model}} only supports HTTP requests"；zh-CN: "虚拟模型 {{.Model}} 只支持 HTTP 请求"；zh-TW: "虛擬模型 {{.Model}} 只支援 HTTP 請求"），不打分、不扣费。
+- 安全：档位配了思考力度时，请求体顶层出现两次 `reasoning` 或 `reasoning_effort` → 返回 400（否则改写只改第一个、解析取最后一个，客户端能绕过档位的思考力度）。
+- 输入 token 估算只在用户新消息且有会话记录时才做（它只用于降档保护），避免每个请求都对整个请求体估算。
 - 不是虚拟模型的请求，行为完全不变。
 
 ## 涉及文件

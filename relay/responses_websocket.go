@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
@@ -275,6 +276,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	}
 	if apiErr = checkResponsesWSModelAccess(c, modelName); apiErr != nil {
 		return apiErr
+	}
+	if _, virtual := operation_setting.FindSmartRoute(modelName); virtual {
+		return newResponsesWSInvalidRequestError(errors.New(i18n.T(c, i18n.MsgDistributorSmartRouteWebsocketUnsupported, map[string]any{"Model": modelName})))
 	}
 	common.SetContextKey(c, appconstant.ContextKeyOriginalModel, modelName)
 	common.SetContextKey(c, appconstant.ContextKeyRequestStartTime, time.Now())

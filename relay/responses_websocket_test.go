@@ -773,3 +773,28 @@ func TestResponsesWSErrorAttribution(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesWSRunCallRejectsVirtualModel(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	originalRoutes := operation_setting.SmartRoutingRoutesToString()
+	t.Cleanup(func() { operation_setting.LoadSmartRoutesFromJSONString(originalRoutes) })
+	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"auto-gpt","tiers":{
+		"simple":{"model":"t-simple","groups":["default"],"effort":""},
+		"normal":{"model":"t-normal","groups":["default"],"effort":""},
+		"hard":{"model":"t-hard","groups":["default"],"effort":""}},
+		"default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+		"advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":3},
+		"downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`)
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Request.Header.Set("Accept-Language", "en")
+	create := responsesWSCreateRequest{Request: dto.OpenAIResponsesRequest{Model: "auto-gpt"}}
+
+	apiErr := (&responsesWSSession{}).runCall(c, &responsesWSCallState{}, create)
+
+	require.NotNil(t, apiErr)
+	assert.Contains(t, apiErr.Error(), "Virtual model auto-gpt only supports HTTP requests")
+	assert.Zero(t, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+}

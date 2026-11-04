@@ -51,7 +51,11 @@ func LoadSession(sessionKey string) (SessionState, bool) {
 		return SessionState{}, false
 	}
 	state, found, err := getSessionCache().Get(sessionKey)
-	if err != nil || !found {
+	if err != nil {
+		common.SysError(common.LogText("smart routing session load failed: %s", err.Error()))
+		return SessionState{}, false
+	}
+	if !found {
 		return SessionState{}, false
 	}
 	return state, true
