@@ -18,7 +18,7 @@ description: 在 Distribute 选渠道前接入智能路由：接口检查、打�
   1. 把 `modelRequest.Model` 改成该档的真实模型。后面 `SetupContextForSelectedChannel` 会把它写进 `ContextKeyOriginalModel`，relay 层的 OriginModelName、发往上游的模型名、计费、日志都会自动跟着变。
   2. 改写缓存的请求体：`model` 字段改成真实模型；档位配了思考力度时，Responses 写 `reasoning.effort`，Chat Completions 写 `reasoning_effort`。顾问不覆盖思考力度。写法照 `middleware/task_plugin_model.go:15` 的 `rewriteTaskPluginJSONModel`（ojson.SetBytes → CreateBodyStorage → 替换 `common.KeyBodyStorage`、清空 `common.KeyRequestBody`、替换 `c.Request.Body`、更新 ContentLength）。透传模式发的是原始请求体，所以必须改请求体，只改 DTO 不够。
   3. 密钥分组是 auto → 用 `common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, 档位分组)` 覆盖本次请求的分组顺序。后面的选渠道、重试、亲和都通过 `service.GetRequestAutoGroups` 读取，会自动再做一次权限过滤。全部被过滤掉 → 返回现有的"没有可用渠道"错误。跨分组重试开关沿用令牌的设置。
-  4. 密钥分组不是 auto → 不改分组。用 `model.GetRandomSatisfiedChannel(令牌分组, 档位模型, 0, filters)` 检查：没有可用渠道就改用默认档的模型；默认档也没有，就交给现有逻辑返回"没有可用渠道"。顾问同理：没有渠道就不交给顾问，按打分结果选档。
+  4. 密钥分组不是 auto → 不改分组。用 `model.GetRandomSatisfiedChannel(令牌分组, 档位模型, 0, filters)` 检查：没有可用渠道就改用默认档的模型；默认档也没有，就交给现有逻辑返回"没有可用渠道"。顾问同理：没有渠道就不交给顾问，改用 04 `DecideRoute` 返回的 `Fallback`（已经过降档保护的档位、原因和参数）。
 - 选档完成后，立刻调用 06 打分结果里的结算函数，把主请求的最终档位和模型传进去；结算函数负责扣打分费用、写打分日志。后面的主请求即使失败，这次打分也照样扣费，因为打分已经实际产生了用量。
 - 把本次路由结果放进 gin context，给 08（清理思考内容）、09（写日志）读取。内容包括：虚拟模型名、最终档位、打分得出的档位、原因代码和参数、标签、打分状态、会话键、会话记录。
 - `c.Next()` 之后、状态码 < 400 时，调用 05 的 `SaveSessionAfterSuccess`，渠道 ID 取最终使用的渠道。位置紧挨现有的 `service.RecordChannelAffinity`（`middleware/distributor.go:137`）。
