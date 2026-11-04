@@ -75,7 +75,7 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	sessionKey := smartroute.SessionKey(common.GetContextKeyInt(c, constant.ContextKeyTokenId), inspection)
 	var session *smartroute.SessionRecord
 	if state, found := smartroute.LoadSession(sessionKey); found {
-		session = &smartroute.SessionRecord{CurrentRoute: state.CurrentRoute, LastNonAdvisor: state.LastNonAdvisor}
+		session = &smartroute.SessionRecord{CurrentRoute: state.CurrentRoute, LastNonAdvisor: state.LastNonAdvisor, LastChannelID: state.LastChannelID}
 	}
 
 	isUserTurn := inspection.IsUserTurn && !compact

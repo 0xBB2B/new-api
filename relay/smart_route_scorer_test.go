@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
@@ -333,4 +335,97 @@ func TestRunSmartRouteScorer_HistoryFollowsConfiguredN(t *testing.T) {
 	assert.Contains(t, user, "[2] three")
 	assert.Contains(t, user, "[latest] four")
 	assert.NotContains(t, user, "one")
+}
+
+func TestStripEncryptedReasoningInput(t *testing.T) {
+	const mixedInput = `[
+		{"type":"message","role":"user","content":"hi","id":"msg_1"},
+		{"type":"reasoning","id":"rs_1","encrypted_content":"enc1","summary":[{"type":"summary_text","text":"a"}]},
+		{"type":"reasoning","id":"rs_2","encrypted_content":"enc2"},
+		{"type":"function_call","call_id":"c1","name":"f","arguments":"{}","id":"fc_1"},
+		{"type":"reasoning","id":"rs_3","encrypted_content":"enc3","summary":[{"type":"summary_text","text":"b"}]}
+	]`
+	const mixedWant = `[
+		{"type":"message","role":"user","content":"hi","id":"msg_1"},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"a"}]},
+		{"type":"function_call","call_id":"c1","name":"f","arguments":"{}","id":"fc_1"},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"b"}]}
+	]`
+
+	tests := []struct {
+		name      string
+		input     string
+		want      string
+		wantCount int
+	}{
+		{"mixed entries", mixedInput, mixedWant, 3},
+		{"empty summary array drops entry", `[{"type":"reasoning","id":"rs_1","encrypted_content":"e","summary":[]},{"type":"message","content":"x"}]`, `[{"type":"message","content":"x"}]`, 1},
+		{"extra fields on summarized reasoning kept", `[{"type":"reasoning","id":"rs_1","encrypted_content":"e","status":"completed","summary":[{"type":"summary_text","text":"a"}]}]`, `[{"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"a"}]}]`, 1},
+		{"no reasoning entries untouched", `[{"type":"message","content":"x","id":"m"}]`, `[{"type":"message","content":"x","id":"m"}]`, 0},
+		{"string input untouched", `"hello"`, `"hello"`, 0},
+		{"stored reasoning id with summary loses its id", `[{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"a"}]}]`, `[{"type":"reasoning","summary":[{"type":"summary_text","text":"a"}]}]`, 1},
+		{"stored reasoning id without summary is dropped", `[{"type":"reasoning","id":"rs_1"},{"type":"message","content":"x"}]`, `[{"type":"message","content":"x"}]`, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, count := stripEncryptedReasoningInput([]byte(tt.input))
+			assert.Equal(t, tt.wantCount, count)
+			assert.JSONEq(t, tt.want, string(got))
+		})
+	}
+}
+
+func TestShouldStripSmartRouteReasoning(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *smartroute.RouteResult
+		want   bool
+	}{
+		{"no route result", nil, false},
+		{"session has no record", &smartroute.RouteResult{}, false},
+		{"same channel as last", &smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 5}}, false},
+		{"different channel from last", &smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 9}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			if tt.result != nil {
+				smartroute.SetRouteResult(c, *tt.result)
+			}
+			assert.Equal(t, tt.want, shouldStripSmartRouteReasoning(c, 5))
+		})
+	}
+}
+
+func TestPrepareResponsesRequestPassthroughStripsReasoningOnWire(t *testing.T) {
+	raw := []byte(`{"model":"gpt-4o","input":[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"},{"type":"message","role":"user","content":"hi"}]}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	storage, err := common.CreateBodyStorage(raw)
+	require.NoError(t, err)
+	defer storage.Close()
+	c.Set(common.KeyBodyStorage, storage)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 9)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: true})
+	smartroute.SetRouteResult(c, smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 5}})
+
+	request := &dto.OpenAIResponsesRequest{Model: "gpt-4o", Input: []byte(`[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"},{"type":"message","role":"user","content":"hi"}]`)}
+	info := relaycommon.GenRelayInfoResponses(c, request)
+	_, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
+	require.Nil(t, apiErr)
+	defer closer.Close()
+
+	sent, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-4o","input":[{"type":"message","role":"user","content":"hi"}]}`, string(sent))
+	cached, err := common.GetBodyStorage(c)
+	require.NoError(t, err)
+	cachedBytes, err := cached.Bytes()
+	require.NoError(t, err)
+	assert.JSONEq(t, string(raw), string(cachedBytes))
+	result, ok := smartroute.GetRouteResult(c)
+	require.True(t, ok)
+	assert.Equal(t, 1, result.StrippedReasoningCount)
 }
