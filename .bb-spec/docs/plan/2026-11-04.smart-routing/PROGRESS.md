@@ -10,12 +10,12 @@
 | 07 | distributor-routing | in-progress | — |
 | 08 | reasoning-cleanup | pending | — |
 | 09 | routing-log-fields | pending | — |
-| 10 | model-list | in-progress | — |
+| 10 | model-list | done | 2026-11-04 |
 | 11 | frontend-config-page | pending | — |
 | 12 | frontend-route-dialog | pending | — |
 | 13 | frontend-log-display | pending | — |
 ## 当前
-第 6 组并行：`07-distributor-routing.md`、`10-model-list.md`（准备 Red）。07 审查时重点核对：打分返回 Settle 不为空（含 scorer_invalid）时必须调用；选档前任何提前返回都要结算或退款。
+第 6 组：`07-distributor-routing.md`（Red 中）；10 已完成（改动小，由主 Agent 审 diff，并把重复查找简化为直接遍历配置）。07 审查时重点核对：打分返回 Settle 不为空（含 scorer_invalid）时必须调用；选档前任何提前返回都要结算或退款。
 记录：01 审查发现热更新并发读写会导致进程崩溃，已改为原子指针整体替换并只放行 routes 一个键；03 修了首条无文字时会话串号、长消息内存开销、改用现有接口常量；04 修正了 domain 选项，审查后补了"打分格式不对不交顾问""顾问优先于把握不足"两条用例、删掉多余判断、选档结果增加经降档保护的备用档位（这次修复由主 Agent 自查 diff，未另派审查）；PRD 02 C2 经用户确认改为"往前 N 条，共 N+1 条"。
 05：审查发现 Redis 读失败时会把已有记录覆盖成空，已改为读失败只记日志不写入；配套修了续跑时会话记录档位为空会选出空档位的问题（rules.go）。
 02：审查后修了接口冲突挂错字段（改为逐个取交集、挂在使交集变空的模型上）、补了思考力度取值检查和默认档检查、模型接口查询前先刷新定价缓存；定价判断下沉到 billing_setting.HasModelBillingConfig 供 relay/helper、controller、smartroute 共用（原样搬移）；测试数据修正后重名检查与其他检查同时进行。保存失败时 detail 仍是英文（只在 JSON 视图保存时出现），收尾时告诉用户。

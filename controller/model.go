@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -179,6 +180,28 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 	return oaiModel
 }
 
+func buildSmartRouteModels(tokenModelLimit map[string]bool, modelLimitEnable bool) []dto.OpenAIModels {
+	result := make([]dto.OpenAIModels, 0)
+	for _, route := range operation_setting.GetSmartRoutingSetting().Routes {
+		if modelLimitEnable && !tokenModelLimit[route.Name] {
+			continue
+		}
+		endpoints := smartroute.RouteEndpoints(route)
+		endpointTypes := make([]constant.EndpointType, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			endpointTypes = append(endpointTypes, constant.EndpointType(endpoint))
+		}
+		result = append(result, dto.OpenAIModels{
+			Id:                     route.Name,
+			Object:                 "model",
+			Created:                1626777600,
+			OwnedBy:                "custom",
+			SupportedEndpointTypes: endpointTypes,
+		})
+	}
+	return result
+}
+
 type modelListGroups struct {
 	userGroup   string
 	tokenGroup  string
@@ -270,6 +293,7 @@ func ListModels(c *gin.Context, modelType int) {
 	for _, modelName := range userModelNames {
 		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
 	}
+	userOpenAiModels = append(userOpenAiModels, buildSmartRouteModels(tokenModelLimit, modelLimitEnable)...)
 
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
