@@ -94,6 +94,7 @@ import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { DetailRow, DetailSection } from './log-detail-layout'
+import { SmartRouteSection } from './smart-route-section'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
 // to its i18n label key for display in the audit details.
@@ -838,6 +839,23 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </div>
             </div>
           </DetailSection>
+        )}
+
+        {other?.smart_routing && (
+          <SmartRouteSection
+            log={props.log}
+            routing={other.smart_routing}
+            isAdmin={props.isAdmin}
+            renderRelated={(related, onClose) => (
+              <DetailsDialog
+                log={related}
+                isAdmin={props.isAdmin}
+                isRoot={props.isRoot}
+                open
+                onOpenChange={onClose}
+              />
+            )}
+          />
         )}
 
         {/* Quota saturation marker (admin only) */}

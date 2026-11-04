@@ -36,6 +36,15 @@ description: 使用日志列表的模型列加路由小字，详情弹窗新增�
 - 没有 `smart_routing` 的日志，列表和详情与改动前完全一样。
 - 新增文字要有七种翻译，做法同 11。
 
+## 字段与文案补充（后端 09 实际写入的字段）
+- `reason_params` 的字段：`downgrade_blocked` → `{ history_tokens, limit, kept_tier, scored_tier }`（原因文字里的档位用 `kept_tier`）；`advisor` → `{ count }`；`scorer_timeout` → `{ timeout_ms }`；`rule_hard` → `{ matched: ["risk" | "task_type" | "reasoning", ...] }`；其他原因为 `{}`。
+- `labels` 的字段：`task_type`、`reasoning`、`workload`、`risk`、`domain`、`confidence`（0~1 的数字）、`feedback`。
+- `scorer.status`：`ok` / `timeout` / `error` / `invalid` / `skipped`。
+- `rule_hard` 的原因文字：按 `matched` 顺序，每项写成"<标签名>=<该标签在 labels 里的取值>"，多项用"、"（英文 ", "）连接，例如"出错代价=高"、"Risk of error=High"。
+- 打分标签行：按 任务类型、要想多深、工作量、出错代价、工作类型、把握、用户反馈 的顺序，每项写成"<标签名>：<取值>"（英文 "<name>: <value>"），项之间用 " · " 连接；把握显示两位小数，例如"把握：0.91"。labels 里缺的项跳过。
+- 标签名英文键：Task type（任务类型）、Reasoning depth（要想多深）、Workload（工作量）、Risk of error（出错代价）、Work domain（工作类型）、Confidence（把握）、User feedback（用户反馈）；项格式键 `{{name}}: {{value}}`（中文 `{{name}}：{{value}}`）。
+- 取值英文键（中文同「标签中文名与取值」表）：chat_qa Chat or simple Q&A / lookup Look up information / rewrite Rewrite or organize / generate Generate or edit content / analyze Analyze or troubleshoot / plan Plan or design；low Low / medium Medium / high High；one_step One step / few_steps A few steps / many_steps Many steps；code Code / finance Finance / operations Operations / data_analysis Data analysis / other Other；satisfied Satisfied / dissatisfied Dissatisfied / neutral Neutral。
+
 ## 涉及文件
 - web/src/features/usage-logs/types.ts（修改：`LogOtherData` 增加 `smart_routing` 类型）
 - web/src/features/usage-logs/components/smart-route-caption.tsx（新建：列表小字）
