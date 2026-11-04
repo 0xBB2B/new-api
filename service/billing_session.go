@@ -86,6 +86,15 @@ func (s *BillingSession) Settle(actualQuota int) error {
 
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
+	s.refund(c, gopool.Go)
+}
+
+// RefundSync 在返回前完成退款，供调用方随后立即读取额度的场景使用。
+func (s *BillingSession) RefundSync(c *gin.Context) {
+	s.refund(c, func(f func()) { f() })
+}
+
+func (s *BillingSession) refund(c *gin.Context, run func(func())) {
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
@@ -109,7 +118,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	subscriptionId := s.relayInfo.SubscriptionId
 	funding := s.funding
 
-	gopool.Go(func() {
+	run(func() {
 		// 1) 退还资金来源
 		if err := funding.Refund(); err != nil {
 			common.SysLog(common.LogText("error refunding billing source: %s", err.Error()))

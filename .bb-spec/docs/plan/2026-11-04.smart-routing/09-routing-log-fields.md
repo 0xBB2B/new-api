@@ -15,7 +15,7 @@ description: 主请求和打分请求的消费日志 other 里写入 smart_routi
 - 没有经过智能路由的请求，日志内容完全不变。
 
 ## 涉及文件
-- service/log_info_generate.go（修改：`GenerateTextOtherInfo` 在 `:111-117` 附近，从路由结果补写 `smart_routing`）
+- service/log_info_generate.go（修改：`GenerateTextOtherInfo` 读 context 键 `constant.ContextKeySmartRouteLog`（`map[string]any`），有值就 `other.SetPublic("smart_routing", 值)`。打分日志这一半已在 06 落地，本单元补主请求）
 - service/smartroute/log.go（新建：把路由结果转成下面的日志结构）
 
 ## 成品定义
@@ -72,16 +72,16 @@ description: 主请求和打分请求的消费日志 other 里写入 smart_routi
 ### service/smartroute/log.go
 | 函数名 | 职责 |
 |---|---|
-| `MainLogFields` | 把路由结果转成主请求日志的 smart_routing 结构（省略空字段） |
-| `ScorerLogFields` | 生成打分日志的 smart_routing 结构 |
+| `MainLogFields` | 把路由结果转成主请求日志的 smart_routing 结构（省略空字段），由 07 在选档后写进 `ContextKeySmartRouteLog`，08 清理思考内容后重新写一次带上清理条数 |
+| `ScorerLogFields` | 生成打分日志的 smart_routing 结构（06 的结算函数已按同样结构写入，本单元把它收拢成这个函数并让 06 改用它） |
 
 ### service/log_info_generate.go
 | 函数名 | 职责 |
 |---|---|
-| `GenerateTextOtherInfo` | 修改：context 里有路由结果时，`other.SetPublic("smart_routing", ...)`；主请求用 `MainLogFields`，打分请求（06 设置的标记）用 `ScorerLogFields` |
+| `GenerateTextOtherInfo` | 已由 06 改为读 `ContextKeySmartRouteLog`；本单元不再改它，只确认主请求也经由这个键写入 |
 
 ## 协作关系
-- 读取 07 放进 context 的路由结果和 08 回写的清理条数；06 的打分结算也走 `GenerateTextOtherInfo`，通过 context 标记区分主请求和打分请求。
+- service 包不能引用 service/smartroute（smartroute 引用了 service 的分组权限判断，会循环引用），所以日志字段由 smartroute 算好，以 `map[string]any` 放进 `ContextKeySmartRouteLog`，service 只读这个键。主请求的值由 07 写、08 更新；打分请求的值由 06 写在打分用的子 context 上，两者互不影响。
 - 前端 13 按本成品的字段名解析。
 
 ## 验证方式

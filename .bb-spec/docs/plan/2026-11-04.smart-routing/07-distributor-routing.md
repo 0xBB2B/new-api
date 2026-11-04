@@ -54,7 +54,7 @@ zh-TW: 虛擬模型 {{.Model}} 只支援這些介面：{{.Endpoints}}
 ### service/smartroute/result.go（新建）
 | 函数名 | 职责 |
 |---|---|
-| `SetRouteResult` | 把路由结果写进 gin context |
+| `SetRouteResult` | 把路由结果写进 gin context，同时用 09 的 `MainLogFields` 生成日志字段写进 `constant.ContextKeySmartRouteLog`（09 未完成前可先写空结构，由 09 补全） |
 | `GetRouteResult` | 从 gin context 读路由结果，给 middleware（07）、relay（08）、service（09）共用；放在 service 包是因为 service 不能引用 middleware |
 
 ### middleware/distributor.go

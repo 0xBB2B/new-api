@@ -37,7 +37,7 @@ JSON 处理用 `ojson`（项目现有），禁止直接调用 `encoding/json`。
 
 ## 协作关系
 - 依赖 07 定义的 `smartroute.GetRouteResult`（service/smartroute/result.go）。
-- 09 读取清理条数写进日志。
+- 清理条数写回路由结果后，重新调用 `smartroute.SetRouteResult`，让 `ContextKeySmartRouteLog` 里的日志字段带上 `cleaned_reasoning`。
 
 ## 验证方式
 - 测试入口：`stripEncryptedReasoningInput`（表格驱动，写在 relay 包现有的 responses 相关测试文件里；没有就合并进 06 新建的 `relay/smart_route_scorer_test.go`）；`shouldStripSmartRouteReasoning`。

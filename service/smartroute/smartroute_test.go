@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,8 +13,10 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/smartroute"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1221,4 +1224,119 @@ func TestValidateRoutes(t *testing.T) {
 	require.True(t, errors.As(err, &message))
 	assert.Equal(t, "Virtual model {{name}}: {{detail}}", message.Key)
 	assert.Equal(t, "smart-bad", message.Params["name"])
+}
+
+const wantScorerSystemPrompt = `You are a router that labels a user's latest request so a gateway can pick a model tier. You never answer the request itself.
+
+Read the user messages (oldest first; earlier messages show only their beginning) and the local features, then return exactly one JSON object and nothing else:
+
+{"task_type":"","reasoning":"","workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
+
+Field rules:
+- task_type, judged on the LATEST message only, one of:
+  chat_qa  = small talk or a simple factual question
+  lookup   = find information, files, code locations or facts on the web
+  rewrite  = translate, summarize, reformat or polish given text
+  generate = write or change content such as code, reports, documents or copy
+  analyze  = analyze data, investigate a failure, research and draw a conclusion
+  plan     = design a solution, architecture, strategy or multi-part plan
+- reasoning: low | medium | high. How much multi-step thinking, calculation or trade-off weighing the latest request needs.
+- workload: one_step | few_steps | many_steps. How many actions (reading files, searching, running tools, fetching data) it needs.
+- risk: low | high. high when the result will be published externally, used for decisions or bookkeeping, or touches production data, billing or security, and a mistake would be hard to notice.
+- domain: code | finance | operations | data_analysis | other.
+- confidence: a number from 0 to 1 for how sure you are about these labels.
+- feedback: one value per user message shown, in the same order, each satisfied | dissatisfied | neutral. Use dissatisfied only when that message says the previous answer was wrong, did not work or missed the point.
+
+Return only the JSON object.`
+
+func TestBuildScorerMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		history  int
+		wantUser string
+	}{
+		{
+			name:    "history lines are numbered and the latest line is last",
+			body:    `{"messages":[{"role":"user","content":"first"},{"role":"assistant","content":"x"},{"role":"user","content":"second"},{"role":"user","content":"hello"}]}`,
+			history: 2,
+			wantUser: "Local features: latest_message_chars=5, user_turns=3, has_attachment=false, has_code_or_table=false\n" +
+				"User messages (oldest first):\n[1] first\n[2] second\n[latest] hello",
+		},
+		{
+			name:    "single message has only the latest line",
+			body:    `{"messages":[{"role":"user","content":"hi"}]}`,
+			history: 2,
+			wantUser: "Local features: latest_message_chars=2, user_turns=1, has_attachment=false, has_code_or_table=false\n" +
+				"User messages (oldest first):\n[latest] hi",
+		},
+		{
+			name:    "attachment and code flags render as true",
+			body:    "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"u\"}},{\"type\":\"text\",\"text\":\"```go\\nx\\n```\"}]}]}",
+			history: 2,
+			wantUser: "Local features: latest_message_chars=11, user_turns=1, has_attachment=true, has_code_or_table=true\n" +
+				"User messages (oldest first):\n[latest] ```go\nx\n```",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in, err := smartroute.InspectRequest(chatEndpoint, []byte(tt.body))
+			require.NoError(t, err)
+
+			system, user := smartroute.BuildScorerMessages(smartroute.BuildScorerInput(in, tt.history), in.Features)
+
+			assert.Equal(t, wantScorerSystemPrompt, system)
+			assert.Equal(t, tt.wantUser, user)
+		})
+	}
+}
+
+func TestScorerGroups(t *testing.T) {
+	originalUsable := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsable))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"api":1,"vip":2}`))
+
+	route := operation_setting.SmartRoute{Scorer: operation_setting.SmartRouteScorer{Groups: []string{"vip", "api", "no-ratio"}}}
+	tests := []struct {
+		name       string
+		usable     string
+		userGroup  string
+		usingGroup string
+		want       []string
+	}{
+		{"auto keeps scorer group order when the user may use all", `{"default":"d","api":"a","vip":"v","no-ratio":"n"}`, "default", "auto", []string{"vip", "api"}},
+		{"auto skips groups the user may not use", `{"default":"d","api":"a"}`, "default", "auto", []string{"api"}},
+		{"auto skips groups without a group ratio", `{"default":"d","no-ratio":"n"}`, "default", "auto", []string{}},
+		{"non-auto token uses only its own group", `{"default":"d","api":"a","vip":"v"}`, "default", "api", []string{"api"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(tt.usable))
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			common.SetContextKey(c, constant.ContextKeyUserGroup, tt.userGroup)
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, tt.usingGroup)
+
+			got := smartroute.ScorerGroups(c, route)
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRunScorer_UnregisteredRunnerFailsAsScorerError(t *testing.T) {
+	original := smartroute.ScorerRunner
+	smartroute.ScorerRunner = nil
+	t.Cleanup(func() { smartroute.ScorerRunner = original })
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	outcome, err := smartroute.RunScorer(c, operation_setting.SmartRoute{}, smartroute.Inspection{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "scorer_error", outcome.Failure)
+	assert.Nil(t, outcome.Labels)
+	assert.Nil(t, outcome.Settle)
 }
