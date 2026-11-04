@@ -365,3 +365,17 @@ func billingExprSmokeRequests() []billingexpr.RequestInput {
 		},
 	}
 }
+
+func HasModelBillingConfig(modelName string) bool {
+	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
+		return true
+	}
+	if _, ok, _ := ratio_setting.GetModelRatio(modelName); ok {
+		return true
+	}
+	if GetBillingMode(modelName) != BillingModeTieredExpr {
+		return false
+	}
+	expr, ok := GetBillingExpr(modelName)
+	return ok && strings.TrimSpace(expr) != ""
+}

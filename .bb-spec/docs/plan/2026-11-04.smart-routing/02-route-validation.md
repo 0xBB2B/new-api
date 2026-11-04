@@ -19,7 +19,7 @@ description: 虚拟模型配置的逐项检查（字段级错误）、单条检�
   - 三档和顾问的模型接口不一致 → "<模型> 只支持 <接口>，这个虚拟模型的其他模型走 <接口>"（打分模型不要求接口一致）；
   - 数字超出范围 → 写明允许的范围。范围是：超时 100~30000 毫秒；连续不满意次数 1~10；降档上限为 ≥ 0 的整数；可信度门槛 0~1；简单题消息长度上限 1~100000。
 - "真实模型"指在任意分组里有渠道的模型名（abilities 表），以及配置了价格的模型名。
-- 接口推导：取三档模型和顾问模型各自支持的接口类型（`model.GetModelSupportEndpointTypes`），每个都只保留 `openai`（Chat Completions）和 `openai-response`（Responses）两种，再取交集。交集为空就是"接口不一致"，错误挂在第一个和其他模型没有交集的模型字段上。交集就是这个虚拟模型支持的接口集合。
+- 接口推导：取三档模型和顾问模型各自支持的接口类型（`model.GetModelSupportEndpointTypes`），每个都只保留 `openai`（Chat Completions）和 `openai-response`（Responses）两种，再取交集。按简单档、普通档、困难档、顾问的顺序逐个取交集，交集第一次变空的那个模型就是"接口不一致"的模型，错误挂在它的字段上，`other` 填它之前各模型的交集。交集就是这个虚拟模型支持的接口集合。
 - 档位分组里出现 `auto` 视为无效分组，按"没有可用渠道"处理。
 - 弹窗里的「JSON」视图保存时同样检查（PRD 05 C9）。
 - 管理后台的文字由前端翻译：后端返回英文原文作为键（`common.NewMessage`），前端 7 个语言文件都要有对应翻译。
@@ -71,6 +71,9 @@ optionRoute.POST("/smart_routing/validate", controller.ValidateSmartRoute)
 - `{{name}} is a real model name. A virtual model cannot use the name of a real model`
 - `A virtual model named {{name}} already exists`
 - `Select a model`
+- `Select a valid reasoning effort`（档位的 effort 不是空、low、medium、high 之一时，挂在 `tiers.<档>.effort` 上）
+- `{{model}} supports neither Responses nor Chat Completions`（某个模型一种可用接口都没有时）
+- `Select a default tier`（默认档不是 simple / normal / hard 之一时，挂在 `default_tier` 上；正常操作只会在 JSON 视图里出现）
 - `Select at least one group`
 - `{{model}} has no available channel in group {{group}}`
 - `{{model}} has no price yet. Set it in Model Pricing first`
@@ -100,7 +103,7 @@ optionRoute.POST("/smart_routing/validate", controller.ValidateSmartRoute)
 | `UpdateOption` | 修改：`option.Key` 为 `smart_routing_setting.routes` 时，先调用 `ValidateRoutes`，失败就返回错误、不保存 |
 
 ## 协作关系
-- `ValidateRoute` 依赖：`operation_setting.SmartRouteNames`（重名检查）；`model.GetRandomSatisfiedChannel`（渠道检查，`retry=0`，不带过滤条件）；`helper.HasModelBillingConfig`（定价）；`model.GetModelSupportEndpointTypes`（接口）；`model.GetGroupEnabledModels` 或 abilities 查询（判断是否为真实模型名）。
+- `ValidateRoute` 依赖：`operation_setting.SmartRouteNames`（重名检查）；`model.GetRandomSatisfiedChannel`（渠道检查，`retry=0`，不带过滤条件）；`billing_setting.HasModelBillingConfig`（定价；从 relay/helper 下沉到 setting/billing_setting，避免 service 引用 relay 造成循环引用）；`model.GetModelSupportEndpointTypes`（接口）；`model.GetGroupEnabledModels` 或 abilities 查询（判断是否为真实模型名）。
 - 前端 12 调用校验接口，11 调用请求策略 PATCH。
 
 ## 验证方式

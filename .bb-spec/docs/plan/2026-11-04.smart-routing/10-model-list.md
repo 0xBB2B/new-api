@@ -10,7 +10,7 @@ description: /v1/models 返回的列表里加上已配置的虚拟模型名，�
 ## 业务规则（来源：PRD 01-virtual-model-routing C9，OVERVIEW 决策记录）
 - 列表里包含所有已配置的虚拟模型名。
 - 令牌设了模型白名单时，虚拟模型和普通模型一样按白名单过滤：白名单里没有虚拟模型名，就不显示它。
-- 虚拟模型本身没有价格，跳过"未定价模型不显示"的那条过滤（`helper.HasModelBillingConfig`）。
+- 虚拟模型本身没有价格，跳过"未定价模型不显示"的那条过滤（`billing_setting.HasModelBillingConfig`）。
 - 和真实模型重名的情况在保存配置时已经被拒绝（02），这里不再去重。
 - 价格页不显示虚拟模型（不改价格页相关接口）。
 - 每个虚拟模型条目的 `supported_endpoint_types` 填 02 推导出的接口集合（`smartroute.RouteEndpoints`）。

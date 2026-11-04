@@ -217,6 +217,12 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	}
+	if option.Key == operation_setting.SmartRoutingRoutesOptionKey {
+		if err := validateSmartRoutesOption(option.Value.(string)); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	switch option.Key {
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {

@@ -3,15 +3,21 @@ package smartroute_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const (
@@ -890,4 +896,329 @@ func TestDecideRoute_ToolContinuationWithChannelOnlyRecord(t *testing.T) {
 	})
 	assert.Equal(t, "normal", got.Selected)
 	assert.Equal(t, "tool_continuation", got.Reason)
+}
+
+func setupValidateRouteTest(t *testing.T) {
+	t.Helper()
+
+	originalDB := model.DB
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalPrices := ratio_setting.ModelPrice2JSONString()
+	originalRoutes := operation_setting.SmartRoutingRoutesToString()
+
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	model.DB = db
+	common.MemoryCacheEnabled = true
+
+	channels := []struct {
+		id          int
+		channelType int
+		group       string
+		modelName   string
+	}{
+		{1, constant.ChannelTypeXai, "api", "m-both"},
+		{2, constant.ChannelTypeOpenAI, "api", "m-chat"},
+		{3, constant.ChannelTypeCodex, "api", "m-resp"},
+		{4, constant.ChannelTypeXai, "api", "m-noprice"},
+	}
+	priority := int64(0)
+	weight := uint(100)
+	for _, ch := range channels {
+		require.NoError(t, db.Create(&model.Channel{
+			Id: ch.id, Type: ch.channelType, Key: fmt.Sprintf("key-%d", ch.id),
+			Status: common.ChannelStatusEnabled, Name: fmt.Sprintf("channel-%d", ch.id),
+			Weight: &weight, Models: ch.modelName, Group: ch.group, Priority: &priority,
+		}).Error)
+		require.NoError(t, db.Create(&model.Ability{
+			Group: ch.group, Model: ch.modelName, ChannelId: ch.id,
+			Enabled: true, Priority: &priority, Weight: weight,
+		}).Error)
+	}
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(
+		`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"m-priced-only":0.01}`))
+	operation_setting.LoadSmartRoutesFromJSONString(`[]`)
+	model.InitChannelCache()
+	model.RefreshPricing()
+
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalPrices))
+		operation_setting.LoadSmartRoutesFromJSONString(originalRoutes)
+		if originalMemoryCacheEnabled && originalDB != nil &&
+			originalDB.Migrator().HasTable(&model.Channel{}) && originalDB.Migrator().HasTable(&model.Ability{}) {
+			model.InitChannelCache()
+		}
+		sqlDB, err := db.DB()
+		if err == nil {
+			require.NoError(t, sqlDB.Close())
+		}
+	})
+}
+
+func validRoute() operation_setting.SmartRoute {
+	tier := operation_setting.SmartRouteTier{Model: "m-both", Groups: []string{"api"}}
+	return operation_setting.SmartRoute{
+		Name: "smart-a",
+		Tiers: map[string]operation_setting.SmartRouteTier{
+			operation_setting.SmartTierSimple: tier,
+			operation_setting.SmartTierNormal: tier,
+			operation_setting.SmartTierHard:   tier,
+		},
+		DefaultTier:               operation_setting.SmartTierNormal,
+		Scorer:                    operation_setting.SmartRouteScorer{Model: "m-chat", Groups: []string{"api"}, TimeoutMs: 2000},
+		Advisor:                   operation_setting.SmartRouteAdvisor{Model: "m-both", Groups: []string{"api"}, AfterDissatisfied: 3},
+		DowngradeMaxHistoryTokens: 4000,
+		ConfidenceThreshold:       0.6,
+		SimpleMaxMessageChars:     500,
+	}
+}
+
+func setTier(route *operation_setting.SmartRoute, name string, mutate func(*operation_setting.SmartRouteTier)) {
+	tier := route.Tiers[name]
+	mutate(&tier)
+	route.Tiers[name] = tier
+}
+
+func TestValidateRoute_ValidRoute(t *testing.T) {
+	setupValidateRouteTest(t)
+
+	errs, endpoints := smartroute.ValidateRoute(validRoute(), "")
+
+	assert.Empty(t, errs)
+	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, endpoints)
+}
+
+func TestValidateRoute_SingleFieldErrors(t *testing.T) {
+	const (
+		keyNoChannel = "{{model}} has no available channel in group {{group}}"
+		keyNoPrice   = "{{model}} has no price yet. Set it in Model Pricing first"
+		keySelect    = "Select a model"
+		keyGroups    = "Select at least one group"
+	)
+	tests := []struct {
+		name       string
+		mutate     func(*operation_setting.SmartRoute)
+		original   string
+		wantField  string
+		wantKey    string
+		wantParams map[string]any
+	}{
+		{"empty name", func(r *operation_setting.SmartRoute) { r.Name = "" }, "", "name", "Enter a name", nil},
+		{"default tier is not a tier", func(r *operation_setting.SmartRoute) { r.DefaultTier = "foo" }, "", "default_tier", "Select a default tier", nil},
+		{"name equals channel model", func(r *operation_setting.SmartRoute) { r.Name = "m-both" }, "", "name",
+			"{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": "m-both"}},
+		{"name equals priced model without channel", func(r *operation_setting.SmartRoute) { r.Name = "m-priced-only" }, "", "name",
+			"{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": "m-priced-only"}},
+		{"name equals other virtual model", func(r *operation_setting.SmartRoute) { r.Name = "smart-taken" }, "", "name",
+			"A virtual model named {{name}} already exists", map[string]any{"name": "smart-taken"}},
+		{"renamed onto other virtual model", func(r *operation_setting.SmartRoute) { r.Name = "smart-taken" }, "smart-a", "name",
+			"A virtual model named {{name}} already exists", map[string]any{"name": "smart-taken"}},
+		{"simple model empty", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "" })
+		}, "", "tiers.simple.model", keySelect, nil},
+		{"normal model empty", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierNormal, func(t *operation_setting.SmartRouteTier) { t.Model = "" })
+		}, "", "tiers.normal.model", keySelect, nil},
+		{"hard model empty", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Model = "" })
+		}, "", "tiers.hard.model", keySelect, nil},
+		{"scorer model empty", func(r *operation_setting.SmartRoute) { r.Scorer.Model = "" }, "", "scorer.model", keySelect, nil},
+		{"advisor model empty", func(r *operation_setting.SmartRoute) { r.Advisor.Model = "" }, "", "advisor.model", keySelect, nil},
+		{"simple groups empty", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Groups = nil })
+		}, "", "tiers.simple.groups", keyGroups, nil},
+		{"scorer groups empty", func(r *operation_setting.SmartRoute) { r.Scorer.Groups = []string{} }, "", "scorer.groups", keyGroups, nil},
+		{"advisor groups empty", func(r *operation_setting.SmartRoute) { r.Advisor.Groups = nil }, "", "advisor.groups", keyGroups, nil},
+		{"tier group auto is invalid", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Groups = []string{"auto"} })
+		}, "", "tiers.hard.model", keyNoChannel, map[string]any{"model": "m-both", "group": "auto"}},
+		{"tier model has no channel in group", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Groups = []string{"api", "vip"} })
+		}, "", "tiers.hard.model", keyNoChannel, map[string]any{"model": "m-both", "group": "vip"}},
+		{"scorer model has no channel in group", func(r *operation_setting.SmartRoute) { r.Scorer.Groups = []string{"vip"} }, "",
+			"scorer.model", keyNoChannel, map[string]any{"model": "m-chat", "group": "vip"}},
+		{"advisor model has no channel in group", func(r *operation_setting.SmartRoute) { r.Advisor.Groups = []string{"vip"} }, "",
+			"advisor.model", keyNoChannel, map[string]any{"model": "m-both", "group": "vip"}},
+		{"scorer model without price", func(r *operation_setting.SmartRoute) { r.Scorer.Model = "m-noprice" }, "",
+			"scorer.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
+		{"tier model without price", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierNormal, func(t *operation_setting.SmartRouteTier) { t.Model = "m-noprice" })
+		}, "", "tiers.normal.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
+		{"advisor model without price", func(r *operation_setting.SmartRoute) { r.Advisor.Model = "m-noprice" }, "",
+			"advisor.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
+		{"tier endpoint conflicts with advisor", func(r *operation_setting.SmartRoute) {
+			for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+				setTier(r, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
+			}
+			r.Advisor.Model = "m-resp"
+		}, "", "advisor.model",
+			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "openai-response", "other": "openai"}},
+		{"endpoint conflict points at the model that empties the shared set", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
+			setTier(r, operation_setting.SmartTierNormal, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
+			r.Advisor.Model = "m-both"
+		}, "", "tiers.hard.model",
+			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "openai-response", "other": "openai"}},
+		{"unknown reasoning effort", func(r *operation_setting.SmartRoute) {
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Effort = "ultra" })
+		}, "", "tiers.hard.effort", "Select a valid reasoning effort", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupValidateRouteTest(t)
+			operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"smart-taken"}]`)
+			route := validRoute()
+			tt.mutate(&route)
+
+			errs, _ := smartroute.ValidateRoute(route, tt.original)
+
+			require.Len(t, errs, 1)
+			assert.Equal(t, tt.wantField, errs[0].Field)
+			require.NotNil(t, errs[0].Message)
+			assert.Equal(t, tt.wantKey, errs[0].Message.Key)
+			for name, want := range tt.wantParams {
+				assert.Equal(t, want, errs[0].Message.Params[name], "param %s", name)
+			}
+		})
+	}
+}
+
+func TestValidateRoute_EndpointMismatchReportsNoEndpoints(t *testing.T) {
+	setupValidateRouteTest(t)
+	route := validRoute()
+	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+		setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
+	}
+	route.Advisor.Model = "m-resp"
+
+	errs, endpoints := smartroute.ValidateRoute(route, "")
+
+	require.NotEmpty(t, errs)
+	assert.Empty(t, endpoints)
+}
+
+func TestValidateRoute_NameEqualsOriginalNameIsNotDuplicate(t *testing.T) {
+	setupValidateRouteTest(t)
+	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"smart-a"}]`)
+
+	errs, _ := smartroute.ValidateRoute(validRoute(), "smart-a")
+	assert.Empty(t, errs)
+
+	errs, _ = smartroute.ValidateRoute(validRoute(), "")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "name", errs[0].Field)
+}
+
+func TestValidateRoute_ScorerMayUseDifferentEndpoint(t *testing.T) {
+	setupValidateRouteTest(t)
+	route := validRoute()
+	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+		setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
+	}
+	route.Advisor.Model = "m-resp"
+	route.Scorer.Model = "m-chat"
+
+	errs, endpoints := smartroute.ValidateRoute(route, "")
+
+	assert.Empty(t, errs)
+	assert.Equal(t, []string{responsesEndpoint}, endpoints)
+}
+
+func TestValidateRoute_NumberRanges(t *testing.T) {
+	const keyRange = "Enter a value between {{min}} and {{max}}"
+	const keyInt = "Enter an integer of 0 or more"
+	tests := []struct {
+		name      string
+		set       func(*operation_setting.SmartRoute)
+		wantField string
+		wantKey   string
+		wantMin   string
+		wantMax   string
+	}{
+		{"timeout at lower bound", func(r *operation_setting.SmartRoute) { r.Scorer.TimeoutMs = 100 }, "", "", "", ""},
+		{"timeout at upper bound", func(r *operation_setting.SmartRoute) { r.Scorer.TimeoutMs = 30000 }, "", "", "", ""},
+		{"timeout below range", func(r *operation_setting.SmartRoute) { r.Scorer.TimeoutMs = 99 }, "scorer.timeout_ms", keyRange, "100", "30000"},
+		{"timeout above range", func(r *operation_setting.SmartRoute) { r.Scorer.TimeoutMs = 30001 }, "scorer.timeout_ms", keyRange, "100", "30000"},
+		{"dissatisfied at lower bound", func(r *operation_setting.SmartRoute) { r.Advisor.AfterDissatisfied = 1 }, "", "", "", ""},
+		{"dissatisfied at upper bound", func(r *operation_setting.SmartRoute) { r.Advisor.AfterDissatisfied = 10 }, "", "", "", ""},
+		{"dissatisfied zero", func(r *operation_setting.SmartRoute) { r.Advisor.AfterDissatisfied = 0 }, "advisor.after_dissatisfied", keyRange, "1", "10"},
+		{"dissatisfied negative", func(r *operation_setting.SmartRoute) { r.Advisor.AfterDissatisfied = -1 }, "advisor.after_dissatisfied", keyRange, "1", "10"},
+		{"dissatisfied above range", func(r *operation_setting.SmartRoute) { r.Advisor.AfterDissatisfied = 11 }, "advisor.after_dissatisfied", keyRange, "1", "10"},
+		{"downgrade zero", func(r *operation_setting.SmartRoute) { r.DowngradeMaxHistoryTokens = 0 }, "", "", "", ""},
+		{"downgrade large", func(r *operation_setting.SmartRoute) { r.DowngradeMaxHistoryTokens = 1000000 }, "", "", "", ""},
+		{"downgrade negative", func(r *operation_setting.SmartRoute) { r.DowngradeMaxHistoryTokens = -1 }, "downgrade_max_history_tokens", keyInt, "", ""},
+		{"confidence zero", func(r *operation_setting.SmartRoute) { r.ConfidenceThreshold = 0 }, "", "", "", ""},
+		{"confidence one", func(r *operation_setting.SmartRoute) { r.ConfidenceThreshold = 1 }, "", "", "", ""},
+		{"confidence negative", func(r *operation_setting.SmartRoute) { r.ConfidenceThreshold = -0.01 }, "confidence_threshold", keyRange, "0", "1"},
+		{"confidence above one", func(r *operation_setting.SmartRoute) { r.ConfidenceThreshold = 1.01 }, "confidence_threshold", keyRange, "0", "1"},
+		{"chars at lower bound", func(r *operation_setting.SmartRoute) { r.SimpleMaxMessageChars = 1 }, "", "", "", ""},
+		{"chars at upper bound", func(r *operation_setting.SmartRoute) { r.SimpleMaxMessageChars = 100000 }, "", "", "", ""},
+		{"chars zero", func(r *operation_setting.SmartRoute) { r.SimpleMaxMessageChars = 0 }, "simple_max_message_chars", keyRange, "1", "100000"},
+		{"chars above range", func(r *operation_setting.SmartRoute) { r.SimpleMaxMessageChars = 100001 }, "simple_max_message_chars", keyRange, "1", "100000"},
+	}
+
+	setupValidateRouteTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := validRoute()
+			tt.set(&route)
+
+			errs, _ := smartroute.ValidateRoute(route, "")
+
+			if tt.wantField == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, tt.wantField, errs[0].Field)
+			assert.Equal(t, tt.wantKey, errs[0].Message.Key)
+			if tt.wantMin != "" {
+				assert.Equal(t, tt.wantMin, fmt.Sprint(errs[0].Message.Params["min"]))
+				assert.Equal(t, tt.wantMax, fmt.Sprint(errs[0].Message.Params["max"]))
+			}
+		})
+	}
+}
+
+func TestRouteEndpoints(t *testing.T) {
+	setupValidateRouteTest(t)
+	mixed := validRoute()
+	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+		setTier(&mixed, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
+	}
+	mixed.Advisor.Model = "m-resp"
+	conflict := validRoute()
+	setTier(&conflict, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
+	conflict.Advisor.Model = "m-resp"
+
+	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, smartroute.RouteEndpoints(validRoute()))
+	assert.Equal(t, []string{responsesEndpoint}, smartroute.RouteEndpoints(mixed))
+	assert.Empty(t, smartroute.RouteEndpoints(conflict))
+}
+
+func TestValidateRoutes(t *testing.T) {
+	setupValidateRouteTest(t)
+	second := validRoute()
+	second.Name = "smart-b"
+	invalid := validRoute()
+	invalid.Name = "smart-bad"
+	invalid.Advisor.AfterDissatisfied = -1
+	duplicate := validRoute()
+
+	assert.NoError(t, smartroute.ValidateRoutes(nil))
+	assert.NoError(t, smartroute.ValidateRoutes([]operation_setting.SmartRoute{validRoute(), second}))
+	assert.Error(t, smartroute.ValidateRoutes([]operation_setting.SmartRoute{validRoute(), duplicate}))
+
+	err := smartroute.ValidateRoutes([]operation_setting.SmartRoute{validRoute(), invalid})
+	require.Error(t, err)
+	var message *common.Message
+	require.True(t, errors.As(err, &message))
+	assert.Equal(t, "Virtual model {{name}}: {{detail}}", message.Key)
+	assert.Equal(t, "smart-bad", message.Params["name"])
 }
