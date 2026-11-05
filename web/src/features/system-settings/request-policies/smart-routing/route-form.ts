@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
+import { SMART_EFFORTS } from './capability'
 import type { SmartRoute } from './types'
 
 export type RouteFormValues = SmartRoute
@@ -34,14 +35,46 @@ export function createRouteFormSchema(t: TFunction) {
       .max(max, range(min, max))
   const model = z.string().min(1, t('Select a model'))
   const groups = z.array(z.string()).min(1, t('Select at least one group'))
-  const tier = z.object({
-    model,
-    groups,
-    effort: z.enum(['', 'low', 'medium', 'high']),
-  })
+  const effort = z.enum(['', ...SMART_EFFORTS])
+  const tier = z
+    .object({
+      model,
+      groups,
+      effort_mode: z.enum(['', 'fixed', 'follow']),
+      effort,
+      effort_min: effort,
+      effort_max: effort,
+    })
+    .superRefine((value, ctx) => {
+      const issue = (path: string, message: string) =>
+        ctx.addIssue({ code: 'custom', path: [path], message })
+      const invalid = t('Select a valid reasoning effort')
+      const { effort_mode: mode } = value
+      if (mode !== 'fixed' && value.effort) issue('effort', invalid)
+      if (mode !== 'follow' && value.effort_min) issue('effort_min', invalid)
+      if (mode !== 'follow' && value.effort_max) issue('effort_max', invalid)
+      if (mode === 'fixed' && !value.effort) issue('effort', invalid)
+      if (mode !== 'follow') return
+      if (!value.effort_min) issue('effort_min', invalid)
+      if (!value.effort_max) issue('effort_max', invalid)
+      if (
+        value.effort_min &&
+        value.effort_max &&
+        SMART_EFFORTS.indexOf(value.effort_min) >
+          SMART_EFFORTS.indexOf(value.effort_max)
+      ) {
+        issue(
+          'effort_max',
+          t('The minimum effort cannot be higher than the maximum')
+        )
+      }
+    })
 
   return z.object({
     name: z.string().trim().min(1, t('Enter a name')),
+    endpoints: z
+      .array(z.enum(['openai-response', 'openai', 'anthropic']))
+      .min(1, t('Select at least one endpoint')),
     tiers: z.object({ simple: tier, normal: tier, hard: tier }),
     default_tier: z.enum(['simple', 'normal', 'hard']),
     scorer: z.object({
@@ -67,9 +100,17 @@ export function createRouteFormSchema(t: TFunction) {
 }
 
 export function emptyRouteFormValues(): RouteFormValues {
-  const tier = () => ({ model: '', groups: [], effort: '' as const })
+  const tier = () => ({
+    model: '',
+    groups: [],
+    effort_mode: '' as const,
+    effort: '' as const,
+    effort_min: '' as const,
+    effort_max: '' as const,
+  })
   return {
     name: '',
+    endpoints: ['openai-response'],
     tiers: { simple: tier(), normal: tier(), hard: tier() },
     default_tier: 'normal',
     scorer: { model: '', groups: [], timeout_ms: 2000 },
