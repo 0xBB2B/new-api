@@ -19,6 +19,7 @@ import { useState } from 'react'
 import { Toaster } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
@@ -683,7 +684,7 @@ it('saved efforts are low for a picked value and empty for Keep client value', a
     await screen.findByRole('option', { name: 'Keep client value' })
   )
   await userEvent.click(within(dialog).getAllByLabelText('Reasoning effort')[0])
-  await userEvent.click(await screen.findByRole('option', { name: 'Low' }))
+  await userEvent.click(await screen.findByRole('option', { name: 'low' }))
   await saveDialog()
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -798,4 +799,40 @@ it('cancelling while the check is pending leaves the table unchanged', async () 
   await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
   expect(screen.queryByRole('row', { name: /auto-renamed/ })).toBeNull()
   expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
+})
+
+it('reasoning effort options keep low, medium and high untranslated in Chinese', async () => {
+  i18next.addResourceBundle('zh', 'translation', zh.translation, true, true)
+  await i18next.changeLanguage('zh')
+  setRoutes([dialogRoute, autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const row = await screen.findByRole('row', { name: /auto-gpt/ })
+  await userEvent.click(within(row).getByRole('button', { name: '编辑' }))
+  const dialog = await screen.findByRole('dialog')
+  await userEvent.click(within(dialog).getAllByLabelText('思考力度')[0])
+  for (const name of ['low', 'medium', 'high']) {
+    expect(await screen.findByRole('option', { name })).toBeVisible()
+  }
+  expect(screen.queryByRole('option', { name: '低' })).toBeNull()
+})
+
+it('a model field error leaves the model input showing its value with no open list', async () => {
+  setRoutes([dialogRoute, autoChat])
+  mockDialogApis({
+    errors: [validationError('tiers.hard.model', 'gpt-max')],
+    endpoints: [],
+  })
+  show()
+  const dialog = await openEditDialog('auto-gpt')
+  await saveDialog()
+  expect(
+    await within(dialog).findByText(
+      'gpt-max has no available channel in group api'
+    )
+  ).toBeVisible()
+  expect(within(dialog).getByLabelText('Hard tier model')).toHaveValue(
+    'gpt-max'
+  )
+  expect(screen.queryByRole('listbox')).toBeNull()
 })

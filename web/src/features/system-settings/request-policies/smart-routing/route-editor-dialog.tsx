@@ -185,6 +185,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
               value={field.value}
               onValueChange={field.onChange}
               placeholder={t('Select a model')}
+              openOnFocus={false}
               aria-label={ariaLabel}
             />
           </FormControl>
@@ -266,9 +267,9 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
   }
   const effortItems = [
     { value: KEEP_EFFORT, label: t('Keep client value') },
-    { value: 'low', label: t('Low') },
-    { value: 'medium', label: t('Medium') },
-    { value: 'high', label: t('High') },
+    { value: 'low', label: 'low' },
+    { value: 'medium', label: 'medium' },
+    { value: 'high', label: 'high' },
   ]
   const tierItems = SMART_TIER_IDS.map((id) => ({
     value: id,

@@ -237,7 +237,7 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
         tabIndex: 0,
       }}
       tableProps={{ withContainer: false }}
-      tableClassName='min-w-[1080px] table-fixed [&_th]:px-4 [&_th]:text-muted-foreground [&_td]:px-4 [&_td]:py-4 [&_code]:font-mono!'
+      tableClassName='min-w-[960px] table-fixed [&_th]:px-4 [&_th]:text-muted-foreground [&_td]:px-4 [&_td]:py-4 [&_code]:font-mono!'
       headerRowClassName='bg-muted/35 hover:bg-muted/35'
       data={props.routes}
       columns={[
