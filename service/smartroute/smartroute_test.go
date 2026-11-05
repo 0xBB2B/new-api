@@ -1688,3 +1688,143 @@ func TestValidateRoute_EffortModes(t *testing.T) {
 		})
 	}
 }
+
+func useThinkingOverrides(t *testing.T, value string) {
+	t.Helper()
+	original := operation_setting.ThinkingCapabilitiesToString()
+	operation_setting.LoadThinkingCapabilitiesFromJSONString(value)
+	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(original) })
+}
+
+func TestBuiltinThinkingCapability(t *testing.T) {
+	useThinkingOverrides(t, `{}`)
+	tests := []struct {
+		name       string
+		model      string
+		source     string
+		noThinking bool
+		efforts    []string
+	}{
+		{"gpt-5 支持 minimal 到 high", "gpt-5", "builtin", false, []string{"minimal", "low", "medium", "high"}},
+		{"gpt-5.1 默认 none 且支持 low 到 high", "gpt-5.1", "builtin", false, []string{"none", "low", "medium", "high"}},
+		{"gpt-4.1 非推理模型", "gpt-4.1", "builtin", true, []string{}},
+		{"deepseek-v4-pro 可关闭且有 low/high/max", "deepseek-v4-pro", "builtin", false, []string{"none", "low", "high", "max"}},
+		{"claude opus 4.6", "claude-opus-4-6", "builtin", false, []string{"none", "low", "medium", "high", "max"}},
+		{"gemini 3 pro", "gemini-3-pro-preview", "builtin", false, []string{"low", "high"}},
+		{"gemini 图像模型不支持思考", "gemini-2.5-flash-image", "builtin", true, []string{}},
+		{"gpt-4o 非推理", "gpt-4o", "builtin", true, []string{}},
+		{"gpt-4.1-mini 非推理", "gpt-4.1-mini", "builtin", true, []string{}},
+		{"gpt-5-pro 只有 high", "gpt-5-pro", "builtin", false, []string{"high"}},
+		{"gpt-5.2", "gpt-5.2", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.4", "gpt-5.4", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.4-mini", "gpt-5.4-mini", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.4-nano", "gpt-5.4-nano", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.5", "gpt-5.5", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.2-pro", "gpt-5.2-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
+		{"gpt-5.4-pro", "gpt-5.4-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
+		{"gpt-5.5-pro", "gpt-5.5-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
+		{"gpt-5.2-codex", "gpt-5.2-codex", "builtin", false, []string{"low", "medium", "high", "xhigh"}},
+		{"gpt-5.3-codex", "gpt-5.3-codex", "builtin", false, []string{"low", "medium", "high", "xhigh"}},
+		{"gpt-5.6", "gpt-5.6", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-5.6-sol", "gpt-5.6-sol", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-5.6-terra", "gpt-5.6-terra", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-5.6-luna", "gpt-5.6-luna", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-sol", "gpt-6-sol", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-luna", "gpt-6-luna", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6.1-terra", "gpt-6.1-terra", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-astra", "gpt-6-astra", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6.1-sol", "gpt-6.1-sol", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"deepseek-v4-flash", "deepseek-v4-flash", "builtin", false, []string{"none", "low", "high", "max"}},
+		{"o3 文档未写明档位，未确认", "o3", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"o4-mini 文档未写明档位，未确认", "o4-mini", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"gpt-5-mini 文档未写明档位，未确认", "gpt-5-mini", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"gpt-5.6-cyber 文档未写明档位，未确认", "gpt-5.6-cyber", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"deepseek-flash 文档未写明档位，未确认", "deepseek-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"日期快照后缀 gpt-5-2025-08-07 同 gpt-5", "gpt-5-2025-08-07", "builtin", false, []string{"minimal", "low", "medium", "high"}},
+		{"日期快照后缀 gpt-5.4-2026-03-05 同 gpt-5.4", "gpt-5.4-2026-03-05", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"大小写不敏感 GPT-5.5 同 gpt-5.5", "GPT-5.5", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"前缀不误匹配 gpt-5-pro-2025-10-06 同 gpt-5-pro", "gpt-5-pro-2025-10-06", "builtin", false, []string{"high"}},
+		{"gpt-4o-mini-tts 不是 Gemini 家族，未确认", "gpt-4o-mini-tts", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"qwen3-tts-flash 不是 Gemini 家族，未确认", "qwen3-tts-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"qwen3-livetranslate-flash 不是 Gemini 家族，未确认", "qwen3-livetranslate-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"未收录模型未确认", "glm-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := smartroute.BuiltinThinkingCapability(tt.model)
+			assert.Equal(t, tt.source, got.Source)
+			assert.Equal(t, tt.noThinking, got.NoThinking)
+			assert.Equal(t, tt.efforts, got.Efforts)
+		})
+	}
+}
+
+func TestEffectiveThinkingCapability(t *testing.T) {
+	t.Run("无覆盖时等同内置", func(t *testing.T) {
+		useThinkingOverrides(t, `{}`)
+		assert.Equal(t, smartroute.BuiltinThinkingCapability("gpt-5"), smartroute.EffectiveThinkingCapability("gpt-5"))
+	})
+
+	t.Run("覆盖未收录模型", func(t *testing.T) {
+		useThinkingOverrides(t, `{"glm-5.1":{"no_thinking":false,"efforts":["low","high"]}}`)
+		got := smartroute.EffectiveThinkingCapability("glm-5.1")
+		assert.Equal(t, "override", got.Source)
+		assert.False(t, got.NoThinking)
+		assert.Equal(t, []string{"low", "high"}, got.Efforts)
+	})
+
+	t.Run("覆盖优先于内置", func(t *testing.T) {
+		useThinkingOverrides(t, `{"gpt-4.1":{"no_thinking":false,"efforts":["medium"]}}`)
+		got := smartroute.EffectiveThinkingCapability("gpt-4.1")
+		assert.Equal(t, "override", got.Source)
+		assert.False(t, got.NoThinking)
+		assert.Equal(t, []string{"medium"}, got.Efforts)
+	})
+
+	t.Run("覆盖为不支持思考", func(t *testing.T) {
+		useThinkingOverrides(t, `{"gpt-5":{"no_thinking":true,"efforts":[]}}`)
+		got := smartroute.EffectiveThinkingCapability("gpt-5")
+		assert.Equal(t, "override", got.Source)
+		assert.True(t, got.NoThinking)
+	})
+
+	t.Run("内置查询不受覆盖影响", func(t *testing.T) {
+		useThinkingOverrides(t, `{"gpt-5":{"no_thinking":true,"efforts":[]}}`)
+		assert.Equal(t, "builtin", smartroute.BuiltinThinkingCapability("gpt-5").Source)
+	})
+}
+
+func TestClampEffortToCapability(t *testing.T) {
+	capability := func(efforts ...string) smartroute.ThinkingCapability {
+		return smartroute.ThinkingCapability{Source: "builtin", Efforts: efforts}
+	}
+	tests := []struct {
+		name       string
+		effort     string
+		capability smartroute.ThinkingCapability
+		want       string
+		changed    bool
+	}{
+		{"支持的档位原样返回", "low", capability("low", "high"), "low", false},
+		{"medium 与 low、high 一样近，取更高", "medium", capability("low", "high"), "high", true},
+		{"xhigh 超出上限收敛到 high", "xhigh", capability("low", "medium", "high"), "high", true},
+		{"高于上限的 max 收敛到最高档", "max", capability("low", "high", "xhigh"), "xhigh", true},
+		{"minimal 低于下限收敛到 low", "minimal", capability("low", "medium", "high"), "low", true},
+		{"请求 none 但不支持，取最近一档", "none", capability("minimal", "low", "high"), "minimal", true},
+		{"请求 none 且支持", "none", capability("none", "low"), "none", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := smartroute.ClampEffortToCapability(tt.effort, tt.capability)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.changed, changed)
+		})
+	}
+}
+
+func TestClampEffortToCapability_NoThinkingYieldsEmpty(t *testing.T) {
+	for _, effort := range []string{"none", "low", "high", "max"} {
+		got, _ := smartroute.ClampEffortToCapability(effort, smartroute.ThinkingCapability{Source: "builtin", NoThinking: true})
+		assert.Empty(t, got, effort)
+	}
+}

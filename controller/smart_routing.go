@@ -57,3 +57,20 @@ func validateThinkingCapabilitiesOption(value string) error {
 	}
 	return nil
 }
+
+func GetSmartRouteThinkingCapabilities(c *gin.Context) {
+	data := gin.H{}
+	for name := range strings.SplitSeq(c.Query("models"), ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		capability := smartroute.BuiltinThinkingCapability(name)
+		data[name] = gin.H{
+			"known":       capability.Source == smartroute.ThinkingSourceBuiltin,
+			"no_thinking": capability.NoThinking,
+			"efforts":     capability.Efforts,
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
+}

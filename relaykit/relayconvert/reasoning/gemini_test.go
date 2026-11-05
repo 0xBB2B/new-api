@@ -363,3 +363,41 @@ func TestNormalizeGeminiThinkingConfigRewritesNativeConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiSupportedEfforts(t *testing.T) {
+	t.Parallel()
+
+	exact := []struct {
+		name           string
+		model          string
+		want           []Effort
+		wantNoThinking bool
+	}{
+		{"3 pro 只有 low/high", "gemini-3-pro-preview", []Effort{EffortLow, EffortHigh}, false},
+		{"3.1 pro 有 low/medium/high", "gemini-3.1-pro-preview", []Effort{EffortLow, EffortMedium, EffortHigh}, false},
+		{"3 flash 有 minimal 到 high", "gemini-3-flash-preview", []Effort{EffortMinimal, EffortLow, EffortMedium, EffortHigh}, false},
+		{"2.5 flash 按预算换算、可关闭", "gemini-2.5-flash", []Effort{EffortNone, EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}, false},
+		{"2.5 pro 按预算换算、不可关闭", "gemini-2.5-pro", []Effort{EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}, false},
+		{"图像模型不可配置思考", "gemini-2.5-flash-image", nil, true},
+		{"TTS 模型不可配置思考", "gemini-2.5-flash-preview-tts", nil, true},
+	}
+	for _, tt := range exact {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, noThinking, known := GeminiSupportedEfforts(tt.model)
+			assert.True(t, known)
+			assert.Equal(t, tt.wantNoThinking, noThinking)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("未收录的 Gemini 型号与非 Gemini 家族", func(t *testing.T) {
+		t.Parallel()
+		for _, model := range []string{"gemini-1.5-pro", "gpt-4o", "gpt-4o-mini-tts", "qwen3-tts-flash", "qwen3-livetranslate-flash"} {
+			got, noThinking, known := GeminiSupportedEfforts(model)
+			assert.False(t, known, model)
+			assert.False(t, noThinking, model)
+			assert.Empty(t, got, model)
+		}
+	})
+}
