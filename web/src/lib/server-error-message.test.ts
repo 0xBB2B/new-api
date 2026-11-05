@@ -121,7 +121,7 @@ describe('server error message mapping', () => {
   })
 
   test.each([
-    ['zhCN', '虚拟模型 auto-gpt：gpt-5.6-terra 在分组 api 中没有可用渠道'],
+    ['zhCN', '虚拟模型 auto-gpt：gpt-5.6-terra 在分组 api 里没有可用渠道'],
     [
       'en',
       'Virtual model auto-gpt: gpt-5.6-terra has no available channel in group api',

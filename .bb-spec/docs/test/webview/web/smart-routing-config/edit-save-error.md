@@ -7,7 +7,7 @@ category: smart-routing-config
 ## 简介
 编辑 auto-gpt，把困难档模型换成只在 subscription 分组有渠道的 gpt-5.6-terra（分组顺序仍是 subscription → api），点弹窗里的「保存」；看到报错后改回 gpt-5.6-sol 再保存。
 ## 测试目的
-PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可用渠道时，弹窗不关，困难档模型下面红字写「gpt-5.6-terra 在分组 api 中没有可用渠道」；改正后保存，弹窗关闭、表格更新。同时检查出错的模型框仍显示模型名、下拉没有自动展开。
+PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可用渠道时，弹窗不关，困难档模型下面红字写「gpt-5.6-terra 在分组 api 里没有可用渠道」；改正后保存，弹窗关闭、表格更新。同时检查出错的模型框仍显示模型名、下拉没有自动展开。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -84,11 +84,11 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
     },
     {
       "action": "waitFor",
-      "text": "gpt-5.6-terra 在分组 api 中没有可用渠道"
+      "text": "gpt-5.6-terra 在分组 api 里没有可用渠道"
     },
     {
       "action": "evaluate",
-      "script": "() => { const dlg = document.querySelector('[role=dialog]'); if (!dlg) throw new Error('弹窗关闭了'); const box = dlg.querySelector('[role=combobox][aria-label=\"困难档模型\"]'); const msg = [...dlg.querySelectorAll('p')].find((p) => p.textContent.trim() === 'gpt-5.6-terra 在分组 api 中没有可用渠道'); if (!msg) throw new Error('没有红字提示'); if (!msg.classList.contains('text-destructive')) throw new Error('提示不是红字：' + msg.className); const block = msg.closest('[data-slot=form-item]') || msg.parentElement; if (!block.contains(box)) throw new Error('红字不在困难档模型字段下面'); if (box.value !== 'gpt-5.6-terra') throw new Error('困难档模型框显示：' + box.value); if (box.getAttribute('aria-expanded') === 'true') throw new Error('出错后模型下拉自动展开了'); return 'ok'; }",
+      "script": "() => { const dlg = document.querySelector('[role=dialog]'); if (!dlg) throw new Error('弹窗关闭了'); const box = dlg.querySelector('[role=combobox][aria-label=\"困难档模型\"]'); const msg = [...dlg.querySelectorAll('p')].find((p) => p.textContent.trim() === 'gpt-5.6-terra 在分组 api 里没有可用渠道'); if (!msg) throw new Error('没有红字提示'); if (!msg.classList.contains('text-destructive')) throw new Error('提示不是红字：' + msg.className); const block = msg.closest('[data-slot=form-item]') || msg.parentElement; if (!block.contains(box)) throw new Error('红字不在困难档模型字段下面'); if (box.value !== 'gpt-5.6-terra') throw new Error('困难档模型框显示：' + box.value); if (box.getAttribute('aria-expanded') === 'true') throw new Error('出错后模型下拉自动展开了'); return 'ok'; }",
       "expect": "ok"
     },
     {
@@ -137,6 +137,6 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
 }
 ```
 ## 如何验收
-- [ ] 保存后弹窗不关，困难档模型下面红字「gpt-5.6-terra 在分组 api 中没有可用渠道」
+- [ ] 保存后弹窗不关，困难档模型下面红字「gpt-5.6-terra 在分组 api 里没有可用渠道」
 - [ ] 出错的模型框仍显示 gpt-5.6-terra，下拉没有自动展开
 - [ ] 改回 gpt-5.6-sol 再保存，弹窗关闭

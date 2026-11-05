@@ -82,10 +82,12 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	var outcome smartroute.ScorerOutcome
 	if isUserTurn {
 		outcome, err = smartroute.RunScorer(c, route, inspection)
-		if errors.Is(err, smartroute.ErrScorerInsufficientQuota) {
-			abortWithOpenAiMessage(c, http.StatusForbidden,
-				i18n.T(c, i18n.MsgQuotaUserInsufficient, map[string]any{"Remaining": logger.FormatQuota(common.GetContextKeyInt(c, constant.ContextKeyUserQuota))}),
-				types.ErrorCodeInsufficientUserQuota)
+		var billingErr *types.NewAPIError
+		if errors.Is(err, smartroute.ErrScorerInsufficientQuota) && errors.As(err, &billingErr) {
+			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(billingErr.Error())))
+			billingErr.SetMessage(common.MessageWithRequestId(billingErr.Error(), c.GetString(common.RequestIdKey)))
+			c.JSON(billingErr.StatusCode, gin.H{"error": billingErr.ToOpenAIError(common.UpstreamAddresses(c)...)})
+			c.Abort()
 			return false
 		}
 		if err != nil && outcome.Failure == "" {

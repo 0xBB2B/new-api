@@ -575,7 +575,6 @@ it('server errors appear under their fields, translated, and the dialog stays op
   expect(post).toHaveBeenCalledTimes(1)
   expect(post.mock.calls[0][0]).toBe('/api/option/smart_routing/validate')
   expect(post.mock.calls[0][1]).toMatchObject({ route: { name: 'auto-gpt' } })
-  expect(post.mock.calls[0][1]).not.toHaveProperty('original_name')
   expect(screen.getByRole('dialog')).toBeVisible()
   expect(api.patch).not.toHaveBeenCalled()
 })

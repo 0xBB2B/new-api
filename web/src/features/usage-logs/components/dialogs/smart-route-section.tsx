@@ -104,20 +104,30 @@ const LABEL_ORDER: Array<keyof SmartRouteLabels> = [
 function labelValueText(
   t: TFunction,
   key: keyof SmartRouteLabels,
-  labels: SmartRouteLabels
+  labels: SmartRouteLabels,
+  locale: string | undefined
 ): string {
   const value = labels[key]
-  if (typeof value === 'number') return value.toFixed(2)
+  if (typeof value === 'number') {
+    return new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value)
+  }
   return labelValues(t)[key]?.[value ?? ''] ?? String(value)
 }
 
-function smartRouteLabelsText(t: TFunction, labels: SmartRouteLabels): string {
+function smartRouteLabelsText(
+  t: TFunction,
+  labels: SmartRouteLabels,
+  locale: string | undefined
+): string {
   const names = labelNames(t)
   return LABEL_ORDER.filter((key) => labels[key] != null)
     .map((key) =>
       t('{{name}}: {{value}}', {
         name: names[key],
-        value: labelValueText(t, key, labels),
+        value: labelValueText(t, key, labels, locale),
       })
     )
     .join(' · ')
@@ -182,7 +192,7 @@ function smartRouteReasonText(
       const labels = routing.labels ?? {}
       const items = (params.matched ?? []).map(
         (key) =>
-          `${names[key]}=${labelValueText(t, key as keyof SmartRouteLabels, labels)}`
+          `${names[key]}=${labelValueText(t, key as keyof SmartRouteLabels, labels, locale)}`
       )
       return { text: items.join(t('、')), danger: false }
     }
@@ -340,7 +350,7 @@ export function SmartRouteSection(props: {
         {showLabels && (
           <DetailRow
             label={t('Score labels')}
-            value={smartRouteLabelsText(t, routing.labels ?? {})}
+            value={smartRouteLabelsText(t, routing.labels ?? {}, locale)}
           />
         )}
         {(routing.cleaned_reasoning ?? 0) > 0 && (

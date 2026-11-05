@@ -7,7 +7,7 @@ category: smart-routing-config
 ## 简介
 切到「JSON」视图，把整份配置改成困难档用 gpt-5.6-terra 的版本，点右上角「保存更改」。
 ## 测试目的
-PRD 05-config-page 验收 C9：JSON 视图保存时按 C7 同样检查，报「gpt-5.6-terra 在分组 api 中没有可用渠道」。
+PRD 05-config-page 验收 C9：JSON 视图保存时按 C7 同样检查，报「gpt-5.6-terra 在分组 api 里没有可用渠道」。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -76,7 +76,7 @@ PRD 05-config-page 验收 C9：JSON 视图保存时按 C7 同样检查，报「g
     },
     {
       "action": "waitFor",
-      "text": "gpt-5.6-terra 在分组 api 中没有可用渠道"
+      "text": "gpt-5.6-terra 在分组 api 里没有可用渠道"
     },
     {
       "action": "screenshot",
@@ -93,4 +93,4 @@ PRD 05-config-page 验收 C9：JSON 视图保存时按 C7 同样检查，报「g
 }
 ```
 ## 如何验收
-- [ ] 点「保存更改」后提示里写「gpt-5.6-terra 在分组 api 中没有可用渠道」（和弹窗里的中文提示相同），配置没有保存
+- [ ] 点「保存更改」后提示里写「gpt-5.6-terra 在分组 api 里没有可用渠道」（和弹窗里的中文提示相同），配置没有保存

@@ -106,7 +106,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	}
 	if apiErr := PrepareRequestBilling(c, info); apiErr != nil {
 		if apiErr.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
-			return smartroute.ScorerOutcome{}, smartroute.ErrScorerInsufficientQuota
+			return smartroute.ScorerOutcome{}, fmt.Errorf("%w: %w", smartroute.ErrScorerInsufficientQuota, apiErr)
 		}
 		refund()
 		return scorerFailed("reserving scorer quota: %s", apiErr.Error())

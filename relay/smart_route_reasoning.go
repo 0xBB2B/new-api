@@ -61,11 +61,8 @@ func stripEncryptedReasoningInput(input json.RawMessage) (json.RawMessage, int) 
 }
 
 func recordStrippedReasoning(c *gin.Context, count int) {
-	if count == 0 {
-		return
-	}
 	result, ok := smartroute.GetRouteResult(c)
-	if !ok {
+	if !ok || result.StrippedReasoningCount == count {
 		return
 	}
 	result.StrippedReasoningCount = count

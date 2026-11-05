@@ -208,7 +208,7 @@ cat <<EOF
   gpt-5.5        普通档   subscription + api，有价格
   gpt-5.6-sol    困难档/顾问 subscription + api，有价格
   gpt-5.6-luna   打分模型 subscription + api，有价格
-  gpt-5.6-terra  只在 subscription（用来触发"在分组 api 中没有可用渠道"），有价格
+  gpt-5.6-terra  只在 subscription（用来触发"在分组 api 里没有可用渠道"），有价格
   gpt-5.6-ghost  所有分组都没有渠道，有价格（下拉里不应出现）
   scorer-mini    有渠道但没定价
 智能路由配置 smart_routing_setting.routes = []

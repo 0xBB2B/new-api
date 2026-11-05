@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -728,7 +730,8 @@ func TestSmartRouteDistributeNonAutoTokenFallsBackToDefaultTierWithoutChannel(t 
 
 func TestSmartRouteDistributeInsufficientScorerQuotaRejectsRequest(t *testing.T) {
 	setupSmartRouteDistributeTest(t)
-	stub := installSmartScorerStub(t, nil, "", smartroute.ErrScorerInsufficientQuota)
+	stub := installSmartScorerStub(t, nil, "", fmt.Errorf("%w: %w", smartroute.ErrScorerInsufficientQuota,
+		types.NewErrorWithStatusCode(errors.New("insufficient quota"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)))
 
 	recorder, seen := serveSmartRoute(t, smartRequest{
 		path: "/v1/responses", auto: true, tokenID: 9107,

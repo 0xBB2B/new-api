@@ -423,6 +423,15 @@ func TestRunSmartRouteScorer_InsufficientQuotaSkipsUpstream(t *testing.T) {
 	outcome, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(5000, "api"), scorerInspection(t))
 
 	require.ErrorIs(t, err, smartroute.ErrScorerInsufficientQuota)
+	ordinaryRequest := &dto.GeneralOpenAIRequest{Model: "scorer-x"}
+	ordinaryCtx := scorerContext("api")
+	common.SetContextKey(ordinaryCtx, constant.ContextKeyOriginalModel, "scorer-x")
+	ordinaryInfo, infoErr := relaycommon.GenRelayInfo(ordinaryCtx, types.RelayFormatOpenAI, ordinaryRequest, nil)
+	require.NoError(t, infoErr)
+	ordinaryErr := PrepareRequestBilling(ordinaryCtx, ordinaryInfo)
+	require.NotNil(t, ordinaryErr)
+	assert.Contains(t, ordinaryErr.Error(), "remaining")
+	assert.Contains(t, err.Error(), ordinaryErr.Error())
 	assert.Nil(t, outcome.Settle)
 	assert.Zero(t, f.hits.Load())
 	assert.Empty(t, scorerConsumeLogs(t, f.db))
@@ -437,11 +446,14 @@ func TestRunSmartRouteScorer_TimeoutCancelsUpstreamRequest(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "scorer_timeout", outcome.Failure)
-	select {
-	case <-f.cancelled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream request was not cancelled after the scorer timeout")
-	}
+	require.Eventually(t, func() bool {
+		select {
+		case <-f.cancelled:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond, "upstream request was not cancelled after the scorer timeout")
 }
 
 func TestRunSmartRouteScorer_HistoryFollowsConfiguredN(t *testing.T) {
@@ -557,4 +569,40 @@ func TestPrepareResponsesRequestPassthroughStripsReasoningOnWire(t *testing.T) {
 	result, ok := smartroute.GetRouteResult(c)
 	require.True(t, ok)
 	assert.Equal(t, 1, result.StrippedReasoningCount)
+}
+
+func TestPrepareResponsesRequestRetryOnLastChannelDropsStaleCleanedReasoningCount(t *testing.T) {
+	const input = `[{"type":"reasoning","id":"rs_1","encrypted_content":"e1"},{"type":"reasoning","id":"rs_2","encrypted_content":"e2"},{"type":"message","role":"user","content":"hi"}]`
+	raw := []byte(`{"model":"gpt-4o","input":` + input + `}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	storage, err := common.CreateBodyStorage(raw)
+	require.NoError(t, err)
+	defer storage.Close()
+	c.Set(common.KeyBodyStorage, storage)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: true})
+	smartroute.SetRouteResult(c, smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 5}})
+
+	attempt := func(channelID int) {
+		common.SetContextKey(c, constant.ContextKeyChannelId, channelID)
+		request := &dto.OpenAIResponsesRequest{Model: "gpt-4o", Input: []byte(input)}
+		info := relaycommon.GenRelayInfoResponses(c, request)
+		_, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
+		require.Nil(t, apiErr)
+		defer closer.Close()
+		_, err := io.ReadAll(body)
+		require.NoError(t, err)
+	}
+
+	attempt(9)
+	logFields, ok := common.GetContextKey(c, constant.ContextKeySmartRouteLog)
+	require.True(t, ok)
+	assert.Equal(t, 2, logFields.(map[string]any)["cleaned_reasoning"])
+
+	attempt(5)
+	logFields, ok = common.GetContextKey(c, constant.ContextKeySmartRouteLog)
+	require.True(t, ok)
+	assert.NotContains(t, logFields.(map[string]any), "cleaned_reasoning")
 }

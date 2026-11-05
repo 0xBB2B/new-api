@@ -29,6 +29,7 @@ import { toast } from 'sonner'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import en from '@/i18n/locales/en.json'
+import fr from '@/i18n/locales/fr.json'
 import zh from '@/i18n/locales/zh.json'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -1024,4 +1025,14 @@ test('score labels row is translated in zh', async () => {
       '任务类型：查找资料或信息 · 要想多深：低 · 工作量：一步 · 出错代价：低 · 工作类型：代码 · 把握：0.91 · 用户反馈：满意'
     )
   ).toBeVisible()
+})
+
+test('score labels confidence follows the French decimal comma with two decimals', async () => {
+  i18n.addResourceBundle('fr', 'translation', fr.translation)
+  await i18n.changeLanguage('fr')
+  const dialog = renderDialog({
+    smart_routing: { ...mainRouting, labels: fullLabels },
+  })
+  expect(dialog.getByText(/0,91/)).toBeVisible()
+  expect(dialog.queryByText(/0\.91/)).toBeNull()
 })
