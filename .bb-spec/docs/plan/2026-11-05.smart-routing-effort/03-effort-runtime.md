@@ -12,7 +12,7 @@ description: 请求时按力度方式算出思考力度、按模型能力收敛�
 - C4：跟随打分 → 用户新消息按「要想多深」低→low、中→medium、高→high，再限制在最低～最高之间。
 - C5：跟随打分时打分失败（超时、报错、格式不对）→ 用最高值；打分把握不足而用默认档时「要想多深」照样有值，按 C4 算。
 - C6：工具结果续跑、Responses 压缩请求不打分 → 沿用会话里本轮用户新消息最终发出的力度；会话没有记录时，跟随打分用最高值，固定用固定值，不覆盖用客户端的值。续跑落到的档位和会话里记的档位不同（如档位没渠道换成默认档）时，按新档位的方式重新算，没有打分结果按「会话没有记录」处理。
-- C7：算出的力度按「有效思考能力」收敛到最接近的一档（一样近取更高）。「不覆盖」时客户端的值也收敛。
+- C7：算出的力度按「有效思考能力」收敛到最接近的一档（一样近取更高）。「不覆盖」时客户端的值也收敛；客户端带的值不是七档之一（如大写、拼错）时先转小写再判断，仍不认识就原样保留、不改写，source 记 client。
 - C8：档位模型不支持思考 → 不论哪种方式都去掉请求里的思考参数：Responses 的 `reasoning.effort`、Chat Completions 的 `reasoning_effort` 和 `reasoning`、Anthropic 的 `thinking` 和 `output_config.effort`。
 - C9：顾问那一轮用客户端带的值，不收敛不改写。
 - C11：三种格式都按上面处理。Anthropic 格式写力度的方式：none → `thinking` 设成 `{"type":"disabled"}` 并去掉 `output_config.effort`；其他值 → `output_config.effort` 设成这个值，并去掉 `thinking.budget_tokens`（否则客户端的预算会盖过档位力度），`thinking.type` 为 disabled 时去掉整个 `thinking`。Responses 写 `reasoning.effort`；Chat 写 `reasoning_effort` 并删 `reasoning`（一期做法）。
@@ -37,7 +37,7 @@ description: 请求时按力度方式算出思考力度、按模型能力收敛�
 
 - `value`：实际发给上游的力度；不发送时为空字符串。
 - `source`：`follow`（跟随打分）、`fixed`（固定）、`client`（不覆盖或顾问，客户端带了值）、`client_unset`（不覆盖，客户端没带）、`no_thinking`（模型不支持思考，已去掉参数）。
-- `from`：发生降档时为降档前的值，否则省略。
+- `from`：发出前按模型能力换了档位（升或降）时为换档前的值，否则省略。
 
 ## 函数清单
 ### service/smartroute/effort.go
