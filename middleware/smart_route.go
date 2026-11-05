@@ -24,6 +24,7 @@ import (
 var smartRouteEndpointNames = map[string]string{
 	string(constant.EndpointTypeOpenAIResponse): "Responses",
 	string(constant.EndpointTypeOpenAI):         "Chat Completions",
+	string(constant.EndpointTypeAnthropic):      "Anthropic",
 }
 
 // applySmartRoute 返回 false 表示已经写出错误响应，调用方直接结束请求。
@@ -39,7 +40,7 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 		path = "/v1/responses"
 	}
 	endpoint := smartroute.RequestEndpointFromPath(path)
-	supported := smartroute.RouteEndpoints(route)
+	supported := route.Endpoints
 	if endpoint == "" || !slices.Contains(supported, endpoint) {
 		names := make([]string, 0, len(supported))
 		for _, e := range supported {

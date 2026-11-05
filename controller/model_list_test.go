@@ -579,7 +579,7 @@ func listVirtualModelTestModels(t *testing.T, tokenModelLimit map[string]bool) [
 
 func TestListModelsVirtualModel(t *testing.T) {
 	tier := `{"model":"m-resp","groups":["api"],"effort":""}`
-	route := `[{"name":"auto-gpt","tiers":{"simple":` + tier + `,"normal":` + tier + `,"hard":` + tier + `},` +
+	route := `[{"name":"auto-gpt","endpoints":["openai-response","anthropic"],"tiers":{"simple":` + tier + `,"normal":` + tier + `,"hard":` + tier + `},` +
 		`"default_tier":"normal","scorer":{"model":"m-resp","groups":["api"],"timeout_ms":2000},` +
 		`"advisor":{"model":"m-resp","groups":["api"],"after_dissatisfied":2},` +
 		`"downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`
@@ -618,7 +618,7 @@ func TestListModelsVirtualModel(t *testing.T) {
 				return
 			}
 			require.NotNil(t, virtual)
-			assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIResponse}, virtual.SupportedEndpointTypes)
+			assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIResponse, constant.EndpointTypeAnthropic}, virtual.SupportedEndpointTypes)
 		})
 	}
 }

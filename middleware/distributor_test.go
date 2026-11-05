@@ -410,35 +410,42 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 }
 
 const smartRoutesJSON = `[
- {"name":"auto-gpt","tiers":{
+ {"name":"auto-gpt","endpoints":["openai-response","openai","anthropic"],"tiers":{
    "simple":{"model":"t-simple","groups":["default"],"effort":""},
    "normal":{"model":"t-normal","groups":["default"],"effort":""},
-   "hard":{"model":"t-hard","groups":["vip"],"effort":"high"}},
+   "hard":{"model":"t-hard","groups":["vip"],"effort_mode":"fixed","effort":"high"}},
   "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
   "advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":3},
   "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
- {"name":"auto-keep","tiers":{
+ {"name":"auto-keep","endpoints":["openai-response","openai","anthropic"],"tiers":{
    "simple":{"model":"t-simple","groups":["default"],"effort":""},
    "normal":{"model":"t-normal","groups":["default"],"effort":""},
    "hard":{"model":"t-hard","groups":["vip"],"effort":""}},
   "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
   "advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":1},
   "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
- {"name":"resp-only","tiers":{
+ {"name":"resp-only","endpoints":["openai-response"],"tiers":{
    "simple":{"model":"r-resp","groups":["default"],"effort":""},
    "normal":{"model":"r-resp","groups":["default"],"effort":""},
    "hard":{"model":"r-resp","groups":["default"],"effort":""}},
   "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
   "advisor":{"model":"r-resp","groups":["default"],"after_dissatisfied":3},
   "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
- {"name":"auto-adv","tiers":{
+ {"name":"auto-adv","endpoints":["openai-response","openai","anthropic"],"tiers":{
    "simple":{"model":"t-simple","groups":["default"],"effort":""},
    "normal":{"model":"t-normal","groups":["default"],"effort":""},
    "hard":{"model":"t-hard","groups":["vip"],"effort":""}},
   "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
   "advisor":{"model":"t-advisor-hidden","groups":["hidden"],"after_dissatisfied":1},
   "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
- {"name":"chat-only","tiers":{
+ {"name":"resp-anthropic","endpoints":["openai-response","anthropic"],"tiers":{
+   "simple":{"model":"t-simple","groups":["default"],"effort":""},
+   "normal":{"model":"t-normal","groups":["default"],"effort":""},
+   "hard":{"model":"t-normal","groups":["default"],"effort":""}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":3},
+  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
+ {"name":"chat-only","endpoints":["openai"],"tiers":{
    "simple":{"model":"c-chat","groups":["default"],"effort":""},
    "normal":{"model":"c-chat","groups":["default"],"effort":""},
    "hard":{"model":"c-chat","groups":["default"],"effort":""}},
@@ -707,6 +714,22 @@ func TestSmartRouteDistributeRejectsUnsupportedEndpoint(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
 	assert.Contains(t, smartBodyField(t, recorder.Body.Bytes(), "error", "message"), "Virtual model resp-only only supports these endpoints: Responses")
+	assert.False(t, seen.ran)
+	assert.Zero(t, stub.calls)
+	assert.Empty(t, stub.settles)
+}
+
+func TestSmartRouteDistributeRejectsEndpointOutsideConfiguredList(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+	recorder, seen := serveSmartRoute(t, smartRequest{
+		path: "/v1/chat/completions", auto: false, tokenID: 9106,
+		body: `{"model":"resp-anthropic","messages":[{"role":"user","content":"hi"}]}`,
+	})
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assert.Contains(t, smartBodyField(t, recorder.Body.Bytes(), "error", "message"), "Virtual model resp-anthropic only supports these endpoints: Responses, Anthropic")
 	assert.False(t, seen.ran)
 	assert.Zero(t, stub.calls)
 	assert.Empty(t, stub.settles)

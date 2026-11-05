@@ -966,7 +966,8 @@ func setupValidateRouteTest(t *testing.T) {
 func validRoute() operation_setting.SmartRoute {
 	tier := operation_setting.SmartRouteTier{Model: "m-both", Groups: []string{"api"}}
 	return operation_setting.SmartRoute{
-		Name: "smart-a",
+		Name:      "smart-a",
+		Endpoints: []string{responsesEndpoint, chatEndpoint},
 		Tiers: map[string]operation_setting.SmartRouteTier{
 			operation_setting.SmartTierSimple: tier,
 			operation_setting.SmartTierNormal: tier,
@@ -990,10 +991,7 @@ func setTier(route *operation_setting.SmartRoute, name string, mutate func(*oper
 func TestValidateRoute_ValidRoute(t *testing.T) {
 	setupValidateRouteTest(t)
 
-	errs, endpoints := smartroute.ValidateRoute(validRoute())
-
-	assert.Empty(t, errs)
-	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, endpoints)
+	assert.Empty(t, smartroute.ValidateRoute(validRoute()))
 }
 
 func TestValidateRoute_SingleFieldErrors(t *testing.T) {
@@ -1050,22 +1048,8 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 		}, "", "tiers.normal.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
 		{"advisor model without price", func(r *operation_setting.SmartRoute) { r.Advisor.Model = "m-noprice" }, "",
 			"advisor.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
-		{"tier endpoint conflicts with advisor", func(r *operation_setting.SmartRoute) {
-			for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
-				setTier(r, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-			}
-			r.Advisor.Model = "m-resp"
-		}, "", "advisor.model",
-			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "Responses", "other": "Chat Completions"}},
-		{"endpoint conflict points at the model that empties the shared set", func(r *operation_setting.SmartRoute) {
-			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
-			setTier(r, operation_setting.SmartTierNormal, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
-			r.Advisor.Model = "m-both"
-		}, "", "tiers.hard.model",
-			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "Responses", "other": "Chat Completions"}},
 		{"unknown reasoning effort", func(r *operation_setting.SmartRoute) {
-			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Effort = "ultra" })
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.EffortMode = "fixed"; t.Effort = "ultra" })
 		}, "", "tiers.hard.effort", "Select a valid reasoning effort", nil},
 	}
 
@@ -1076,7 +1060,7 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 			route := validRoute()
 			tt.mutate(&route)
 
-			errs, _ := smartroute.ValidateRoute(route)
+			errs := smartroute.ValidateRoute(route)
 
 			require.Len(t, errs, 1)
 			assert.Equal(t, tt.wantField, errs[0].Field)
@@ -1089,25 +1073,11 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 	}
 }
 
-func TestValidateRoute_EndpointMismatchReportsNoEndpoints(t *testing.T) {
-	setupValidateRouteTest(t)
-	route := validRoute()
-	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
-		setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-	}
-	route.Advisor.Model = "m-resp"
-
-	errs, endpoints := smartroute.ValidateRoute(route)
-
-	require.NotEmpty(t, errs)
-	assert.Empty(t, endpoints)
-}
-
 func TestValidateRoute_SavedRouteWithSameNameIsNotDuplicate(t *testing.T) {
 	setupValidateRouteTest(t)
 	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"smart-a"}]`)
 
-	errs, _ := smartroute.ValidateRoute(validRoute())
+	errs := smartroute.ValidateRoute(validRoute())
 
 	assert.Empty(t, errs)
 }
@@ -1151,7 +1121,7 @@ func TestValidateRoute_SelfUseModeKeepsVirtualNameUsable(t *testing.T) {
 			route := validRoute()
 			route.Name = tt.route
 
-			errs, _ := smartroute.ValidateRoute(route)
+			errs := smartroute.ValidateRoute(route)
 
 			require.Len(t, errs, tt.wantErrs)
 			if tt.wantErrs > 0 {
@@ -1168,7 +1138,7 @@ func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
 		route := validRoute()
 		route.Scorer.Model = "m-resp"
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
 
 		assert.Empty(t, errs)
 	})
@@ -1188,7 +1158,7 @@ func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
 		route := validRoute()
 		route.Scorer.Model = "m-repl"
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
 
 		require.Len(t, errs, 1)
 		assert.Equal(t, "scorer.model", errs[0].Field)
@@ -1211,7 +1181,7 @@ func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
 		route := validRoute()
 		route.Scorer.Model = "m-resp"
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
 
 		assert.Empty(t, errs)
 	})
@@ -1224,7 +1194,7 @@ func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
 		}
 		route.Advisor.Model = "m-resp"
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
 
 		assert.Empty(t, errs)
 	})
@@ -1239,10 +1209,7 @@ func TestValidateRoute_ScorerMayUseDifferentEndpoint(t *testing.T) {
 	route.Advisor.Model = "m-resp"
 	route.Scorer.Model = "m-chat"
 
-	errs, endpoints := smartroute.ValidateRoute(route)
-
-	assert.Empty(t, errs)
-	assert.Equal(t, []string{responsesEndpoint}, endpoints)
+	assert.Empty(t, smartroute.ValidateRoute(route))
 }
 
 func TestValidateRoute_NumberRanges(t *testing.T) {
@@ -1284,7 +1251,7 @@ func TestValidateRoute_NumberRanges(t *testing.T) {
 			route := validRoute()
 			tt.set(&route)
 
-			errs, _ := smartroute.ValidateRoute(route)
+			errs := smartroute.ValidateRoute(route)
 
 			if tt.wantField == "" {
 				assert.Empty(t, errs)
@@ -1299,22 +1266,6 @@ func TestValidateRoute_NumberRanges(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestRouteEndpoints(t *testing.T) {
-	setupValidateRouteTest(t)
-	mixed := validRoute()
-	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
-		setTier(&mixed, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
-	}
-	mixed.Advisor.Model = "m-resp"
-	conflict := validRoute()
-	setTier(&conflict, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-	conflict.Advisor.Model = "m-resp"
-
-	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, smartroute.RouteEndpoints(validRoute()))
-	assert.Equal(t, []string{responsesEndpoint}, smartroute.RouteEndpoints(mixed))
-	assert.Empty(t, smartroute.RouteEndpoints(conflict))
 }
 
 func TestValidateRoutes(t *testing.T) {
@@ -1345,7 +1296,7 @@ func TestValidateRoutes_DetailIsTranslatableMessage(t *testing.T) {
 	setTier(&noChannel, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
 		tier.Groups = []string{"missing-group"}
 	})
-	fieldErrs, _ := smartroute.ValidateRoute(noChannel)
+	fieldErrs := smartroute.ValidateRoute(noChannel)
 	require.NotEmpty(t, fieldErrs)
 
 	err := smartroute.ValidateRoutes([]operation_setting.SmartRoute{noChannel})
@@ -1621,4 +1572,119 @@ func TestDecideRoute_ScorerTimeoutCarriesTimeoutMs(t *testing.T) {
 	got := smartroute.DecideRoute(smartroute.DecideInput{Cfg: cfg, IsUserTurn: true, ScorerFailure: "scorer_timeout", LatestChars: 10})
 	assert.Equal(t, "scorer_timeout", got.Reason)
 	assert.Equal(t, map[string]any{"timeout_ms": 2000}, got.Params)
+}
+
+var effortLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+func TestValidateRoute_Endpoints(t *testing.T) {
+	tests := []struct {
+		name      string
+		endpoints []string
+		wantKey   string
+	}{
+		{"empty is rejected", nil, "Select at least one endpoint"},
+		{"empty slice is rejected", []string{}, "Select at least one endpoint"},
+		{"gemini is rejected", []string{"gemini"}, ""},
+		{"valid value mixed with gemini is rejected", []string{"openai", "gemini"}, ""},
+		{"all three accepted", []string{"openai-response", "openai", "anthropic"}, "-"},
+		{"anthropic only accepted", []string{"anthropic"}, "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupValidateRouteTest(t)
+			route := validRoute()
+			route.Endpoints = tt.endpoints
+
+			errs := smartroute.ValidateRoute(route)
+
+			if tt.wantKey == "-" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, "endpoints", errs[0].Field)
+			if tt.wantKey != "" {
+				require.NotNil(t, errs[0].Message)
+				assert.Equal(t, tt.wantKey, errs[0].Message.Key)
+			}
+		})
+	}
+}
+
+func TestValidateRoute_TierModelsMayUseDifferentEndpoints(t *testing.T) {
+	setupValidateRouteTest(t)
+	route := validRoute()
+	setTier(&route, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-resp" })
+	setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
+	setTier(&route, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-both" })
+	route.Advisor.Model = "m-chat"
+
+	errs := smartroute.ValidateRoute(route)
+
+	for _, fieldErr := range errs {
+		require.NotNil(t, fieldErr.Message)
+		assert.NotContains(t, fieldErr.Message.Key, "The other models of this virtual model use")
+	}
+	assert.Empty(t, errs)
+}
+
+func TestValidateRoute_EffortModes(t *testing.T) {
+	tests := []struct {
+		name string
+		tier operation_setting.SmartRouteTier
+		ok   bool
+	}{
+		{"no override", operation_setting.SmartRouteTier{}, true},
+		{"no override with effort", operation_setting.SmartRouteTier{Effort: "low"}, false},
+		{"no override with effort_min", operation_setting.SmartRouteTier{EffortMin: "low"}, false},
+		{"no override with effort_max", operation_setting.SmartRouteTier{EffortMax: "high"}, false},
+		{"unknown mode", operation_setting.SmartRouteTier{EffortMode: "auto"}, false},
+		{"fixed empty effort", operation_setting.SmartRouteTier{EffortMode: "fixed"}, false},
+		{"fixed unknown effort", operation_setting.SmartRouteTier{EffortMode: "fixed", Effort: "ultra"}, false},
+		{"follow min above max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "high", EffortMax: "low"}, false},
+		{"follow unknown min", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "ultra", EffortMax: "high"}, false},
+		{"follow unknown max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "low", EffortMax: "ultra"}, false},
+		{"follow empty min", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMax: "high"}, false},
+		{"follow empty max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "low"}, false},
+		{"follow min equals max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "medium", EffortMax: "medium"}, true},
+		{"follow full range", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "none", EffortMax: "max"}, true},
+	}
+	for _, level := range effortLevels {
+		tests = append(tests, struct {
+			name string
+			tier operation_setting.SmartRouteTier
+			ok   bool
+		}{"fixed " + level, operation_setting.SmartRouteTier{EffortMode: "fixed", Effort: level}, true})
+	}
+	for lo, minLevel := range effortLevels {
+		for _, maxLevel := range effortLevels[lo:] {
+			tests = append(tests, struct {
+				name string
+				tier operation_setting.SmartRouteTier
+				ok   bool
+			}{"follow " + minLevel + " to " + maxLevel, operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: minLevel, EffortMax: maxLevel}, true})
+		}
+	}
+
+	setupValidateRouteTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := validRoute()
+			setTier(&route, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
+				tier.EffortMode = tt.tier.EffortMode
+				tier.Effort = tt.tier.Effort
+				tier.EffortMin = tt.tier.EffortMin
+				tier.EffortMax = tt.tier.EffortMax
+			})
+
+			errs := smartroute.ValidateRoute(route)
+
+			if tt.ok {
+				assert.Empty(t, errs)
+				return
+			}
+			require.NotEmpty(t, errs)
+			assert.True(t, strings.HasPrefix(errs[0].Field, "tiers.hard.effort"), errs[0].Field)
+		})
+	}
 }

@@ -1,6 +1,7 @@
 package operation_setting
 
 import (
+	"slices"
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,9 +14,12 @@ const (
 )
 
 type SmartRouteTier struct {
-	Model  string   `json:"model"`
-	Groups []string `json:"groups"`
-	Effort string   `json:"effort"` // "" 表示不覆盖客户端的值；否则为 low / medium / high
+	Model      string   `json:"model"`
+	Groups     []string `json:"groups"`
+	EffortMode string   `json:"effort_mode"` // "" 不覆盖客户端的值；fixed 只用 Effort；follow 只用 EffortMin / EffortMax
+	Effort     string   `json:"effort"`
+	EffortMin  string   `json:"effort_min"`
+	EffortMax  string   `json:"effort_max"`
 }
 
 type SmartRouteScorer struct {
@@ -32,6 +36,7 @@ type SmartRouteAdvisor struct {
 
 type SmartRoute struct {
 	Name                      string                    `json:"name"`
+	Endpoints                 []string                  `json:"endpoints"`
 	Tiers                     map[string]SmartRouteTier `json:"tiers"` // 键只允许 simple / normal / hard
 	DefaultTier               string                    `json:"default_tier"`
 	Scorer                    SmartRouteScorer          `json:"scorer"`
@@ -40,6 +45,8 @@ type SmartRoute struct {
 	ConfidenceThreshold       float64                   `json:"confidence_threshold"`
 	SimpleMaxMessageChars     int                       `json:"simple_max_message_chars"`
 }
+
+var SmartEffortLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 type SmartRoutingSetting struct {
 	Routes []SmartRoute `json:"routes"`
@@ -85,6 +92,10 @@ func SmartTierRank(tier string) int {
 		return 2
 	}
 	return -1
+}
+
+func SmartEffortRank(effort string) int {
+	return slices.Index(SmartEffortLevels, effort)
 }
 
 func SmartRoutingRoutesToString() string {

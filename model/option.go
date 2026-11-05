@@ -722,6 +722,11 @@ func handleConfigUpdate(key, value string) bool {
 		return true
 	}
 
+	if key == operation_setting.SmartThinkingCapabilitiesOptionKey {
+		operation_setting.LoadThinkingCapabilitiesFromJSONString(value)
+		return true
+	}
+
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) != 2 {
 		return false // 不是分层配置

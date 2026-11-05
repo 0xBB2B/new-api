@@ -27,6 +27,12 @@ func UpdateRequestPolicy(c *gin.Context) {
 			return
 		}
 	}
+	if table, ok := request.Options[operation_setting.SmartThinkingCapabilitiesOptionKey]; ok {
+		if err := validateThinkingCapabilitiesOption(table); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+			return
+		}
+	}
 	if err := model.UpdateRequestPolicyOptions(request.Options); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return

@@ -19,7 +19,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -186,9 +185,8 @@ func buildSmartRouteModels(tokenModelLimit map[string]bool, modelLimitEnable boo
 		if modelLimitEnable && !tokenModelLimit[route.Name] {
 			continue
 		}
-		endpoints := smartroute.RouteEndpoints(route)
-		endpointTypes := make([]constant.EndpointType, 0, len(endpoints))
-		for _, endpoint := range endpoints {
+		endpointTypes := make([]constant.EndpointType, 0, len(route.Endpoints))
+		for _, endpoint := range route.Endpoints {
 			endpointTypes = append(endpointTypes, constant.EndpointType(endpoint))
 		}
 		result = append(result, dto.OpenAIModels{

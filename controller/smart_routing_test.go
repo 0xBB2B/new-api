@@ -24,7 +24,7 @@ const smartRoutingBaseRoutes = `[]`
 
 func smartRouteJSON(name string, afterDissatisfied int) string {
 	tier := `{"model":"m-both","groups":["api"],"effort":""}`
-	return fmt.Sprintf(`{"name":%q,"tiers":{"simple":%s,"normal":%s,"hard":%s},"default_tier":"normal",`+
+	return fmt.Sprintf(`{"name":%q,"endpoints":["openai-response","openai"],"tiers":{"simple":%s,"normal":%s,"hard":%s},"default_tier":"normal",`+
 		`"scorer":{"model":"m-both","groups":["api"],"timeout_ms":2000},`+
 		`"advisor":{"model":"m-both","groups":["api"],"after_dissatisfied":%d},`+
 		`"downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}`,
@@ -96,7 +96,6 @@ type validateSmartRouteResponse struct {
 				Params map[string]any `json:"params"`
 			} `json:"message"`
 		} `json:"errors"`
-		Endpoints []string `json:"endpoints"`
 	} `json:"data"`
 }
 
@@ -121,12 +120,12 @@ func TestValidateSmartRoute_Response(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.True(t, valid.Success)
 	assert.Contains(t, recorder.Body.String(), `"errors":[]`)
-	assert.ElementsMatch(t, []string{"openai", "openai-response"}, valid.Data.Endpoints)
+	assert.NotContains(t, recorder.Body.String(), `"endpoints"`)
 
 	recorder, invalid := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s}`, smartRouteJSON("m-both", 0)))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.True(t, invalid.Success)
-	assert.Contains(t, recorder.Body.String(), `"endpoints":[]`)
+	assert.NotContains(t, recorder.Body.String(), `"endpoints"`)
 	require.Len(t, invalid.Data.Errors, 2)
 	assert.Equal(t, "name", invalid.Data.Errors[0].Field)
 	assert.Equal(t, "{{name}} is a real model name. A virtual model cannot use the name of a real model", invalid.Data.Errors[0].Message.Key)
@@ -185,4 +184,85 @@ func TestUpdateOption_SmartRoutesValidation(t *testing.T) {
 	assert.False(t, decodeQuotaResetOptionResponse(t, recorder).Success)
 	assert.Equal(t, smartRoutingBaseRoutes, readOptionMapValue(t, operation_setting.SmartRoutingRoutesOptionKey))
 	assert.Equal(t, smartRoutingBaseRoutes, operation_setting.SmartRoutingRoutesToString())
+}
+
+func TestValidateSmartRoute_EndpointsFieldErrors(t *testing.T) {
+	setupSmartRoutingControllerTest(t)
+	route := strings.Replace(smartRouteJSON("smart-a", 3), `"endpoints":["openai-response","openai"]`, `"endpoints":[]`, 1)
+
+	_, response := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s}`, route))
+
+	require.Len(t, response.Data.Errors, 1)
+	assert.Equal(t, "endpoints", response.Data.Errors[0].Field)
+	assert.Equal(t, "Select at least one endpoint", response.Data.Errors[0].Message.Key)
+}
+
+func TestThinkingCapabilitiesOption(t *testing.T) {
+	const key = "smart_routing_setting.thinking_capabilities"
+	const baseline = `{}`
+	const valid = `{"gpt-5.5":{"no_thinking":false,"efforts":["low","high","xhigh"]},"gpt-4o":{"no_thinking":true,"efforts":[]}}`
+	tests := []struct {
+		name  string
+		value string
+		ok    bool
+	}{
+		{"valid table", valid, true},
+		{"empty table", `{}`, true},
+		{"no_thinking false with empty efforts", `{"gpt-5.5":{"no_thinking":false,"efforts":[]}}`, false},
+		{"efforts contain unknown level", `{"gpt-5.5":{"no_thinking":false,"efforts":["low","ultra"]}}`, false},
+		{"empty model name", `{"":{"no_thinking":false,"efforts":["low"]}}`, false},
+		{"whitespace-only model name", `{" ":{"no_thinking":false,"efforts":["low"]}}`, false},
+		{"not an object", `["gpt-5.5"]`, false},
+	}
+	viaRequestPolicy := func(t *testing.T, value string) bool {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		body, err := common.Marshal(map[string]any{"options": map[string]string{key: value}})
+		require.NoError(t, err)
+		ctx.Request = httptest.NewRequest(http.MethodPatch, "/api/option/request_policy", bytes.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		UpdateRequestPolicy(ctx)
+		var response map[string]any
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		return response["success"] == true
+	}
+	viaUpdateOption := func(t *testing.T, value string) bool {
+		t.Helper()
+		seedQuotaResetOption(t, key, baseline)
+		recorder := putQuotaResetOption(t, key, value)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		return decodeQuotaResetOptionResponse(t, recorder).Success
+	}
+	channels := map[string]func(*testing.T, string) bool{
+		"PATCH request_policy": viaRequestPolicy,
+		"PUT option":           viaUpdateOption,
+	}
+
+	for channelName, save := range channels {
+		for _, tt := range tests {
+			t.Run(channelName+"/"+tt.name, func(t *testing.T) {
+				setupSmartRoutingControllerTest(t)
+				require.NoError(t, model.UpdateOption(key, baseline))
+				t.Cleanup(func() { require.NoError(t, model.UpdateOption(key, baseline)) })
+				before := operation_setting.GetThinkingCapabilityOverrides()
+
+				success := save(t, tt.value)
+
+				assert.Equal(t, tt.ok, success)
+				if !tt.ok {
+					assert.Equal(t, before, operation_setting.GetThinkingCapabilityOverrides())
+					return
+				}
+				var want map[string]operation_setting.ThinkingCapabilityOverride
+				require.NoError(t, common.UnmarshalJsonStr(tt.value, &want))
+				got := operation_setting.GetThinkingCapabilityOverrides()
+				assert.Len(t, got, len(want))
+				for name, capability := range want {
+					assert.Equal(t, capability.NoThinking, got[name].NoThinking, name)
+					assert.ElementsMatch(t, capability.Efforts, got[name].Efforts, name)
+				}
+			})
+		}
+	}
 }

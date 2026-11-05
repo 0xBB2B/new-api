@@ -109,6 +109,9 @@ func main() {
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.
 	model.GetPricing()
+	if err := model.MigrateSmartRouteSettings(); err != nil {
+		common.SysError(common.LogText("failed to migrate smart routing settings: %s", err.Error()))
+	}
 
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)

@@ -2,7 +2,6 @@ package smartroute
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -17,87 +16,19 @@ type FieldError struct {
 	Message *common.Message
 }
 
-type routeModelSlot struct {
-	field string
-	model string
-}
-
 var tierOrder = []string{
 	operation_setting.SmartTierSimple,
 	operation_setting.SmartTierNormal,
 	operation_setting.SmartTierHard,
 }
 
-var tierEfforts = []string{"", "low", "medium", "high"}
-
-func modelEndpoints(modelName string) []string {
-	model.GetPricing()
-	types := model.GetModelSupportEndpointTypes(modelName)
-	endpoints := make([]string, 0, len(types))
-	for _, t := range types {
-		if t == constant.EndpointTypeOpenAI || t == constant.EndpointTypeOpenAIResponse {
-			endpoints = append(endpoints, string(t))
-		}
-	}
-	return endpoints
+var routeEndpointTypes = []string{
+	string(constant.EndpointTypeOpenAIResponse),
+	string(constant.EndpointTypeOpenAI),
+	string(constant.EndpointTypeAnthropic),
 }
 
-func endpointDisplayNames(endpoints []string) string {
-	names := make([]string, 0, len(endpoints))
-	for _, endpoint := range endpoints {
-		switch constant.EndpointType(endpoint) {
-		case constant.EndpointTypeOpenAIResponse:
-			names = append(names, "Responses")
-		case constant.EndpointTypeOpenAI:
-			names = append(names, "Chat Completions")
-		}
-	}
-	return strings.Join(names, ", ")
-}
-
-// 打分模型由 new-api 自己按 Chat Completions 调用，不受虚拟模型接口限制，所以不在这里。
-func endpointSlots(route operation_setting.SmartRoute) []routeModelSlot {
-	slots := make([]routeModelSlot, 0, len(tierOrder)+1)
-	for _, name := range tierOrder {
-		slots = append(slots, routeModelSlot{field: "tiers." + name + ".model", model: route.Tiers[name].Model})
-	}
-	return append(slots, routeModelSlot{field: "advisor.model", model: route.Advisor.Model})
-}
-
-// 冲突时返回让交集变空的那个模型，以及它之前各模型的交集，用来告诉管理员"其他模型走什么接口"。
-func sharedEndpoints(route operation_setting.SmartRoute) (shared []string, conflict *routeModelSlot, before []string) {
-	first := true
-	for _, slot := range endpointSlots(route) {
-		if slot.model == "" {
-			continue
-		}
-		endpoints := modelEndpoints(slot.model)
-		next := endpoints
-		if !first {
-			next = []string{}
-			for _, endpoint := range shared {
-				if slices.Contains(endpoints, endpoint) {
-					next = append(next, endpoint)
-				}
-			}
-		}
-		if len(next) == 0 {
-			return []string{}, &slot, shared
-		}
-		shared, first = next, false
-	}
-	if shared == nil {
-		return []string{}, nil, nil
-	}
-	return shared, nil, nil
-}
-
-func RouteEndpoints(route operation_setting.SmartRoute) []string {
-	shared, _, _ := sharedEndpoints(route)
-	return shared
-}
-
-func ValidateRoute(route operation_setting.SmartRoute) ([]FieldError, []string) {
+func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 	errs := []FieldError{}
 	add := func(field, key string, params ...map[string]any) {
 		errs = append(errs, FieldError{Field: field, Message: common.NewMessage(key, params...)})
@@ -163,27 +94,58 @@ func ValidateRoute(route operation_setting.SmartRoute) ([]FieldError, []string) 
 	if operation_setting.SmartTierRank(route.DefaultTier) < 0 {
 		add("default_tier", "Select a default tier", nil)
 	}
+	switch {
+	case len(route.Endpoints) == 0:
+		add("endpoints", "Select at least one endpoint")
+	case slices.ContainsFunc(route.Endpoints, func(endpoint string) bool { return !slices.Contains(routeEndpointTypes, endpoint) }):
+		add("endpoints", "Select a valid endpoint")
+	}
 	for _, name := range tierOrder {
-		if !slices.Contains(tierEfforts, route.Tiers[name].Effort) {
-			add("tiers."+name+".effort", "Select a valid reasoning effort")
-		}
+		validateTierEffort(add, "tiers."+name, route.Tiers[name])
 	}
+	return errs
+}
 
-	if len(errs) == 0 {
-		if _, conflict, before := sharedEndpoints(route); conflict != nil {
-			endpoints := modelEndpoints(conflict.model)
-			if len(endpoints) == 0 {
-				add(conflict.field, "{{model}} supports neither Responses nor Chat Completions", map[string]any{"model": conflict.model})
-			} else {
-				add(conflict.field, "{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}",
-					map[string]any{"model": conflict.model, "endpoint": endpointDisplayNames(endpoints), "other": endpointDisplayNames(before)})
-			}
+func validateTierEffort(add func(field, key string, params ...map[string]any), prefix string, tier operation_setting.SmartRouteTier) {
+	const invalid = "Select a valid reasoning effort"
+	switch tier.EffortMode {
+	case "":
+		if tier.Effort != "" {
+			add(prefix+".effort", invalid)
 		}
+		if tier.EffortMin != "" {
+			add(prefix+".effort_min", invalid)
+		}
+		if tier.EffortMax != "" {
+			add(prefix+".effort_max", invalid)
+		}
+	case "fixed":
+		if operation_setting.SmartEffortRank(tier.Effort) < 0 {
+			add(prefix+".effort", invalid)
+		}
+		if tier.EffortMin != "" {
+			add(prefix+".effort_min", invalid)
+		}
+		if tier.EffortMax != "" {
+			add(prefix+".effort_max", invalid)
+		}
+	case "follow":
+		if tier.Effort != "" {
+			add(prefix+".effort", invalid)
+		}
+		minKnown, maxKnown := operation_setting.SmartEffortRank(tier.EffortMin) >= 0, operation_setting.SmartEffortRank(tier.EffortMax) >= 0
+		if !minKnown {
+			add(prefix+".effort_min", invalid)
+		}
+		if !maxKnown {
+			add(prefix+".effort_max", invalid)
+		}
+		if minKnown && maxKnown && operation_setting.SmartEffortRank(tier.EffortMin) > operation_setting.SmartEffortRank(tier.EffortMax) {
+			add(prefix+".effort_max", "The minimum effort cannot be higher than the maximum")
+		}
+	default:
+		add(prefix+".effort", invalid)
 	}
-	if len(errs) > 0 {
-		return errs, []string{}
-	}
-	return errs, RouteEndpoints(route)
 }
 
 func ValidateRoutes(routes []operation_setting.SmartRoute) error {
@@ -192,7 +154,7 @@ func ValidateRoutes(routes []operation_setting.SmartRoute) error {
 		fail := func(detail *common.Message) error {
 			return common.NewMessage("Virtual model {{name}}: {{detail}}", map[string]any{"name": route.Name, "detail": detail})
 		}
-		if errs, _ := ValidateRoute(route); len(errs) > 0 {
+		if errs := ValidateRoute(route); len(errs) > 0 {
 			return fail(errs[0].Message)
 		}
 		if _, dup := seen[route.Name]; dup {
