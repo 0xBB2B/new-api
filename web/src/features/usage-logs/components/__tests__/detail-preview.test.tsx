@@ -1036,3 +1036,144 @@ test('score labels confidence follows the French decimal comma with two decimals
   expect(dialog.getByText(/0,91/)).toBeVisible()
   expect(dialog.queryByText(/0\.91/)).toBeNull()
 })
+
+test.each([
+  {
+    name: 'follow',
+    effort: { value: 'high', source: 'follow' },
+    text: 'high (Follow scoring)',
+  },
+  {
+    name: 'fixed',
+    effort: { value: 'medium', source: 'fixed' },
+    text: 'medium (Fixed)',
+  },
+  {
+    name: 'client',
+    effort: { value: 'low', source: 'client' },
+    text: 'low (Not overridden, sent by the client)',
+  },
+  {
+    name: 'follow lowered from a higher level',
+    effort: { value: 'high', source: 'follow', from: 'xhigh' },
+    text: 'high (Follow scoring, lowered from xhigh)',
+  },
+  {
+    name: 'client lowered from a higher level',
+    effort: { value: 'high', source: 'client', from: 'xhigh' },
+    text: 'high (Not overridden, lowered from xhigh)',
+  },
+  {
+    name: 'client raised from a lower level',
+    effort: { value: 'low', source: 'client', from: 'minimal' },
+    text: 'low (Not overridden, raised from minimal)',
+  },
+  {
+    name: 'no_thinking',
+    effort: { value: '', source: 'no_thinking' },
+    text: 'Not sent (model does not support thinking)',
+  },
+  {
+    name: 'client_unset',
+    effort: { value: '', source: 'client_unset' },
+    text: 'Not sent (client did not specify)',
+  },
+])('reasoning effort row shows $text for $name', ({ effort, text }) => {
+  const dialog = renderDialog({
+    smart_routing: { ...mainRouting, effort },
+  })
+  expect(dialog.getByText('Reasoning effort')).toBeVisible()
+  expect(dialog.getByText(text)).toBeVisible()
+})
+
+test.each([
+  { effort: { value: 'high', source: 'follow' }, text: 'high（跟随打分）' },
+  { effort: { value: 'medium', source: 'fixed' }, text: 'medium（固定）' },
+  {
+    effort: { value: 'low', source: 'client' },
+    text: 'low（不覆盖，客户端传入）',
+  },
+  {
+    effort: { value: 'high', source: 'follow', from: 'xhigh' },
+    text: 'high（跟随打分，由 xhigh 降档）',
+  },
+  {
+    effort: { value: 'high', source: 'client', from: 'xhigh' },
+    text: 'high（不覆盖，由 xhigh 降档）',
+  },
+  {
+    effort: { value: 'low', source: 'client', from: 'minimal' },
+    text: 'low（不覆盖，由 minimal 升档）',
+  },
+  {
+    effort: { value: '', source: 'no_thinking' },
+    text: '未发送（模型不支持思考）',
+  },
+  {
+    effort: { value: '', source: 'client_unset' },
+    text: '未发送（客户端未指定）',
+  },
+])('reasoning effort row is translated in zh as $text', async ({ effort, text }) => {
+  i18n.addResourceBundle('zh', 'translation', zh.translation)
+  await i18n.changeLanguage('zh')
+  const dialog = renderDialog({ smart_routing: { ...mainRouting, effort } })
+  expect(dialog.getByText('思考力度')).toBeVisible()
+  expect(dialog.getByText(text)).toBeVisible()
+})
+
+test('reasoning effort row sits directly below the tier row', () => {
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      effort: { value: 'high', source: 'follow' },
+    },
+  })
+  const tierRow = dialog.getByText('Tier').parentElement
+  expect(tierRow?.nextElementSibling).toBe(
+    dialog.getByText('Reasoning effort').parentElement
+  )
+})
+
+test('tool continuation main request still shows the reasoning effort row', () => {
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      reason: 'tool_continuation',
+      effort: { value: 'high', source: 'follow' },
+    },
+  })
+  expect(dialog.getByText('high (Follow scoring)')).toBeVisible()
+})
+
+test('reasoning effort row is the same for a non-admin user', () => {
+  const dialog = renderDialog(
+    {
+      smart_routing: {
+        ...mainRouting,
+        effort: { value: 'high', source: 'follow' },
+      },
+    },
+    1,
+    false
+  )
+  expect(dialog.getByText('high (Follow scoring)')).toBeVisible()
+})
+
+test('score record dialog has no reasoning effort row', () => {
+  const dialog = renderDialog(
+    {
+      smart_routing: {
+        ...scorerRouting,
+        effort: { value: 'high', source: 'follow' },
+      },
+    },
+    2
+  )
+  expect(dialog.queryByText('Reasoning effort')).not.toBeInTheDocument()
+})
+
+test('old main log without effort shows no reasoning effort row and still renders', () => {
+  const dialog = renderDialog({ smart_routing: mainRouting })
+  expect(dialog.getByText('Tier')).toBeVisible()
+  expect(dialog.queryByText('Reasoning effort')).not.toBeInTheDocument()
+})
