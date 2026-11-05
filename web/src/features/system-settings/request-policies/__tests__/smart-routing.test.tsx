@@ -574,10 +574,8 @@ it('server errors appear under their fields, translated, and the dialog stays op
   ).toBeVisible()
   expect(post).toHaveBeenCalledTimes(1)
   expect(post.mock.calls[0][0]).toBe('/api/option/smart_routing/validate')
-  expect(post.mock.calls[0][1]).toMatchObject({
-    route: { name: 'auto-gpt' },
-    original_name: 'auto-gpt',
-  })
+  expect(post.mock.calls[0][1]).toMatchObject({ route: { name: 'auto-gpt' } })
+  expect(post.mock.calls[0][1]).not.toHaveProperty('original_name')
   expect(screen.getByRole('dialog')).toBeVisible()
   expect(api.patch).not.toHaveBeenCalled()
 })
@@ -622,7 +620,7 @@ it('a passing check closes the dialog and the renamed row is saved with the page
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(vi.mocked(api.post).mock.calls[0][1]).toMatchObject({
-    original_name: 'auto-gpt',
+    route: { name: 'auto-gpt-v2' },
   })
   expect(screen.getByRole('row', { name: /auto-gpt-v2/ })).toBeVisible()
   expect(api.patch).not.toHaveBeenCalled()
@@ -635,7 +633,115 @@ it('a passing check closes the dialog and the renamed row is saved with the page
   ])
 })
 
-it('a new virtual model passes the check with an empty original name and joins the table', async () => {
+async function renameInDialog(from: string, to: string) {
+  const dialog = await openEditDialog(from)
+  const name = within(dialog).getByLabelText(/^Name/)
+  await userEvent.clear(name)
+  await userEvent.type(name, to)
+  await saveDialog()
+  return dialog
+}
+
+it('two draft rows can swap names through a temporary one', async () => {
+  setRoutes([dialogRoute, autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+  show()
+
+  for (const [from, to] of [
+    ['auto-gpt', 'auto-tmp'],
+    ['auto-chat', 'auto-gpt'],
+    ['auto-tmp', 'auto-chat'],
+  ]) {
+    await renameInDialog(from, to)
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  }
+
+  expect(post).toHaveBeenCalledTimes(3)
+  expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
+  expect(screen.getByRole('row', { name: /auto-chat/ })).toBeVisible()
+  expect(screen.queryByRole('row', { name: /auto-tmp/ })).toBeNull()
+})
+
+it('a deleted saved name can be used again by a new virtual model', async () => {
+  const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+  show()
+  const row = await screen.findByRole('row', { name: /auto-gpt/ })
+  await userEvent.click(
+    within(row).getByRole('button', { name: 'More actions' })
+  )
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+  await userEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+
+  await userEvent.click(
+    screen.getAllByRole('button', { name: 'Add virtual model' })[0]
+  )
+  const dialog = await screen.findByRole('dialog')
+  await userEvent.type(within(dialog).getByLabelText(/^Name/), 'auto-gpt')
+  await pickModel('Simple tier model', 'gpt-mini')
+  await pickModel('Normal tier model', 'gpt-mid')
+  await pickModel('Hard tier model', 'gpt-max')
+  await pickModel('Scorer model', 'gpt-scorer')
+  await pickModel('Advisor', 'gpt-advisor')
+  for (let i = 0; i < 5; i++) {
+    await userEvent.click(
+      within(dialog).getAllByRole('combobox', { name: 'Add group' })[i]
+    )
+    await userEvent.click(await screen.findByRole('option', { name: /api/ }))
+  }
+  await saveDialog()
+
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(post).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
+})
+
+it('a name changed in the JSON view can be changed back in the visual view', async () => {
+  setRoutes([dialogRoute, autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+  show()
+  await renameInDialog('auto-gpt', 'auto-x')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  await writeJson(
+    JSON.stringify([{ ...dialogRoute, name: 'auto-y' }, autoChat])
+  )
+  expect(await screen.findByRole('row', { name: /auto-y/ })).toBeVisible()
+
+  await renameInDialog('auto-y', 'auto-gpt')
+
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(post).toHaveBeenCalledTimes(2)
+  expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
+})
+
+it('renaming a draft row onto another draft row fails locally and keeps the dialog open', async () => {
+  setRoutes([dialogRoute, autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+  show()
+
+  const dialog = await renameInDialog('auto-chat', 'auto-gpt')
+
+  expect(
+    await within(dialog).findByText(
+      'A virtual model named auto-gpt already exists'
+    )
+  ).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+  expect(screen.getByRole('dialog')).toBeVisible()
+})
+
+it('a new virtual model passes the check and joins the table', async () => {
   const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
   show()
   await userEvent.click(
@@ -660,7 +766,6 @@ it('a new virtual model passes the check with an empty original name and joins t
   )
   expect(post.mock.calls[0][1]).toMatchObject({
     route: { name: 'auto-new', default_tier: 'normal' },
-    original_name: '',
   })
   expect(screen.getByRole('row', { name: /auto-new/ })).toBeVisible()
 

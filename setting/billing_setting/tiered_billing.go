@@ -379,3 +379,17 @@ func HasModelBillingConfig(modelName string) bool {
 	expr, ok := GetBillingExpr(modelName)
 	return ok && strings.TrimSpace(expr) != ""
 }
+
+// HasPriceOrRatioEntry reports whether name has a configured price, ratio, or
+// tiered billing-mode entry after a single wildcard normalization. Self-use
+// fallback does not count as a configured ratio.
+func HasPriceOrRatioEntry(name string) bool {
+	formatted := ratio_setting.FormatMatchingModelName(name)
+	if _, ok := ratio_setting.GetModelPrice(formatted, false); ok {
+		return true
+	}
+	if ratio_setting.HasConfiguredModelRatio(formatted) {
+		return true
+	}
+	return GetBillingMode(formatted) == BillingModeTieredExpr
+}

@@ -94,6 +94,7 @@ type NumberFieldName = Extract<
 
 type RouteEditorDialogProps = {
   route: SmartRoute | null
+  otherNames: string[]
   onOpenChange: (open: boolean) => void
   onSave: (route: SmartRoute) => void
 }
@@ -139,10 +140,18 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
 
   const submit = async (formValues: RouteFormValues) => {
     const route = formValuesToRoute(formValues)
+    if (props.otherNames.includes(route.name)) {
+      form.setError('name', {
+        type: 'server',
+        message: t('A virtual model named {{name}} already exists', {
+          name: route.name,
+        }),
+      })
+      return
+    }
     try {
       const result = await validateSmartRoute({
         route,
-        original_name: props.route?.name ?? '',
       })
       if (closedRef.current) return
       if (result.errors.length > 0) {

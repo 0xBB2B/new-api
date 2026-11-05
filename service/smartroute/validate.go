@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -96,7 +97,7 @@ func RouteEndpoints(route operation_setting.SmartRoute) []string {
 	return shared
 }
 
-func ValidateRoute(route operation_setting.SmartRoute, originalName string) ([]FieldError, []string) {
+func ValidateRoute(route operation_setting.SmartRoute) ([]FieldError, []string) {
 	errs := []FieldError{}
 	add := func(field, key string, params ...map[string]any) {
 		errs = append(errs, FieldError{Field: field, Message: common.NewMessage(key, params...)})
@@ -105,7 +106,7 @@ func ValidateRoute(route operation_setting.SmartRoute, originalName string) ([]F
 	switch {
 	case route.Name == "":
 		add("name", "Enter a name")
-	case slices.Contains(model.GetEnabledModels(), route.Name) || billing_setting.HasModelBillingConfig(route.Name):
+	case slices.Contains(model.GetEnabledModels(), route.Name) || billing_setting.HasPriceOrRatioEntry(route.Name):
 		add("name", "{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": route.Name})
 	}
 
@@ -119,8 +120,12 @@ func ValidateRoute(route operation_setting.SmartRoute, originalName string) ([]F
 		if modelName == "" || len(groups) == 0 {
 			return
 		}
+		var filters []dto.ChannelFilter
+		if field == "scorer.model" {
+			filters = []dto.ChannelFilter{{Kind: dto.FilterChatCompletions}}
+		}
 		for _, group := range groups {
-			if channel, err := model.GetRandomSatisfiedChannel(group, modelName, 0, nil); err != nil || channel == nil {
+			if channel, err := model.GetRandomSatisfiedChannel(group, modelName, 0, filters); err != nil || channel == nil {
 				add(field, "{{model}} has no available channel in group {{group}}", map[string]any{"model": modelName, "group": group})
 				return
 			}
@@ -155,9 +160,6 @@ func ValidateRoute(route operation_setting.SmartRoute, originalName string) ([]F
 		outOfRange("simple_max_message_chars", 1, 100000)
 	}
 
-	if route.Name != "" && route.Name != originalName && slices.Contains(operation_setting.SmartRouteNames(), route.Name) {
-		add("name", "A virtual model named {{name}} already exists", map[string]any{"name": route.Name})
-	}
 	if operation_setting.SmartTierRank(route.DefaultTier) < 0 {
 		add("default_tier", "Select a default tier", nil)
 	}
@@ -190,7 +192,7 @@ func ValidateRoutes(routes []operation_setting.SmartRoute) error {
 		fail := func(detail *common.Message) error {
 			return common.NewMessage("Virtual model {{name}}: {{detail}}", map[string]any{"name": route.Name, "detail": detail})
 		}
-		if errs, _ := ValidateRoute(route, route.Name); len(errs) > 0 {
+		if errs, _ := ValidateRoute(route); len(errs) > 0 {
 			return fail(errs[0].Message)
 		}
 		if _, dup := seen[route.Name]; dup {

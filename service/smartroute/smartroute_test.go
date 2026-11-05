@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -989,7 +990,7 @@ func setTier(route *operation_setting.SmartRoute, name string, mutate func(*oper
 func TestValidateRoute_ValidRoute(t *testing.T) {
 	setupValidateRouteTest(t)
 
-	errs, endpoints := smartroute.ValidateRoute(validRoute(), "")
+	errs, endpoints := smartroute.ValidateRoute(validRoute())
 
 	assert.Empty(t, errs)
 	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, endpoints)
@@ -1016,10 +1017,6 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 			"{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": "m-both"}},
 		{"name equals priced model without channel", func(r *operation_setting.SmartRoute) { r.Name = "m-priced-only" }, "", "name",
 			"{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": "m-priced-only"}},
-		{"name equals other virtual model", func(r *operation_setting.SmartRoute) { r.Name = "smart-taken" }, "", "name",
-			"A virtual model named {{name}} already exists", map[string]any{"name": "smart-taken"}},
-		{"renamed onto other virtual model", func(r *operation_setting.SmartRoute) { r.Name = "smart-taken" }, "smart-a", "name",
-			"A virtual model named {{name}} already exists", map[string]any{"name": "smart-taken"}},
 		{"simple model empty", func(r *operation_setting.SmartRoute) {
 			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "" })
 		}, "", "tiers.simple.model", keySelect, nil},
@@ -1079,7 +1076,7 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 			route := validRoute()
 			tt.mutate(&route)
 
-			errs, _ := smartroute.ValidateRoute(route, tt.original)
+			errs, _ := smartroute.ValidateRoute(route)
 
 			require.Len(t, errs, 1)
 			assert.Equal(t, tt.wantField, errs[0].Field)
@@ -1100,22 +1097,117 @@ func TestValidateRoute_EndpointMismatchReportsNoEndpoints(t *testing.T) {
 	}
 	route.Advisor.Model = "m-resp"
 
-	errs, endpoints := smartroute.ValidateRoute(route, "")
+	errs, endpoints := smartroute.ValidateRoute(route)
 
 	require.NotEmpty(t, errs)
 	assert.Empty(t, endpoints)
 }
 
-func TestValidateRoute_NameEqualsOriginalNameIsNotDuplicate(t *testing.T) {
+func TestValidateRoute_SavedRouteWithSameNameIsNotDuplicate(t *testing.T) {
 	setupValidateRouteTest(t)
 	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"smart-a"}]`)
 
-	errs, _ := smartroute.ValidateRoute(validRoute(), "smart-a")
-	assert.Empty(t, errs)
+	errs, _ := smartroute.ValidateRoute(validRoute())
 
-	errs, _ = smartroute.ValidateRoute(validRoute(), "")
-	require.Len(t, errs, 1)
-	assert.Equal(t, "name", errs[0].Field)
+	assert.Empty(t, errs)
+}
+
+func TestValidateRoute_SelfUseModeKeepsVirtualNameUsable(t *testing.T) {
+	const realNameKey = "{{name}} is a real model name. A virtual model cannot use the name of a real model"
+	tests := []struct {
+		name     string
+		route    string
+		setup    func(t *testing.T)
+		wantErrs int
+	}{
+		{"name without any price config", "auto-gpt", nil, 0},
+		{"name with price config", "m-priced-only", nil, 1},
+		{"name with only a model ratio config", "ratio-only", func(t *testing.T) {
+			prev := ratio_setting.ModelRatio2JSONString()
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"ratio-only":1}`))
+			t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(prev)) })
+		}, 1},
+		{"name with only a billing expression config", "expr-only", func(t *testing.T) {
+			keys := []string{"billing_setting.billing_mode", "billing_setting.billing_expr"}
+			prev := config.GlobalConfig.ExportAllConfigs()
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				keys[0]: `{"expr-only":"tiered_expr"}`,
+				keys[1]: `{"expr-only":"tier(\"base\", p * 1)"}`,
+			}))
+			t.Cleanup(func() {
+				require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{keys[0]: prev[keys[0]], keys[1]: prev[keys[1]]}))
+			})
+		}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupValidateRouteTest(t)
+			prev := operation_setting.SelfUseModeEnabled
+			operation_setting.SelfUseModeEnabled = true
+			t.Cleanup(func() { operation_setting.SelfUseModeEnabled = prev })
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+			route := validRoute()
+			route.Name = tt.route
+
+			errs, _ := smartroute.ValidateRoute(route)
+
+			require.Len(t, errs, tt.wantErrs)
+			if tt.wantErrs > 0 {
+				assert.Equal(t, "name", errs[0].Field)
+				assert.Equal(t, realNameKey, errs[0].Message.Key)
+			}
+		})
+	}
+}
+
+func TestValidateRoute_ScorerNeedsChatCompletionsChannel(t *testing.T) {
+	t.Run("only a Codex channel in the group", func(t *testing.T) {
+		setupValidateRouteTest(t)
+		route := validRoute()
+		route.Scorer.Model = "m-resp"
+
+		errs, _ := smartroute.ValidateRoute(route)
+
+		require.Len(t, errs, 1)
+		assert.Equal(t, "scorer.model", errs[0].Field)
+		assert.Equal(t, "{{model}} has no available channel in group {{group}}", errs[0].Message.Key)
+		assert.Equal(t, "m-resp", errs[0].Message.Params["model"])
+		assert.Equal(t, "api", errs[0].Message.Params["group"])
+	})
+
+	t.Run("a plain OpenAI channel serves the same model", func(t *testing.T) {
+		setupValidateRouteTest(t)
+		priority, weight := int64(0), uint(100)
+		require.NoError(t, model.DB.Create(&model.Channel{
+			Id: 9, Type: constant.ChannelTypeOpenAI, Key: "key-9", Status: common.ChannelStatusEnabled,
+			Name: "channel-9", Weight: &weight, Models: "m-resp", Group: "api", Priority: &priority,
+		}).Error)
+		require.NoError(t, model.DB.Create(&model.Ability{
+			Group: "api", Model: "m-resp", ChannelId: 9, Enabled: true, Priority: &priority, Weight: weight,
+		}).Error)
+		model.InitChannelCache()
+		route := validRoute()
+		route.Scorer.Model = "m-resp"
+
+		errs, _ := smartroute.ValidateRoute(route)
+
+		assert.Empty(t, errs)
+	})
+
+	t.Run("tier and advisor may still use a Codex-only model", func(t *testing.T) {
+		setupValidateRouteTest(t)
+		route := validRoute()
+		for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+			setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
+		}
+		route.Advisor.Model = "m-resp"
+
+		errs, _ := smartroute.ValidateRoute(route)
+
+		assert.Empty(t, errs)
+	})
 }
 
 func TestValidateRoute_ScorerMayUseDifferentEndpoint(t *testing.T) {
@@ -1127,7 +1219,7 @@ func TestValidateRoute_ScorerMayUseDifferentEndpoint(t *testing.T) {
 	route.Advisor.Model = "m-resp"
 	route.Scorer.Model = "m-chat"
 
-	errs, endpoints := smartroute.ValidateRoute(route, "")
+	errs, endpoints := smartroute.ValidateRoute(route)
 
 	assert.Empty(t, errs)
 	assert.Equal(t, []string{responsesEndpoint}, endpoints)
@@ -1172,7 +1264,7 @@ func TestValidateRoute_NumberRanges(t *testing.T) {
 			route := validRoute()
 			tt.set(&route)
 
-			errs, _ := smartroute.ValidateRoute(route, "")
+			errs, _ := smartroute.ValidateRoute(route)
 
 			if tt.wantField == "" {
 				assert.Empty(t, errs)
@@ -1233,7 +1325,7 @@ func TestValidateRoutes_DetailIsTranslatableMessage(t *testing.T) {
 	setTier(&noChannel, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
 		tier.Groups = []string{"missing-group"}
 	})
-	fieldErrs, _ := smartroute.ValidateRoute(noChannel, noChannel.Name)
+	fieldErrs, _ := smartroute.ValidateRoute(noChannel)
 	require.NotEmpty(t, fieldErrs)
 
 	err := smartroute.ValidateRoutes([]operation_setting.SmartRoute{noChannel})

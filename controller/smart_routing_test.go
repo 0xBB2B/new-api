@@ -117,13 +117,13 @@ func postValidateSmartRoute(t *testing.T, body string) (*httptest.ResponseRecord
 func TestValidateSmartRoute_Response(t *testing.T) {
 	setupSmartRoutingControllerTest(t)
 
-	recorder, valid := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s,"original_name":""}`, smartRouteJSON("smart-a", 3)))
+	recorder, valid := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s}`, smartRouteJSON("smart-a", 3)))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.True(t, valid.Success)
 	assert.Contains(t, recorder.Body.String(), `"errors":[]`)
 	assert.ElementsMatch(t, []string{"openai", "openai-response"}, valid.Data.Endpoints)
 
-	recorder, invalid := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s,"original_name":""}`, smartRouteJSON("m-both", 0)))
+	recorder, invalid := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s}`, smartRouteJSON("m-both", 0)))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.True(t, invalid.Success)
 	assert.Contains(t, recorder.Body.String(), `"endpoints":[]`)

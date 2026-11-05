@@ -75,15 +75,6 @@ func FindSmartRoute(name string) (SmartRoute, bool) {
 	return SmartRoute{}, false
 }
 
-func SmartRouteNames() []string {
-	routes := *smartRoutes.Load()
-	names := make([]string, 0, len(routes))
-	for _, route := range routes {
-		names = append(names, route.Name)
-	}
-	return names
-}
-
 func SmartTierRank(tier string) int {
 	switch tier {
 	case SmartTierSimple:

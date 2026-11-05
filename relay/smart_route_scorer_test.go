@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
@@ -56,7 +57,7 @@ func setupScorerFixture(t *testing.T, userQuota int) *scorerFixture {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{}, &model.UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
 	f.db = db
 
 	f.upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -284,6 +285,134 @@ func TestRunSmartRouteScorer_NoUsageMeansRefundAndNoLog(t *testing.T) {
 			assert.Nil(t, outcome.Settle)
 			assert.Empty(t, scorerConsumeLogs(t, f.db))
 			assert.Equal(t, scorerTestQuota, scorerUserQuota(t))
+		})
+	}
+}
+
+func seedScorerSubscription(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	require.NoError(t, db.Create(&model.SubscriptionPlan{Id: 1, Title: "plan"}).Error)
+	require.NoError(t, db.Create(&model.UserSubscription{
+		Id: 1, UserId: scorerTestUserID, PlanId: 1, AmountTotal: scorerTestQuota, Status: "active",
+		StartTime: time.Now().Unix(), EndTime: time.Now().Add(time.Hour).Unix(),
+	}).Error)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"scorer-x":0.01,"main-x":0.03}`))
+}
+
+func subscriptionFirstContext() *gin.Context {
+	c := scorerContext("api")
+	common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{BillingPreference: "subscription_first"})
+	return c
+}
+
+func settleMainRequest(t *testing.T, c *gin.Context, actualQuota int) {
+	t.Helper()
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "main-x")
+	request := &dto.GeneralOpenAIRequest{Model: "main-x"}
+	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, request, nil)
+	require.NoError(t, err)
+	apiErr := PrepareRequestBilling(c, info)
+	if apiErr != nil {
+		require.FailNow(t, apiErr.Error())
+	}
+	require.NoError(t, service.SettleBilling(c, info, actualQuota))
+}
+
+func subscriptionAmountUsed(t *testing.T, db *gorm.DB) int64 {
+	t.Helper()
+	var sub model.UserSubscription
+	require.NoError(t, db.First(&sub, 1).Error)
+	return sub.AmountUsed
+}
+
+func TestRunSmartRouteScorer_SubscriptionBillingIsIndependentFromMainRequest(t *testing.T) {
+	const mainActualQuota = 25000
+
+	t.Run("scorer and main request each reserve and settle", func(t *testing.T) {
+		f := setupScorerFixture(t, scorerTestQuota)
+		seedScorerSubscription(t, f.db)
+		outcome, err := runSmartRouteScorer(subscriptionFirstContext(), scorerRoute(5000, "api"), scorerInspection(t))
+		require.NoError(t, err)
+		require.NotNil(t, outcome.Settle)
+
+		settleMainRequest(t, subscriptionFirstContext(), mainActualQuota)
+		outcome.Settle("hard", "main-x")
+
+		assert.Equal(t, int64(scorerChargeAtRate+mainActualQuota), subscriptionAmountUsed(t, f.db))
+		logs := scorerConsumeLogs(t, f.db)
+		require.Len(t, logs, 1)
+		assert.Equal(t, scorerTestRequest, logs[0].RequestId)
+	})
+
+	t.Run("scorer timeout refunds without blocking the main request", func(t *testing.T) {
+		f := setupScorerFixture(t, scorerTestQuota)
+		seedScorerSubscription(t, f.db)
+		f.delay = 500 * time.Millisecond
+		outcome, err := runSmartRouteScorer(subscriptionFirstContext(), scorerRoute(100, "api"), scorerInspection(t))
+		require.NoError(t, err)
+		require.Equal(t, "scorer_timeout", outcome.Failure)
+
+		settleMainRequest(t, subscriptionFirstContext(), mainActualQuota)
+
+		assert.Equal(t, int64(mainActualQuota), subscriptionAmountUsed(t, f.db))
+		assert.Empty(t, scorerConsumeLogs(t, f.db))
+	})
+}
+
+func TestRunSmartRouteScorer_SkipsChannelsWithoutChatCompletions(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	priority, weight := int64(0), uint(100)
+	deadURL := "http://127.0.0.1:1"
+	require.NoError(t, f.db.Create(&model.Channel{
+		Id: 2, Type: constant.ChannelTypeCodex, Key: "sk-placeholder", Status: common.ChannelStatusEnabled,
+		Name: "codex-channel", Models: "scorer-x", Group: "default", BaseURL: &deadURL, Weight: &weight, Priority: &priority,
+	}).Error)
+	require.NoError(t, f.db.Create(&model.Ability{Group: "default", Model: "scorer-x", ChannelId: 2, Enabled: true, Priority: &priority, Weight: weight}).Error)
+	model.InitChannelCache()
+
+	outcome, err := runSmartRouteScorer(scorerContext("auto"), scorerRoute(5000, "default", "api"), scorerInspection(t))
+
+	require.NoError(t, err)
+	assert.Empty(t, outcome.Failure)
+	assert.Equal(t, int32(1), f.hits.Load())
+}
+
+func TestRunSmartRouteScorer_StripsThinkingSuffixFromUpstreamModel(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		wantModel  string
+		wantEffort string
+	}{
+		{"@thinking modifier", "scorer-x@thinking:off", "scorer-x", ""},
+		{"OpenAI effort suffix", "gpt-5.4-mini-low", "gpt-5.4-mini", "low"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			priority, weight := int64(0), uint(100)
+			require.NoError(t, f.db.Model(&model.Channel{}).Where("id = ?", 1).Update("models", "scorer-x,"+tt.model).Error)
+			require.NoError(t, f.db.Create(&model.Ability{Group: "api", Model: tt.model, ChannelId: 1, Enabled: true, Priority: &priority, Weight: weight}).Error)
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(fmt.Sprintf(`{"scorer-x":0.01,%q:0.01}`, tt.model)))
+			model.InitChannelCache()
+			route := scorerRoute(5000, "api")
+			route.Scorer.Model = tt.model
+
+			_, err := runSmartRouteScorer(scorerContext("api"), route, scorerInspection(t))
+
+			require.NoError(t, err)
+			var sent struct {
+				Model           string `json:"model"`
+				ReasoningEffort string `json:"reasoning_effort"`
+			}
+			require.NoError(t, common.Unmarshal(<-f.bodies, &sent))
+			assert.Equal(t, tt.wantModel, sent.Model)
+			if tt.wantEffort != "" {
+				assert.Equal(t, tt.wantEffort, sent.ReasoningEffort)
+			}
 		})
 	}
 }

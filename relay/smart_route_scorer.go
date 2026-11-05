@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	newapidto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -71,7 +73,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 
 	var channel *model.Channel
 	var group string
-	filters := service.GetChannelConstraints(parent).Filters
+	filters := append(slices.Clone(service.GetChannelConstraints(parent).Filters), newapidto.ChannelFilter{Kind: newapidto.FilterChatCompletions})
 	for _, g := range smartroute.ScorerGroups(parent, route) {
 		if channel, _ = model.GetRandomSatisfiedChannel(g, scorerModel, 0, filters); channel != nil {
 			group = g
@@ -95,6 +97,8 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	if err != nil {
 		return scorerFailed("building relay info: %s", err.Error())
 	}
+	// 预扣费按请求 ID 幂等，与主请求共用 ID 会让打分的预扣被当成重复
+	info.RequestId += "-scorer"
 	refund := func() {
 		if session, ok := info.Billing.(*service.BillingSession); ok {
 			session.RefundSync(parent)
@@ -158,6 +162,9 @@ func callScorerUpstream(c *gin.Context, info *relaycommon.RelayInfo, request *dt
 	info.InitChannelMeta(c)
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
 		return nil, "", types.NewError(err, types.ErrorCodeChannelModelMappedError)
+	}
+	if err := helper.ApplyReasoningModelSuffix(c, info, request); err != nil {
+		return nil, "", types.NewError(err, types.ErrorCodeConvertRequestFailed)
 	}
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {

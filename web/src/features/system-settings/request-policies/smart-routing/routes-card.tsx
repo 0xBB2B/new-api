@@ -154,6 +154,9 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       {editorTarget !== null && (
         <RouteEditorDialog
           route={editorTarget.route}
+          otherNames={routes
+            .filter((_, index) => index !== editorTarget.index)
+            .map((item) => item.name)}
           onOpenChange={(open) => !open && setEditorTarget(null)}
           onSave={(route) =>
             props.onChange(

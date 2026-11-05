@@ -32,10 +32,7 @@ type ValidateResponse = {
   data: { errors: SmartRouteValidationError[]; endpoints: string[] }
 }
 
-export async function validateSmartRoute(body: {
-  route: SmartRoute
-  original_name: string
-}) {
+export async function validateSmartRoute(body: { route: SmartRoute }) {
   const response = await api.post<ValidateResponse>(
     '/api/option/smart_routing/validate',
     body

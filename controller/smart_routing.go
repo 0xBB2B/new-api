@@ -11,14 +11,13 @@ import (
 
 func ValidateSmartRoute(c *gin.Context) {
 	var request struct {
-		Route        operation_setting.SmartRoute `json:"route"`
-		OriginalName string                       `json:"original_name"`
+		Route operation_setting.SmartRoute `json:"route"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
-	fieldErrors, endpoints := smartroute.ValidateRoute(request.Route, request.OriginalName)
+	fieldErrors, endpoints := smartroute.ValidateRoute(request.Route)
 	errs := make([]gin.H, 0, len(fieldErrors))
 	for _, fieldError := range fieldErrors {
 		errs = append(errs, gin.H{"field": fieldError.Field, "message": fieldError.Message})
