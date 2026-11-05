@@ -97,6 +97,9 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		if !pinned && shouldSelectChannel && !applySmartRoute(c, modelRequest) {
+			return
+		}
 		if pinned || shouldSelectChannel {
 			usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 			var selectErr *service.ChannelSelectError
@@ -135,6 +138,7 @@ func Distribute() func(c *gin.Context) {
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
+			saveSmartRouteSession(c)
 		}
 	}
 }

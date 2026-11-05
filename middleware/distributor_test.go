@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,10 +15,17 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/smartroute"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestChannelMatchesExpectedTaskPluginUsesGenericChannelSetting(t *testing.T) {
@@ -399,4 +407,578 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
 	assert.Equal(t, "alpha", c.GetString("task_plugin_key"), "the first bound candidate executes regardless of the earlier pin")
 	assert.Equal(t, "alpha", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
+}
+
+const smartRoutesJSON = `[
+ {"name":"auto-gpt","tiers":{
+   "simple":{"model":"t-simple","groups":["default"],"effort":""},
+   "normal":{"model":"t-normal","groups":["default"],"effort":""},
+   "hard":{"model":"t-hard","groups":["vip"],"effort":"high"}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":3},
+  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
+ {"name":"auto-keep","tiers":{
+   "simple":{"model":"t-simple","groups":["default"],"effort":""},
+   "normal":{"model":"t-normal","groups":["default"],"effort":""},
+   "hard":{"model":"t-hard","groups":["vip"],"effort":""}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":1},
+  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
+ {"name":"resp-only","tiers":{
+   "simple":{"model":"r-resp","groups":["default"],"effort":""},
+   "normal":{"model":"r-resp","groups":["default"],"effort":""},
+   "hard":{"model":"r-resp","groups":["default"],"effort":""}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"r-resp","groups":["default"],"after_dissatisfied":3},
+  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
+ {"name":"auto-adv","tiers":{
+   "simple":{"model":"t-simple","groups":["default"],"effort":""},
+   "normal":{"model":"t-normal","groups":["default"],"effort":""},
+   "hard":{"model":"t-hard","groups":["vip"],"effort":""}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"t-advisor-hidden","groups":["hidden"],"after_dissatisfied":1},
+  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500},
+ {"name":"chat-only","tiers":{
+   "simple":{"model":"c-chat","groups":["default"],"effort":""},
+   "normal":{"model":"c-chat","groups":["default"],"effort":""},
+   "hard":{"model":"c-chat","groups":["default"],"effort":""}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"c-chat","groups":["default"],"after_dissatisfied":3},
+  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}
+]`
+
+const (
+	smartHardChannelID    = 103
+	smartNormalChannelID  = 102
+	smartAdvisorChannelID = 104
+)
+
+func setupSmartRouteDistributeTest(t *testing.T) {
+	t.Helper()
+	require.NoError(t, i18n.Init())
+	gin.SetMode(gin.TestMode)
+
+	originalDB := model.DB
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalAutoGroups := setting.AutoGroups2JsonString()
+	originalUsableGroups := setting.UserUsableGroups2JSONString()
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	originalRoutes := operation_setting.SmartRoutingRoutesToString()
+	originalRunner := smartroute.ScorerRunner
+
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	model.DB = db
+	common.MemoryCacheEnabled = true
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`[]`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
+
+	priority := int64(0)
+	weight := uint(100)
+	for _, ch := range []struct {
+		id          int
+		channelType int
+		group       string
+		modelName   string
+	}{
+		{101, constant.ChannelTypeXai, "default", "t-simple"},
+		{smartNormalChannelID, constant.ChannelTypeXai, "default", "t-normal"},
+		{smartHardChannelID, constant.ChannelTypeXai, "vip", "t-hard"},
+		{smartAdvisorChannelID, constant.ChannelTypeXai, "default", "t-advisor"},
+		{105, constant.ChannelTypeXai, "default", "m-scorer"},
+		{106, constant.ChannelTypeCodex, "default", "r-resp"},
+		{107, constant.ChannelTypeXai, "hidden", "t-advisor-hidden"},
+		{108, constant.ChannelTypeOpenRouter, "default", "c-chat"},
+	} {
+		require.NoError(t, db.Create(&model.Channel{
+			Id: ch.id, Type: ch.channelType, Key: fmt.Sprintf("key-%d", ch.id),
+			Status: common.ChannelStatusEnabled, Name: fmt.Sprintf("channel-%d", ch.id),
+			Weight: &weight, Models: ch.modelName, Group: ch.group, Priority: &priority,
+		}).Error)
+		require.NoError(t, db.Create(&model.Ability{
+			Group: ch.group, Model: ch.modelName, ChannelId: ch.id,
+			Enabled: true, Priority: &priority, Weight: weight,
+		}).Error)
+	}
+	operation_setting.LoadSmartRoutesFromJSONString(smartRoutesJSON)
+	model.InitChannelCache()
+	model.RefreshPricing()
+
+	t.Cleanup(func() {
+		smartroute.ScorerRunner = originalRunner
+		model.DB = originalDB
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(originalAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+		operation_setting.LoadSmartRoutesFromJSONString(originalRoutes)
+		if originalMemoryCacheEnabled && originalDB != nil &&
+			originalDB.Migrator().HasTable(&model.Channel{}) && originalDB.Migrator().HasTable(&model.Ability{}) {
+			model.InitChannelCache()
+		}
+		if sqlDB, err := db.DB(); err == nil {
+			require.NoError(t, sqlDB.Close())
+		}
+	})
+}
+
+type smartScorerStub struct {
+	calls   int
+	settles [][2]string
+}
+
+func installSmartScorerStub(t *testing.T, labels *smartroute.ScorerLabels, failure string, err error) *smartScorerStub {
+	t.Helper()
+	stub := &smartScorerStub{}
+	smartroute.ScorerRunner = func(*gin.Context, operation_setting.SmartRoute, smartroute.Inspection) (smartroute.ScorerOutcome, error) {
+		stub.calls++
+		return smartroute.ScorerOutcome{
+			Labels:  labels,
+			Failure: failure,
+			Settle: func(mainTier, mainModel string) {
+				stub.settles = append(stub.settles, [2]string{mainTier, mainModel})
+			},
+		}, err
+	}
+	return stub
+}
+
+func smartLabels(taskType, reasoning string, feedback ...string) *smartroute.ScorerLabels {
+	return &smartroute.ScorerLabels{
+		TaskType: taskType, Reasoning: reasoning, Workload: "few_steps",
+		Risk: "low", Domain: "other", Confidence: 0.9, Feedback: feedback,
+	}
+}
+
+type smartDistributeSeen struct {
+	ran           bool
+	originalModel string
+	autoGroups    []string
+	channelID     int
+	body          []byte
+}
+
+type smartRequest struct {
+	path    string
+	body    string
+	auto    bool
+	tokenID int
+	status  int
+
+	modelLimit map[string]bool
+}
+
+func serveSmartRoute(t *testing.T, req smartRequest) (*httptest.ResponseRecorder, *smartDistributeSeen) {
+	t.Helper()
+	seen := &smartDistributeSeen{}
+	router := gin.New()
+	router.POST(req.path, RequestId(), func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyTokenId, req.tokenID)
+		if req.modelLimit != nil {
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimit, req.modelLimit)
+		}
+		if req.auto {
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, "auto")
+			common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
+		} else {
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		}
+	}, Distribute(), func(c *gin.Context) {
+		seen.ran = true
+		seen.originalModel = common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+		seen.autoGroups = common.GetContextKeyStringSlice(c, constant.ContextKeyTokenAutoGroups)
+		seen.channelID = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		storage, err := common.GetBodyStorage(c)
+		require.NoError(t, err)
+		seen.body, err = storage.Bytes()
+		require.NoError(t, err)
+		status := req.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		c.Status(status)
+	})
+	httpReq := httptest.NewRequest(http.MethodPost, req.path, strings.NewReader(req.body))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept-Language", "en")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httpReq)
+	return recorder, seen
+}
+
+func smartBodyField(t *testing.T, body []byte, path ...string) any {
+	t.Helper()
+	var node any
+	require.NoError(t, common.Unmarshal(body, &node))
+	for _, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil
+		}
+		node = m[key]
+	}
+	return node
+}
+
+func TestSmartRouteDistributeAutoTokenHardTierRewritesModelGroupsAndEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body string
+		effortPath       []string
+	}{
+		{"responses", "/v1/responses", `{"model":"auto-gpt","input":"design a billing system","stream":false}`, []string{"reasoning", "effort"}},
+		{"chat", "/v1/chat/completions", `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}]}`, []string{"reasoning_effort"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, body: tc.body, auto: true, tokenID: 9101})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			require.True(t, seen.ran)
+			assert.Equal(t, "t-hard", seen.originalModel)
+			assert.Equal(t, []string{"vip"}, seen.autoGroups)
+			assert.Equal(t, smartHardChannelID, seen.channelID)
+			assert.Equal(t, "t-hard", smartBodyField(t, seen.body, "model"))
+			assert.Equal(t, "high", smartBodyField(t, seen.body, tc.effortPath...))
+			assert.Equal(t, 1, stub.calls)
+			assert.Equal(t, [][2]string{{"hard", "t-hard"}}, stub.settles)
+		})
+	}
+}
+
+func TestSmartRouteDistributeEmptyTierEffortKeepsClientValue(t *testing.T) {
+	t.Run("tier", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		_, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/responses", auto: true, tokenID: 9102,
+			body: `{"model":"auto-keep","input":"design a billing system","reasoning":{"effort":"low"}}`,
+		})
+
+		require.True(t, seen.ran)
+		assert.Equal(t, "t-hard", seen.originalModel)
+		assert.Equal(t, "low", smartBodyField(t, seen.body, "reasoning", "effort"))
+	})
+
+	t.Run("advisor", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
+
+		_, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/responses", auto: true, tokenID: 9103,
+			body: `{"model":"auto-keep","input":"that answer was wrong","reasoning":{"effort":"low"}}`,
+		})
+
+		require.True(t, seen.ran)
+		assert.Equal(t, "t-advisor", seen.originalModel)
+		assert.Equal(t, smartAdvisorChannelID, seen.channelID)
+		assert.Equal(t, "low", smartBodyField(t, seen.body, "reasoning", "effort"))
+	})
+}
+
+func TestSmartRouteDistributeScorerInvalidStillSettles(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, nil, smartroute.FailureScorerInvalid, nil)
+
+	recorder, seen := serveSmartRoute(t, smartRequest{
+		path: "/v1/responses", auto: true, tokenID: 9104,
+		body: `{"model":"auto-gpt","input":"hello there"}`,
+	})
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "t-normal", seen.originalModel)
+	assert.Equal(t, [][2]string{{"normal", "t-normal"}}, stub.settles)
+}
+
+func TestSmartRouteDistributeRejectsUnsupportedEndpoint(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+	recorder, seen := serveSmartRoute(t, smartRequest{
+		path: "/v1/chat/completions", auto: false, tokenID: 9105,
+		body: `{"model":"resp-only","messages":[{"role":"user","content":"hi"}]}`,
+	})
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assert.Contains(t, smartBodyField(t, recorder.Body.Bytes(), "error", "message"), "Virtual model resp-only only supports these endpoints: Responses")
+	assert.False(t, seen.ran)
+	assert.Zero(t, stub.calls)
+	assert.Empty(t, stub.settles)
+}
+
+func TestSmartRouteDistributeNonAutoTokenFallsBackToDefaultTierWithoutChannel(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+	recorder, seen := serveSmartRoute(t, smartRequest{
+		path: "/v1/responses", auto: false, tokenID: 9106,
+		body: `{"model":"auto-gpt","input":"design a billing system"}`,
+	})
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "t-normal", seen.originalModel)
+	assert.Equal(t, smartNormalChannelID, seen.channelID)
+	assert.Equal(t, "t-normal", smartBodyField(t, seen.body, "model"))
+	assert.Equal(t, [][2]string{{"normal", "t-normal"}}, stub.settles)
+}
+
+func TestSmartRouteDistributeInsufficientScorerQuotaRejectsRequest(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, nil, "", fmt.Errorf("%w: %w", smartroute.ErrScorerInsufficientQuota,
+		types.NewErrorWithStatusCode(errors.New("insufficient quota"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)))
+
+	recorder, seen := serveSmartRoute(t, smartRequest{
+		path: "/v1/responses", auto: true, tokenID: 9107,
+		body: `{"model":"auto-gpt","input":"hello there"}`,
+	})
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "insufficient_user_quota", smartBodyField(t, recorder.Body.Bytes(), "error", "code"))
+	assert.False(t, seen.ran)
+	assert.Empty(t, stub.settles)
+}
+
+func TestSmartRouteDistributeToolResultContinuationSkipsScorer(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body string
+	}{
+		{"responses", "/v1/responses", `{"model":"auto-gpt","input":[{"role":"user","content":"continue-resp"},{"type":"function_call_output","call_id":"c1","output":"ok"}]}`},
+		{"chat", "/v1/chat/completions", `{"model":"auto-gpt","messages":[{"role":"user","content":"continue-chat"},{"role":"tool","tool_call_id":"c1","content":"ok"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			stub := installSmartScorerStub(t, smartLabels("chat_qa", "low", "neutral"), "", nil)
+			const tokenID = 9108
+			endpoint := smartroute.RequestEndpointFromPath(tc.path)
+			inspection, err := smartroute.InspectRequest(endpoint, []byte(tc.body))
+			require.NoError(t, err)
+			require.False(t, inspection.IsUserTurn)
+			smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, "hard", smartHardChannelID)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, body: tc.body, auto: true, tokenID: tokenID})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Zero(t, stub.calls)
+			assert.Equal(t, "t-hard", seen.originalModel)
+			assert.Equal(t, []string{"vip"}, seen.autoGroups)
+		})
+	}
+}
+
+func TestSmartRouteDistributeSavesSessionOnlyAfterSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		message string
+		tokenID int
+		saved   bool
+	}{
+		{"success", http.StatusOK, "session-save-ok", 9109, true},
+		{"failure", http.StatusInternalServerError, "session-save-fail", 9110, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+			body := fmt.Sprintf(`{"model":"auto-gpt","input":%q}`, tc.message)
+			inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
+			require.NoError(t, err)
+			key := smartroute.SessionKey(tc.tokenID, inspection)
+			require.NotEmpty(t, key)
+
+			serveSmartRoute(t, smartRequest{path: "/v1/responses", body: body, auto: true, tokenID: tc.tokenID, status: tc.status})
+
+			state, found := smartroute.LoadSession(key)
+			require.Equal(t, tc.saved, found)
+			if tc.saved {
+				assert.Equal(t, "hard", state.CurrentRoute)
+				assert.Equal(t, "hard", state.LastNonAdvisor)
+				assert.Equal(t, smartHardChannelID, state.LastChannelID)
+			}
+		})
+	}
+}
+
+func TestSmartRouteDistributeOrdinaryModelIsUntouched(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+	body := `{"model":"t-normal","input":"hello"}`
+
+	recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses", body: body, auto: false, tokenID: 9111})
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Zero(t, stub.calls)
+	assert.Empty(t, stub.settles)
+	assert.Equal(t, "t-normal", seen.originalModel)
+	assert.Equal(t, body, string(seen.body))
+}
+
+func TestSmartRouteDistributeAdvisorWithoutChannelUsesFallbackTier(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
+
+	recorder, seen := serveSmartRoute(t, smartRequest{
+		path: "/v1/responses", auto: true, tokenID: 9112,
+		body: `{"model":"auto-adv","input":"that answer was wrong"}`,
+	})
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "t-normal", seen.originalModel)
+	assert.Equal(t, "t-normal", smartBodyField(t, seen.body, "model"))
+	assert.Equal(t, [][2]string{{"normal", "t-normal"}}, stub.settles)
+}
+
+func TestSmartRouteDistributeContinuationWithDeadAdvisorUsesLastNonAdvisorTier(t *testing.T) {
+	setupSmartRouteDistributeTest(t)
+	stub := installSmartScorerStub(t, nil, "", nil)
+	const tokenID = 9113
+	body := `{"model":"auto-adv","input":[{"role":"user","content":"continue-dead-advisor"},{"type":"function_call_output","call_id":"c1","output":"ok"}]}`
+	inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
+	require.NoError(t, err)
+	key := smartroute.SessionKey(tokenID, inspection)
+	smartroute.SaveSessionAfterSuccess(key, true, "hard", smartHardChannelID)
+	smartroute.SaveSessionAfterSuccess(key, true, smartroute.RouteAdvisor, smartAdvisorChannelID)
+
+	recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses", body: body, auto: true, tokenID: tokenID})
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Zero(t, stub.calls)
+	assert.Equal(t, "t-hard", seen.originalModel)
+	assert.Equal(t, "t-hard", smartBodyField(t, seen.body, "model"))
+}
+
+func TestSmartRouteDistributeRejectsDuplicateEffortKey(t *testing.T) {
+	for _, tc := range []struct{ name, path, body string }{
+		{"responses", "/v1/responses", `{"model":"auto-gpt","input":"design a billing system","reasoning":{"effort":"medium"},"reasoning":{"effort":"low"}}`},
+		{"chat", "/v1/chat/completions", `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}],"reasoning_effort":"medium","reasoning_effort":"low"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, body: tc.body, auto: true, tokenID: 9114})
+
+			assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			assert.False(t, seen.ran)
+			assert.Zero(t, stub.calls)
+			assert.Empty(t, stub.settles)
+		})
+	}
+}
+
+func TestSmartRouteDistributeTokenModelLimitChecksVirtualModelName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		limit  map[string]bool
+		status int
+		model  string
+	}{
+		{"virtual name only", map[string]bool{"auto-gpt": true}, http.StatusOK, "t-hard"},
+		{"real model only", map[string]bool{"t-hard": true}, http.StatusForbidden, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{
+				path: "/v1/responses", auto: true, tokenID: 9115, modelLimit: tc.limit,
+				body: `{"model":"auto-gpt","input":"design a billing system"}`,
+			})
+
+			require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+			assert.Equal(t, tc.model, seen.originalModel)
+			assert.Equal(t, tc.status == http.StatusOK, seen.ran)
+		})
+	}
+}
+
+func TestSmartRouteDistributeCompactEndpointNeverScores(t *testing.T) {
+	const tokenID = 9116
+	compactBody := func(cacheKey string) string {
+		return fmt.Sprintf(`{"model":"auto-gpt","input":[{"role":"user","content":"compact me"}],"prompt_cache_key":%q}`, cacheKey)
+	}
+	for _, tc := range []struct {
+		name        string
+		cacheKey    string
+		sessionTier string
+		wantModel   string
+	}{
+		{"session hard", "pck-compact-hard", "hard", "t-hard"},
+		{"no session uses default tier", "pck-compact-none", "", "t-normal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			stub := installSmartScorerStub(t, smartLabels("chat_qa", "low", "neutral"), "", nil)
+			body := compactBody(tc.cacheKey)
+			if tc.sessionTier != "" {
+				inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
+				require.NoError(t, err)
+				smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, tc.sessionTier, smartHardChannelID)
+			}
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses/compact", body: body, auto: true, tokenID: tokenID})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Zero(t, stub.calls)
+			assert.Equal(t, tc.wantModel, seen.originalModel)
+			assert.Equal(t, tc.wantModel, smartBodyField(t, seen.body, "model"))
+			if tc.sessionTier != "" {
+				inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
+				require.NoError(t, err)
+				state, found := smartroute.LoadSession(smartroute.SessionKey(tokenID, inspection))
+				require.True(t, found)
+				assert.Equal(t, tc.sessionTier, state.CurrentRoute)
+			}
+		})
+	}
+
+	t.Run("chat only virtual model", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		stub := installSmartScorerStub(t, smartLabels("chat_qa", "low", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/responses/compact", auto: false, tokenID: tokenID,
+			body: `{"model":"chat-only","input":[{"role":"user","content":"compact me"}]}`,
+		})
+
+		assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+		assert.False(t, seen.ran)
+		assert.Zero(t, stub.calls)
+	})
+}
+
+func TestSmartRouteDistributeEffortOverrideCoversReasoningObject(t *testing.T) {
+	t.Run("chat drops the reasoning object", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/chat/completions", auto: true, tokenID: 9117,
+			body: `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}],"reasoning":{"effort":"low","max_tokens":100}}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning_effort"))
+		assert.NotContains(t, string(seen.body), `"reasoning":`)
+	})
+
+	t.Run("responses rewrites the whole reasoning object", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/responses", auto: true, tokenID: 9118,
+			body: `{"model":"auto-gpt","input":"design a billing system","reasoning":{"effort":"low","effort":"low","summary":"auto"}}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, 1, strings.Count(string(seen.body), `"effort"`))
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning", "effort"))
+		assert.Equal(t, "auto", smartBodyField(t, seen.body, "reasoning", "summary"))
+	})
 }

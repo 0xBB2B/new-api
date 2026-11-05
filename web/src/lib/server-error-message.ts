@@ -154,6 +154,24 @@ function messageText(value: unknown): string | undefined {
   return value
 }
 
+function translateMessageParams(
+  params: Record<string, unknown>
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(params).map(([name, value]) => [
+      name,
+      isRecord(value) && typeof value.key === 'string' && value.key
+        ? i18next.t(
+            value.key,
+            isRecord(value.params)
+              ? translateMessageParams(value.params)
+              : undefined
+          )
+        : value,
+    ])
+  )
+}
+
 /**
  * The backend sends web console messages as English source text in
  * `message_key` (a key of the locale files) plus `message_params`, and keeps
@@ -164,7 +182,9 @@ export function getServerMessage(value: unknown): string | undefined {
   if (typeof value.message_key === 'string' && value.message_key) {
     return i18next.t(
       value.message_key,
-      isRecord(value.message_params) ? value.message_params : undefined
+      isRecord(value.message_params)
+        ? translateMessageParams(value.message_params)
+        : undefined
     )
   }
   return messageText(value.message)

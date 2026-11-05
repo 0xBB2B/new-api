@@ -78,6 +78,7 @@ import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
+import { SmartRouteCaption } from '../smart-route-caption'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { useUsageLogsContext } from '../usage-logs-provider'
 
@@ -685,6 +686,9 @@ export function useCommonLogsColumns(
                 modelName={modelInfo.name}
                 actualModel={modelInfo.actualModel}
                 responseModel={modelInfo.responseModel}
+              />
+              <SmartRouteCaption
+                routing={parseLogOther(log.other)?.smart_routing}
               />
             </div>
           )

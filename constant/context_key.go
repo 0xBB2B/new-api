@@ -85,4 +85,9 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeySmartRouteLog holds the public smart_routing log fields (map[string]any) of a scorer call.
+	ContextKeySmartRouteLog ContextKey = "smart_route_log"
+	// ContextKeySmartRouteResult holds the smartroute.RouteResult of a virtual-model request.
+	ContextKeySmartRouteResult ContextKey = "smart_route_result"
 )

@@ -529,3 +529,96 @@ func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 	require.NoError(t, db.First(&stored, user.Id).Error)
 	assert.Equal(t, hashedPassword, stored.Password)
 }
+
+func setupVirtualModelListTest(t *testing.T) {
+	t.Helper()
+	withSelfUseModeDisabled(t)
+	db := setupModelListControllerTestDB(t)
+
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalPrices := ratio_setting.ModelPrice2JSONString()
+	originalRoutes := operation_setting.SmartRoutingRoutesToString()
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalPrices))
+		operation_setting.LoadSmartRoutesFromJSONString(originalRoutes)
+		model.InvalidatePricingCache()
+	})
+
+	priority := int64(0)
+	weight := uint(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Type: constant.ChannelTypeCodex, Key: "key-1", Status: common.ChannelStatusEnabled,
+		Name: "channel-1", Weight: &weight, Models: "m-resp", Group: "api", Priority: &priority,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "api", Model: "m-resp", ChannelId: 1, Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"m-resp":0.01}`))
+	operation_setting.LoadSmartRoutesFromJSONString(`[]`)
+	model.InitChannelCache()
+	model.RefreshPricing()
+}
+
+func listVirtualModelTestModels(t *testing.T, tokenModelLimit map[string]bool) []dto.OpenAIModels {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "api")
+	if tokenModelLimit != nil {
+		common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+		common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, tokenModelLimit)
+	}
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	return decodeListModelsPayload(t, recorder).Data
+}
+
+func TestListModelsVirtualModel(t *testing.T) {
+	tier := `{"model":"m-resp","groups":["api"],"effort":""}`
+	route := `[{"name":"auto-gpt","tiers":{"simple":` + tier + `,"normal":` + tier + `,"hard":` + tier + `},` +
+		`"default_tier":"normal","scorer":{"model":"m-resp","groups":["api"],"timeout_ms":2000},` +
+		`"advisor":{"model":"m-resp","groups":["api"],"after_dissatisfied":2},` +
+		`"downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`
+
+	tests := []struct {
+		name        string
+		route       string
+		tokenLimit  map[string]bool
+		wantVirtual bool
+	}{
+		{name: "no whitelist shows virtual model", route: route, wantVirtual: true},
+		{name: "whitelist without virtual model hides it", route: route, tokenLimit: map[string]bool{"m-resp": true}},
+		{name: "whitelist with virtual model shows it", route: route, tokenLimit: map[string]bool{"auto-gpt": true}, wantVirtual: true},
+		{name: "no virtual model configured", route: `[]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupVirtualModelListTest(t)
+			operation_setting.LoadSmartRoutesFromJSONString(tt.route)
+
+			models := listVirtualModelTestModels(t, tt.tokenLimit)
+
+			var virtual *dto.OpenAIModels
+			ids := make([]string, 0, len(models))
+			for i := range models {
+				ids = append(ids, models[i].Id)
+				if models[i].Id == "auto-gpt" {
+					virtual = &models[i]
+				}
+			}
+			if !tt.wantVirtual {
+				assert.Nil(t, virtual)
+				if tt.tokenLimit == nil {
+					assert.Equal(t, []string{"m-resp"}, ids)
+				}
+				return
+			}
+			require.NotNil(t, virtual)
+			assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIResponse}, virtual.SupportedEndpointTypes)
+		})
+	}
+}

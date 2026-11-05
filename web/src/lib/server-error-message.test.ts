@@ -17,15 +17,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import i18next from 'i18next'
-import { describe, expect, test } from 'vitest'
+import { beforeAll, describe, expect, test } from 'vitest'
+
+import en from '@/i18n/locales/en.json'
+import zhCN from '@/i18n/locales/zh.json'
 
 import {
   getServerErrorMessage,
   getServerErrorMessageKey,
+  getServerMessage,
   translateServerText,
 } from './server-error-message'
 
 describe('server error message mapping', () => {
+  beforeAll(() => {
+    i18next.addResourceBundle('en', 'translation', en.translation, true, true)
+    i18next.addResourceBundle(
+      'zhCN',
+      'translation',
+      zhCN.translation,
+      true,
+      true
+    )
+  })
+
   test('maps the active-session limit to recovery instructions', () => {
     const message = getServerErrorMessageKey({ code: 'AUTH_SESSION_LIMIT' })
 
@@ -103,6 +118,54 @@ describe('server error message mapping', () => {
         message_params: { id: 7 },
       })
     ).toBe('Channel 7 does not exist')
+  })
+
+  test.each([
+    ['zhCN', '虚拟模型 auto-gpt：gpt-5.6-terra 在分组 api 里没有可用渠道'],
+    [
+      'en',
+      'Virtual model auto-gpt: gpt-5.6-terra has no available channel in group api',
+    ],
+  ])(
+    'translates a nested message parameter in the %s interface',
+    async (language, expected) => {
+      await i18next.changeLanguage(language)
+      try {
+        const data = {
+          success: false,
+          message:
+            'Virtual model auto-gpt: gpt-5.6-terra has no available channel in group api',
+          message_key: 'Virtual model {{name}}: {{detail}}',
+          message_params: {
+            name: 'auto-gpt',
+            detail: {
+              key: '{{model}} has no available channel in group {{group}}',
+              params: { model: 'gpt-5.6-terra', group: 'api' },
+            },
+          },
+        }
+
+        expect(getServerMessage(data)).toBe(expected)
+        expect(getServerErrorMessage(data)).toBe(expected)
+      } finally {
+        await i18next.changeLanguage('en')
+      }
+    }
+  )
+
+  test('fills a plain string message parameter in as written', async () => {
+    await i18next.changeLanguage('zhCN')
+    try {
+      expect(
+        getServerMessage({
+          success: false,
+          message_key: 'Virtual model {{name}}: {{detail}}',
+          message_params: { name: 'auto-gpt', detail: 'Select a model' },
+        })
+      ).toBe('虚拟模型 auto-gpt：Select a model')
+    } finally {
+      await i18next.changeLanguage('en')
+    }
   })
 
   test('translates a backend source key and leaves upstream text as written', async () => {

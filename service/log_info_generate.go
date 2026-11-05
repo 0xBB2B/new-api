@@ -121,6 +121,10 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		other.SetPublic("is_system_prompt_overwritten", true)
 	}
 
+	if smartRouting, ok := common.GetContextKey(ctx, constant.ContextKeySmartRouteLog); ok {
+		other.SetPublic("smart_routing", smartRouting)
+	}
+
 	AppendRelayLogAdminInfo(ctx, relayInfo, other)
 	AppendResponseModelLogInfo(relayInfo, other)
 	appendRequestPath(ctx, relayInfo, other)

@@ -365,3 +365,31 @@ func billingExprSmokeRequests() []billingexpr.RequestInput {
 		},
 	}
 }
+
+func HasModelBillingConfig(modelName string) bool {
+	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
+		return true
+	}
+	if _, ok, _ := ratio_setting.GetModelRatio(modelName); ok {
+		return true
+	}
+	if GetBillingMode(modelName) != BillingModeTieredExpr {
+		return false
+	}
+	expr, ok := GetBillingExpr(modelName)
+	return ok && strings.TrimSpace(expr) != ""
+}
+
+// HasPriceOrRatioEntry reports whether name has a configured price, ratio, or
+// tiered billing-mode entry after a single wildcard normalization. Self-use
+// fallback does not count as a configured ratio.
+func HasPriceOrRatioEntry(name string) bool {
+	formatted := ratio_setting.FormatMatchingModelName(name)
+	if _, ok := ratio_setting.GetModelPrice(formatted, false); ok {
+		return true
+	}
+	if ratio_setting.HasConfiguredModelRatio(formatted) {
+		return true
+	}
+	return GetBillingMode(formatted) == BillingModeTieredExpr
+}

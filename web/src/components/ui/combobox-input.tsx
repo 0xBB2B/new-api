@@ -257,8 +257,11 @@ export function ComboboxInput({
           if (!open) setOpen(true)
         }}
         onPointerDown={() => {
-          pointerFocusRef.current = true
-          if (document.activeElement === inputRef.current && !open) {
+          if (document.activeElement !== inputRef.current) {
+            pointerFocusRef.current = true
+            return
+          }
+          if (!open) {
             setSearchValue(allowCustomValue ? value : '')
             setSearchChanged(false)
             setOpen(true)

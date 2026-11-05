@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,6 +45,12 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
 	}
 
+	strip := shouldStripSmartRouteReasoning(c, info.ChannelId)
+	strippedCount := 0
+	if strip {
+		request.Input, strippedCount = stripEncryptedReasoningInput(request.Input)
+	}
+
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
 		return nil, nil, nil, types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
@@ -54,6 +61,32 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		if err != nil {
 			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
+		if strip {
+			raw, err := storage.Bytes()
+			if err != nil {
+				return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+			}
+			var fields map[string]json.RawMessage
+			if common.Unmarshal(raw, &fields) == nil {
+				if input, ok := fields["input"]; ok {
+					cleaned, count := stripEncryptedReasoningInput(input)
+					if count > 0 {
+						fields["input"] = cleaned
+						if raw, err = common.Marshal(fields); err != nil {
+							return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+						}
+						strippedCount = count
+						recordStrippedReasoning(c, strippedCount)
+						body, closer, err := relaycommon.NewOutboundJSONBody(raw)
+						if err != nil {
+							return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+						}
+						return adaptor, body, closer, nil
+					}
+				}
+			}
+		}
+		recordStrippedReasoning(c, 0)
 		body := common.NewReplayableBodyReader(storage)
 		return adaptor, body, io.NopCloser(body), nil
 	}
@@ -62,6 +95,7 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	if err != nil {
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
 	}
+	recordStrippedReasoning(c, strippedCount)
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 	jsonData, err := common.Marshal(convertedRequest)
 	if err != nil {

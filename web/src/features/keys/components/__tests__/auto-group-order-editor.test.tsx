@@ -362,4 +362,46 @@ describe('Auto group order editor', () => {
       'No valid custom Auto groups remain. Add a group or restore global Auto.'
     )
   })
+  test('hideInheritControls removes the selection count and the restore button', () => {
+    const { container } = render(
+      <I18nextProvider i18n={i18n}>
+        <AutoGroupOrderEditor
+          value={['default']}
+          mode='custom'
+          options={globalOptions}
+          globalOptions={globalOptions}
+          maxCount={2}
+          hideInheritControls
+          onChange={() => {}}
+        />
+      </I18nextProvider>
+    )
+
+    expect(
+      within(container).queryByRole('button', { name: 'Restore global Auto' })
+    ).toBeNull()
+    expect(container).not.toHaveTextContent('1 / 2 groups selected')
+    expect(findButton(container, 'Remove default')).toBeInTheDocument()
+  })
+
+  test('addLabel replaces the add placeholder', () => {
+    const { container } = render(
+      <I18nextProvider i18n={i18n}>
+        <AutoGroupOrderEditor
+          value={['default']}
+          mode='custom'
+          options={globalOptions}
+          globalOptions={globalOptions}
+          maxCount={2}
+          addLabel='Add group'
+          onChange={() => {}}
+        />
+      </I18nextProvider>
+    )
+
+    expect(
+      within(container).getByRole('combobox', { name: 'Add group' })
+    ).toBeInTheDocument()
+    expect(container).not.toHaveTextContent('Add Auto group')
+  })
 })

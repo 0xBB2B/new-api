@@ -114,7 +114,40 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+export interface SmartRouteLabels {
+  task_type?: string
+  reasoning?: string
+  workload?: string
+  risk?: string
+  domain?: string
+  confidence?: number
+  feedback?: string
+}
+
+export interface SmartRouting {
+  role: string
+  virtual_model: string
+  tier?: string
+  scored_tier?: string
+  reason?: string
+  reason_params?: {
+    history_tokens?: number
+    limit?: number
+    kept_tier?: string
+    scored_tier?: string
+    count?: number
+    timeout_ms?: number
+    matched?: string[]
+  }
+  labels?: SmartRouteLabels
+  scorer?: { status: string; billed?: boolean }
+  cleaned_reasoning?: number
+  main_tier?: string
+  main_model?: string
+}
+
 export interface LogOtherData {
+  smart_routing?: SmartRouting
   admin_info?: {
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean

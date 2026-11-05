@@ -717,6 +717,10 @@ func handleConfigUpdate(key, value string) bool {
 		operation_setting.LoadToolPricesFromJSONString(value)
 		return true
 	}
+	if key == operation_setting.SmartRoutingRoutesOptionKey {
+		operation_setting.LoadSmartRoutesFromJSONString(value)
+		return true
+	}
 
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) != 2 {

@@ -1705,3 +1705,32 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 		map[string]any{"key": "Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"},
 	}, other["content_parts"])
 }
+
+func TestGenerateTextOtherInfoSmartRoutingIsPublicOnlyWhenPresent(t *testing.T) {
+	newInfo := func() *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{StartTime: time.Now(), FirstResponseTime: time.Now(), ChannelMeta: &relaycommon.ChannelMeta{}}
+	}
+	fields := map[string]any{"role": "scorer", "virtual_model": "auto-gpt", "main_tier": "hard", "main_model": "gpt-5.6-sol"}
+
+	t.Run("route log in context is written as a public field", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		common.SetContextKey(ctx, constant.ContextKeySmartRouteLog, fields)
+
+		snapshot := GenerateTextOtherInfo(ctx, newInfo(), 1, 1, 1, 0, 0, 0, 1).Snapshot()
+
+		assert.Equal(t, fields, snapshot["smart_routing"])
+		if adminInfo, ok := snapshot["admin_info"].(map[string]any); ok {
+			assert.NotContains(t, adminInfo, "smart_routing")
+		}
+	})
+
+	t.Run("without a route log there is no smart_routing", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+
+		snapshot := GenerateTextOtherInfo(ctx, newInfo(), 1, 1, 1, 0, 0, 0, 1).Snapshot()
+
+		assert.NotContains(t, snapshot, "smart_routing")
+	})
+}
