@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Dialog } from '@/components/dialog'
 
 import { Combobox } from '../combobox'
+import { ComboboxInput } from '../combobox-input'
 import { Sheet, SheetContent, SheetTitle } from '../sheet'
 
 const options = [
@@ -132,6 +133,34 @@ describe('searchable single selection', () => {
       }
     }
   )
+
+  it('keeps openOnFocus=false after clicking an input that already had focus', async () => {
+    render(
+      <>
+        <button type='button'>Before</button>
+        <ComboboxInput
+          options={options}
+          value='openai'
+          onValueChange={() => {}}
+          aria-label='Provider'
+          openOnFocus={false}
+        />
+      </>
+    )
+    const user = userEvent.setup()
+    const input = screen.getByRole('combobox', { name: 'Provider' })
+    await user.tab()
+    await user.tab()
+    expect(input).toHaveFocus()
+    await user.click(input)
+    expect(input).toHaveAttribute('aria-expanded', 'true')
+    await user.keyboard('{Escape}')
+    await user.tab({ shift: true })
+    await user.tab()
+    expect(input).toHaveFocus()
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(input).toHaveValue('OpenAI')
+  })
 
   it('searches labels and values without committing text, shows empty results, and restores the selection on Escape', async () => {
     render(<Fixture />)
