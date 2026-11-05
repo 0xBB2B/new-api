@@ -1226,6 +1226,38 @@ func TestValidateRoutes(t *testing.T) {
 	assert.Equal(t, "smart-bad", message.Params["name"])
 }
 
+func TestValidateRoutes_DetailIsTranslatableMessage(t *testing.T) {
+	setupValidateRouteTest(t)
+	noChannel := validRoute()
+	noChannel.Name = "smart-nochannel"
+	setTier(&noChannel, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
+		tier.Groups = []string{"missing-group"}
+	})
+	fieldErrs, _ := smartroute.ValidateRoute(noChannel, noChannel.Name)
+	require.NotEmpty(t, fieldErrs)
+
+	err := smartroute.ValidateRoutes([]operation_setting.SmartRoute{noChannel})
+	require.Error(t, err)
+	var outer *common.Message
+	require.True(t, errors.As(err, &outer))
+	assert.Equal(t, "Virtual model {{name}}: {{detail}}", outer.Key)
+	assert.Equal(t, "smart-nochannel", outer.Params["name"])
+	detail, ok := outer.Params["detail"].(*common.Message)
+	require.True(t, ok, "detail must be a *common.Message, got %T", outer.Params["detail"])
+	assert.Equal(t, fieldErrs[0].Message.Key, detail.Key)
+	assert.Equal(t, fieldErrs[0].Message.Params, detail.Params)
+	assert.Equal(t, "Virtual model smart-nochannel: "+fieldErrs[0].Message.Error(), err.Error())
+
+	duplicate := smartroute.ValidateRoutes([]operation_setting.SmartRoute{validRoute(), validRoute()})
+	require.Error(t, duplicate)
+	require.True(t, errors.As(duplicate, &outer))
+	detail, ok = outer.Params["detail"].(*common.Message)
+	require.True(t, ok, "detail must be a *common.Message, got %T", outer.Params["detail"])
+	assert.Equal(t, "A virtual model named {{name}} already exists", detail.Key)
+	assert.Equal(t, "smart-a", detail.Params["name"])
+	assert.Equal(t, "Virtual model smart-a: A virtual model named smart-a already exists", duplicate.Error())
+}
+
 const wantScorerSystemPrompt = `You are a router that labels a user's latest request so a gateway can pick a model tier. You never answer the request itself.
 
 Read the user messages (oldest first; earlier messages show only their beginning) and the local features, then return exactly one JSON object and nothing else:

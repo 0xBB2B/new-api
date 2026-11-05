@@ -11,7 +11,9 @@ import (
 // also its key in web/src/i18n/locales; Params fill its {{name}} placeholders.
 // The web console translates Key with Params, so the backend only renders the
 // English text, for API callers and log fallbacks. Params carry display-ready
-// values: format quota with logger.FormatQuota before passing it.
+// values: format quota with logger.FormatQuota before passing it. A Params
+// value may itself be a *Message: the web console translates it before filling
+// it into the outer text, so do not flatten it with Error() first.
 type Message struct {
 	Key    string         `json:"key"`
 	Params map[string]any `json:"params,omitempty"`

@@ -188,7 +188,7 @@ func ValidateRoutes(routes []operation_setting.SmartRoute) error {
 	seen := make(map[string]struct{}, len(routes))
 	for _, route := range routes {
 		fail := func(detail *common.Message) error {
-			return common.NewMessage("Virtual model {{name}}: {{detail}}", map[string]any{"name": route.Name, "detail": detail.Error()})
+			return common.NewMessage("Virtual model {{name}}: {{detail}}", map[string]any{"name": route.Name, "detail": detail})
 		}
 		if errs, _ := ValidateRoute(route, route.Name); len(errs) > 0 {
 			return fail(errs[0].Message)
