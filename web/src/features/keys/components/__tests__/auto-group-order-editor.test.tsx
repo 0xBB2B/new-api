@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, within } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { createEvent, fireEvent, render, within } from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
 
 const { useState } = await import('react')
 const { createInstance } = await import('i18next')
@@ -33,6 +33,7 @@ await i18n.use(initReactI18next).init({
         '{{count}} / {{max}} groups selected':
           '{{count}} / {{max}} groups selected',
         'Add Auto group': 'Add Auto group',
+        'Add group': 'Add group',
         'Auto group order': 'Auto group order',
         'Drag {{group}} to reorder': 'Drag {{group}} to reorder',
         'Inherit global Auto order': 'Inherit global Auto order',
@@ -403,5 +404,370 @@ describe('Auto group order editor', () => {
       within(container).getByRole('combobox', { name: 'Add group' })
     ).toBeInTheDocument()
     expect(container).not.toHaveTextContent('Add Auto group')
+  })
+
+  describe("variant='compact'", () => {
+    const compactOptions = [
+      { value: 'subscription', label: 'subscription' },
+      { value: 'api', label: 'api' },
+      { value: 'team', label: 'team' },
+      { value: 'vip', label: 'vip' },
+      { value: 'default', label: 'default' },
+      { value: 'extra', label: 'extra' },
+    ]
+
+    function renderCompact(
+      value: string[],
+      extra: { maxCount?: number; 'aria-invalid'?: boolean } = {}
+    ) {
+      const onChange = vi.fn()
+      const view = render(
+        <I18nextProvider i18n={i18n}>
+          <AutoGroupOrderEditor
+            variant='compact'
+            value={value}
+            mode='custom'
+            options={compactOptions}
+            globalOptions={compactOptions}
+            maxCount={extra.maxCount ?? 5}
+            aria-invalid={extra['aria-invalid']}
+            addLabel='Add group'
+            onChange={onChange}
+          />
+        </I18nextProvider>
+      )
+      return { ...view, onChange }
+    }
+
+    function fireDragAt(
+      type: 'dragOver' | 'drop',
+      target: HTMLElement,
+      clientX: number
+    ) {
+      const event = createEvent[type](target)
+      Object.defineProperty(event, 'clientX', { value: clientX })
+      fireEvent(target, event)
+    }
+
+    function getTag(container: HTMLElement, group: string): HTMLElement {
+      const tag = within(container)
+        .getByText(group)
+        .closest<HTMLElement>('[draggable]')
+      if (!tag) throw new Error(`Expected draggable tag for "${group}"`)
+      return tag
+    }
+
+    test('shows numbered tags and a plus button for a non-empty value', () => {
+      const { container } = renderCompact(['subscription', 'api'])
+
+      const first = within(container).getByRole('listitem', {
+        name: /subscription/,
+      })
+      const second = within(container).getByRole('listitem', { name: /api/ })
+      expect(first).toHaveAccessibleName(/1/)
+      expect(second).toHaveAccessibleName(/2/)
+      expect(first).toHaveTextContent('1')
+      expect(second).toHaveTextContent('2')
+      expect(within(container).getAllByRole('combobox')).toHaveLength(1)
+      expect(findButton(container, 'Remove subscription')).toBeInTheDocument()
+      expect(findButton(container, 'Remove api')).toBeInTheDocument()
+    })
+
+    test('tags form a list and advertise the keyboard shortcut', () => {
+      const { container } = renderCompact(['subscription', 'api'])
+
+      expect(within(container).getByRole('list')).toHaveAttribute(
+        'role',
+        'list'
+      )
+      expect(within(container).getAllByRole('listitem')).toHaveLength(2)
+      for (const tag of within(container).getAllByRole('listitem')) {
+        expect(tag).toHaveAttribute(
+          'aria-keyshortcuts',
+          'Alt+ArrowLeft Alt+ArrowRight'
+        )
+      }
+    })
+
+    test('tags show a grab cursor only when reordering is possible', () => {
+      const multi = renderCompact(['subscription', 'api'])
+      expect(
+        within(multi.container).getByRole('listitem', { name: /subscription/ })
+      ).toHaveClass('cursor-grab')
+      multi.unmount()
+
+      const single = renderCompact(['subscription'])
+      expect(
+        within(single.container).getByRole('listitem', { name: /subscription/ })
+      ).not.toHaveClass('cursor-grab')
+    })
+
+    test('focus stays on the moved tag after a keyboard move', () => {
+      const onChange = vi.fn()
+      const renderWith = (value: string[]) => (
+        <I18nextProvider i18n={i18n}>
+          <AutoGroupOrderEditor
+            variant='compact'
+            value={value}
+            mode='custom'
+            options={compactOptions}
+            globalOptions={compactOptions}
+            maxCount={5}
+            addLabel='Add group'
+            onChange={onChange}
+          />
+        </I18nextProvider>
+      )
+      const { container, rerender } = render(
+        renderWith(['subscription', 'api'])
+      )
+      const tag = within(container).getByRole('listitem', {
+        name: /subscription/,
+      })
+      tag.focus()
+      fireEvent.keyDown(tag, { key: 'ArrowRight', altKey: true })
+      expect(onChange).toHaveBeenCalledWith({
+        groups: ['api', 'subscription'],
+        mode: 'custom',
+      })
+
+      rerender(renderWith(['api', 'subscription']))
+
+      expect(document.activeElement).toBe(
+        within(container).getByRole('listitem', { name: /subscription/ })
+      )
+    })
+
+    test.each([
+      { name: 'last tag moved later', tag: 'team', key: 'ArrowRight' },
+      { name: 'first tag moved earlier', tag: 'subscription', key: 'ArrowLeft' },
+    ])(
+      'a no-op keyboard move does not steal focus later ($name)',
+      (scenario) => {
+        const onChange = vi.fn()
+        const renderWith = (value: string[]) => (
+          <I18nextProvider i18n={i18n}>
+            <AutoGroupOrderEditor
+              variant='compact'
+              value={value}
+              mode='custom'
+              options={compactOptions}
+              globalOptions={compactOptions}
+              maxCount={5}
+              addLabel='Add group'
+              onChange={onChange}
+            />
+          </I18nextProvider>
+        )
+        const { container, rerender } = render(
+          renderWith(['subscription', 'api', 'team'])
+        )
+        const tag = within(container).getByRole('listitem', {
+          name: new RegExp(scenario.tag),
+        })
+        tag.focus()
+        fireEvent.keyDown(tag, { key: scenario.key, altKey: true })
+        expect(onChange).not.toHaveBeenCalled()
+
+        const plus = within(container).getByRole('combobox')
+        plus.focus()
+        rerender(renderWith(['subscription', 'api', 'team', 'vip']))
+
+        expect(document.activeElement).toBe(
+          within(container).getByRole('combobox')
+        )
+      }
+    )
+
+    test('dropping on the left half of a tag inserts before it', () => {
+      const { container, onChange } = renderCompact([
+        'subscription',
+        'api',
+        'default',
+      ])
+      const target = getTag(container, 'api')
+      vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        width: 100,
+        right: 100,
+        top: 0,
+        bottom: 20,
+        height: 20,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+
+      fireEvent.dragStart(getTag(container, 'default'))
+      fireDragAt('dragOver', target, 10)
+      fireDragAt('drop', target, 10)
+      fireEvent.dragEnd(getTag(container, 'default'))
+
+      expect(onChange).toHaveBeenCalledWith({
+        groups: ['subscription', 'default', 'api'],
+        mode: 'custom',
+      })
+    })
+
+    test('dropping a tag back into its own position does not call onChange', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+      const target = getTag(container, 'api')
+      vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        width: 100,
+        right: 100,
+        top: 0,
+        bottom: 20,
+        height: 20,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+
+      fireEvent.dragStart(getTag(container, 'subscription'))
+      fireDragAt('dragOver', target, 10)
+      fireDragAt('drop', target, 10)
+      fireEvent.dragEnd(getTag(container, 'subscription'))
+
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    test('without addLabel the empty state uses the default Add group text', () => {
+      const { container } = render(
+        <I18nextProvider i18n={i18n}>
+          <AutoGroupOrderEditor
+            variant='compact'
+            value={[]}
+            mode='custom'
+            options={compactOptions}
+            globalOptions={compactOptions}
+            maxCount={5}
+            onChange={() => {}}
+          />
+        </I18nextProvider>
+      )
+
+      expect(container).toHaveTextContent('Add group')
+      expect(
+        within(container).getByRole('combobox', { name: 'Add group' })
+      ).toBeInTheDocument()
+    })
+
+    test('shows only the add-group button for an empty value', () => {
+      const { container } = renderCompact([])
+
+      expect(within(container).getByText('Add group')).toBeInTheDocument()
+      expect(container.querySelector('[aria-label^="Remove "]')).toBe(null)
+    })
+
+    test('dropping a tag after another reorders the groups', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+
+      const target = getTag(container, 'api')
+      vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        width: 100,
+        right: 100,
+        top: 0,
+        bottom: 20,
+        height: 20,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+
+      fireEvent.dragStart(getTag(container, 'subscription'))
+      fireDragAt('dragOver', target, 90)
+      fireDragAt('drop', target, 90)
+      fireEvent.dragEnd(getTag(container, 'subscription'))
+
+      expect(onChange).toHaveBeenCalledWith({
+        groups: ['api', 'subscription'],
+        mode: 'custom',
+      })
+    })
+
+    test('Alt+ArrowRight moves a tag one place later', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+
+      fireEvent.keyDown(getTag(container, 'subscription'), {
+        key: 'ArrowRight',
+        altKey: true,
+      })
+
+      expect(onChange).toHaveBeenCalledWith({
+        groups: ['api', 'subscription'],
+        mode: 'custom',
+      })
+    })
+
+    test('Alt+ArrowLeft on the first tag does not call onChange', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+
+      fireEvent.keyDown(getTag(container, 'subscription'), {
+        key: 'ArrowLeft',
+        altKey: true,
+      })
+
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    test('Alt+ArrowLeft moves a later tag one place earlier', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+
+      fireEvent.keyDown(getTag(container, 'api'), {
+        key: 'ArrowLeft',
+        altKey: true,
+      })
+
+      expect(onChange).toHaveBeenCalledWith({
+        groups: ['api', 'subscription'],
+        mode: 'custom',
+      })
+    })
+
+    test('a single group is not draggable', () => {
+      const { container } = renderCompact(['subscription'])
+
+      expect(within(container).getByText('subscription')).toBeInTheDocument()
+      expect(container.querySelector('[draggable="true"]')).toBe(null)
+    })
+
+    test('the remove button drops that group', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+
+      fireEvent.click(findButton(container, 'Remove subscription'))
+
+      expect(onChange).toHaveBeenCalledWith({ groups: ['api'], mode: 'custom' })
+    })
+
+    test('the plus button appends the chosen group to the end', () => {
+      const { container, onChange } = renderCompact(['subscription', 'api'])
+
+      fireEvent.click(within(container).getByRole('combobox'))
+      fireEvent.click(getCommandItem('team'))
+
+      expect(onChange).toHaveBeenCalledWith({
+        groups: ['subscription', 'api', 'team'],
+        mode: 'custom',
+      })
+    })
+
+    test('the plus button is disabled at the limit', () => {
+      const { container } = renderCompact(
+        ['subscription', 'api', 'team', 'vip', 'default'],
+        { maxCount: 5 }
+      )
+
+      expect(within(container).getByRole('combobox')).toBeDisabled()
+    })
+
+    test('aria-invalid reaches the root element', () => {
+      const { container } = renderCompact(['subscription'], {
+        'aria-invalid': true,
+      })
+
+      expect(container.querySelector('[aria-invalid="true"]')).not.toBe(null)
+    })
   })
 })

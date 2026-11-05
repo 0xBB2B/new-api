@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronsUpDown, Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -56,6 +56,7 @@ type ApiKeyGroupComboboxProps = {
   onValueChange: (value: string) => void
   placeholder?: string
   disabled?: boolean
+  compact?: boolean
   'aria-label'?: string
 }
 
@@ -65,6 +66,7 @@ export function ApiKeyGroupCombobox({
   onValueChange,
   placeholder,
   disabled,
+  compact,
   'aria-label': ariaLabel,
 }: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
@@ -108,7 +110,9 @@ export function ApiKeyGroupCombobox({
             disabled={disabled}
             aria-label={ariaLabel}
             className={cn(
-              'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
+              compact
+                ? 'h-7 gap-1 px-2 text-xs'
+                : 'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
               isAutoSelected &&
                 cn(
                   AUTO_GROUP_FRAME_CLASS_NAME,
@@ -121,32 +125,44 @@ export function ApiKeyGroupCombobox({
         {isAutoSelected && (
           <AutoGroupFlowBorder shouldReduceMotion={shouldReduceMotion} />
         )}
-        <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
-          <span className='min-w-0'>
-            <span className='block truncate font-medium'>
-              {selectedOption?.label || placeholder || t('Select a group')}
-            </span>
-            {selectedOption?.desc && (
-              <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
-                {selectedOption.desc}
+        {compact ? (
+          <>
+            <Plus aria-hidden='true' className='size-3.5 shrink-0' />
+            {placeholder}
+          </>
+        ) : (
+          <>
+            <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
+              <span className='min-w-0'>
+                <span className='block truncate font-medium'>
+                  {selectedOption?.label || placeholder || t('Select a group')}
+                </span>
+                {selectedOption?.desc && (
+                  <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
+                    {selectedOption.desc}
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-          <span className='hidden sm:block'>
-            <GroupRatioBadge
-              ratio={selectedOption?.ratio}
-              isAuto={isAutoSelected}
-              shouldReduceMotion={shouldReduceMotion}
+              <span className='hidden sm:block'>
+                <GroupRatioBadge
+                  ratio={selectedOption?.ratio}
+                  isAuto={isAutoSelected}
+                  shouldReduceMotion={shouldReduceMotion}
+                />
+              </span>
+            </span>
+            <ChevronsUpDown
+              aria-hidden='true'
+              className='size-4 shrink-0 opacity-50'
             />
-          </span>
-        </span>
-        <ChevronsUpDown
-          aria-hidden='true'
-          className='size-4 shrink-0 opacity-50'
-        />
+          </>
+        )}
       </PopoverTrigger>
       <PopoverContent
-        className='data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 w-[var(--anchor-width)] overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100'
+        className={cn(
+          'data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 w-[var(--anchor-width)] overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100',
+          compact && 'min-w-64'
+        )}
         onWheel={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
