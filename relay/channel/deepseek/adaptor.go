@@ -119,6 +119,10 @@ func applyDeepSeekV4OpenAIThinkingSuffix(info *relaycommon.RelayInfo, request *d
 		modelName = info.UpstreamModelName
 	}
 	baseModel, thinkingType, effort, ok := deepSeekThinking(info, modelName)
+	if !ok && info.ReasoningState() == nil && request.ReasoningEffort == "none" &&
+		(modelName == "deepseek-flash" || strings.HasPrefix(modelName, "deepseek-v4-")) {
+		baseModel, thinkingType, effort, ok = modelName, "disabled", "", true
+	}
 	if !ok {
 		return nil
 	}

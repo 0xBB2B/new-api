@@ -222,6 +222,29 @@ func TestRunSmartRouteScorer_ValidLabelsAreBilledAtSettle(t *testing.T) {
 	}
 }
 
+func TestRunSmartRouteScorer_PlaygroundWithoutTokenIsBilledToTheUser(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	c := scorerContext("api")
+	c.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyTokenId, 0)
+	common.SetContextKey(c, constant.ContextKeyTokenUnlimited, false)
+
+	outcome, err := runSmartRouteScorer(c, scorerRoute(5000, "api"), scorerInspection(t))
+
+	require.NoError(t, err)
+	require.Empty(t, outcome.Failure)
+	require.NotNil(t, outcome.Labels)
+	require.NotNil(t, outcome.Settle)
+
+	outcome.Settle("hard", "gpt-x")
+
+	logs := scorerConsumeLogs(t, f.db)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "scorer-x", logs[0].ModelName)
+	assert.Equal(t, scorerChargeAtRate, logs[0].Quota)
+	assert.Equal(t, scorerTestQuota-scorerChargeAtRate, scorerUserQuota(t))
+}
+
 func TestRunSmartRouteScorer_SendsFixedChatRequest(t *testing.T) {
 	f := setupScorerFixture(t, scorerTestQuota)
 	in := scorerInspection(t)

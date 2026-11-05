@@ -3,19 +3,20 @@
 |---|---|---|---|
 | 01 | 01-route-config-schema | done | 2026-11-05 |
 | 02 | 02-thinking-capability-core | done | 2026-11-05 |
-| 03 | 03-effort-runtime | pending | — |
+| 03 | 03-effort-runtime | done | 2026-11-05 |
 | 04 | 04-anthropic-routing | pending | — |
 | 05 | 05-format-save-check | pending | — |
 | 06 | 06-user-models-virtual | done | 2026-11-05 |
-| 07 | 07-route-form-model | pending | — |
+| 07 | 07-route-form-model | done | 2026-11-05 |
 | 08 | 08-group-order-compact | done | 2026-11-05 |
 | 09 | 09-route-editor-dialog | pending | — |
 | 10 | 10-routes-and-capability-cards | pending | — |
-| 11 | 11-model-pickers-frontend | pending | — |
+| 11 | 11-model-pickers-frontend | done | 2026-11-05 |
 | 12 | 12-log-effort-row | pending | — |
 ## 当前
-并行组 3：`03-effort-runtime`、`06-user-models-virtual`（准备 Red）。
-- 02 自修 1 轮：Gemini 家族限定、预算型模型列全档位、内置表按官方文档补 27 个型号与日期快照后缀；用户 2026-11-05 定换档日志写「升档 / 降档」（已改 PRD 06 C1、OVERVIEW、术语表、plan 03/12）。复审通过。
+下一步：`12-log-effort-row` 审查中；随后 `04-anthropic-routing`、`09-route-editor-dialog`。
+- 03 自修 2 轮：续跑档位不同时重算、会话保存改普通参数；用户 2026-11-05 批准 DeepSeek 适配器 Chat 格式 none 改写为 thinking.type=disabled（限 v4/flash 家族）；plan 11 审查发现演练场 /pg/chat/completions 选虚拟模型 400、会话不分用户、演练场打分扣 id=0 令牌失败，一并修复（打分请求继承演练场标记，只扣钱包）。Anthropic 分支的 3 个问题转入 plan 04。
+- 01/02/06/07/08/11 已完成。
 
 ## 阻塞
 （无）

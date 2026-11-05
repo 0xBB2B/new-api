@@ -39,6 +39,9 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	if compact {
 		path = "/v1/responses"
 	}
+	if path == "/pg/chat/completions" {
+		path = "/v1/chat/completions"
+	}
 	endpoint := smartroute.RequestEndpointFromPath(path)
 	supported := route.Endpoints
 	if endpoint == "" || !slices.Contains(supported, endpoint) {
@@ -73,9 +76,15 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 		return false
 	}
 
-	sessionKey := smartroute.SessionKey(common.GetContextKeyInt(c, constant.ContextKeyTokenId), inspection)
+	var sessionKey string
+	if tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId); tokenID != 0 {
+		sessionKey = smartroute.SessionKey(tokenID, inspection)
+	} else {
+		sessionKey = smartroute.SessionKeyForUser(common.GetContextKeyInt(c, constant.ContextKeyUserId), inspection)
+	}
 	var session *smartroute.SessionRecord
-	if state, found := smartroute.LoadSession(sessionKey); found {
+	state, found := smartroute.LoadSession(sessionKey)
+	if found {
 		session = &smartroute.SessionRecord{CurrentRoute: state.CurrentRoute, LastNonAdvisor: state.LastNonAdvisor, LastChannelID: state.LastChannelID}
 	}
 
@@ -112,22 +121,22 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 
 	autoToken := common.GetContextKeyString(c, constant.ContextKeyUsingGroup) == "auto"
 	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	tierModel := func(tier string) (string, []string, string) {
+	tierModel := func(tier string) (string, []string) {
 		if tier == smartroute.RouteAdvisor {
 			groups := route.Advisor.Groups
 			if autoToken {
 				groups = service.FilterUserTokenAutoGroups(userGroup, groups)
 			}
-			return route.Advisor.Model, groups, ""
+			return route.Advisor.Model, groups
 		}
 		t := route.Tiers[tier]
-		return t.Model, t.Groups, t.Effort
+		return t.Model, t.Groups
 	}
 	available := func(tier string) bool {
 		if autoToken && tier != smartroute.RouteAdvisor {
 			return true
 		}
-		modelName, groups, _ := tierModel(tier)
+		modelName, groups := tierModel(tier)
 		if !autoToken {
 			groups = []string{common.GetContextKeyString(c, constant.ContextKeyUsingGroup)}
 		}
@@ -150,7 +159,31 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	if finalTier != smartroute.RouteAdvisor && !available(finalTier) {
 		finalTier = route.DefaultTier
 	}
-	realModel, groups, effort := tierModel(finalTier)
+	realModel, groups := tierModel(finalTier)
+
+	client := clientEffort(endpoint, raw)
+	var effort smartroute.EffortDecision
+	if finalTier == smartroute.RouteAdvisor {
+		effort = smartroute.EffortDecision{Value: client, Source: smartroute.EffortSourceClient}
+		if client == "" {
+			effort.Source = smartroute.EffortSourceUnset
+		}
+	} else {
+		sessionEffort, sessionSource := "", ""
+		if state.CurrentRoute == finalTier {
+			sessionEffort, sessionSource = state.Effort, state.EffortSource
+		}
+		effort = smartroute.ResolveTierEffort(smartroute.EffortInput{
+			Tier:          route.Tiers[finalTier],
+			IsUserTurn:    isUserTurn,
+			Labels:        outcome.Labels,
+			ScorerFailed:  outcome.Failure != "",
+			ClientEffort:  client,
+			SessionEffort: sessionEffort,
+			SessionSource: sessionSource,
+			Capability:    smartroute.EffectiveThinkingCapability(realModel),
+		})
+	}
 
 	scorerBilled := outcome.Settle != nil
 	if scorerBilled {
@@ -172,9 +205,10 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 		IsUserTurn:   isUserTurn,
 		SessionKey:   sessionKey,
 		Session:      session,
+		Effort:       effort,
 	})
 
-	if err := rewriteSmartRouteBody(c, storage, raw, endpoint, realModel, effort); err != nil {
+	if err := rewriteSmartRouteBody(c, storage, raw, endpoint, realModel, effort, client); err != nil {
 		abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 		return false
 	}
@@ -196,32 +230,26 @@ func scorerStatus(scored bool, failure string) string {
 	return smartroute.ScorerStatusOK
 }
 
-func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byte, endpoint, realModel, effort string) error {
+func clientEffort(endpoint string, raw []byte) string {
+	switch endpoint {
+	case string(constant.EndpointTypeOpenAIResponse):
+		return ojson.GetBytes(raw, "reasoning.effort").String()
+	case string(constant.EndpointTypeAnthropic):
+		if ojson.GetBytes(raw, "thinking.type").String() == "disabled" {
+			return "none"
+		}
+		return ojson.GetBytes(raw, "output_config.effort").String()
+	}
+	return ojson.GetBytes(raw, "reasoning_effort").String()
+}
+
+func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byte, endpoint, realModel string, effort smartroute.EffortDecision, client string) error {
 	patched, err := ojson.SetBytes(raw, "model", realModel)
 	if err != nil {
 		return err
 	}
-	if effort != "" && endpoint == string(constant.EndpointTypeOpenAIResponse) {
-		reasoning := map[string]any{}
-		if existing := ojson.GetBytes(raw, "reasoning"); existing.IsObject() {
-			if err := common.UnmarshalJsonStr(existing.Raw, &reasoning); err != nil {
-				return err
-			}
-		}
-		reasoning["effort"] = effort
-		encoded, err := common.Marshal(reasoning)
-		if err != nil {
-			return err
-		}
-		if patched, err = ojson.SetRawBytes(patched, "reasoning", encoded); err != nil {
-			return err
-		}
-	} else if effort != "" {
-		// reasoning 对象里的 effort 或 max_tokens 会被部分适配器优先使用，留着就能绕过档位的思考力度。
-		if patched, err = ojson.SetBytes(patched, "reasoning_effort", effort); err != nil {
-			return err
-		}
-		if patched, err = ojson.DeleteBytes(patched, "reasoning"); err != nil {
+	if effort.Drop || (effort.Value != "" && !(effort.Source == smartroute.EffortSourceClient && effort.Value == client)) {
+		if patched, err = rewriteSmartRouteEffort(patched, endpoint, effort); err != nil {
 			return err
 		}
 	}
@@ -237,10 +265,64 @@ func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byt
 	return nil
 }
 
+func rewriteSmartRouteEffort(body []byte, endpoint string, effort smartroute.EffortDecision) ([]byte, error) {
+	var err error
+	switch endpoint {
+	case string(constant.EndpointTypeOpenAIResponse):
+		reasoning := map[string]any{}
+		if existing := ojson.GetBytes(body, "reasoning"); existing.IsObject() {
+			if err := common.UnmarshalJsonStr(existing.Raw, &reasoning); err != nil {
+				return nil, err
+			}
+		} else if effort.Drop {
+			return body, nil
+		}
+		if effort.Drop {
+			delete(reasoning, "effort")
+		} else {
+			reasoning["effort"] = effort.Value
+		}
+		encoded, err := common.Marshal(reasoning)
+		if err != nil {
+			return nil, err
+		}
+		return ojson.SetRawBytes(body, "reasoning", encoded)
+	case string(constant.EndpointTypeAnthropic):
+		switch {
+		case effort.Drop:
+			if body, err = ojson.DeleteBytes(body, "thinking"); err != nil {
+				return nil, err
+			}
+			return ojson.DeleteBytes(body, "output_config.effort")
+		case effort.Value == "none":
+			if body, err = ojson.SetRawBytes(body, "thinking", []byte(`{"type":"disabled"}`)); err != nil {
+				return nil, err
+			}
+			return ojson.DeleteBytes(body, "output_config.effort")
+		}
+		if body, err = ojson.SetBytes(body, "output_config.effort", effort.Value); err != nil {
+			return nil, err
+		}
+		if ojson.GetBytes(body, "thinking.type").String() == "disabled" {
+			return ojson.DeleteBytes(body, "thinking")
+		}
+		return ojson.DeleteBytes(body, "thinking.budget_tokens")
+	}
+	// reasoning 对象里的 effort 或 max_tokens 会被部分适配器优先使用，留着就能绕过档位的思考力度。
+	if !effort.Drop {
+		if body, err = ojson.SetBytes(body, "reasoning_effort", effort.Value); err != nil {
+			return nil, err
+		}
+	} else if body, err = ojson.DeleteBytes(body, "reasoning_effort"); err != nil {
+		return nil, err
+	}
+	return ojson.DeleteBytes(body, "reasoning")
+}
+
 func saveSmartRouteSession(c *gin.Context) {
 	result, ok := smartroute.GetRouteResult(c)
 	if !ok {
 		return
 	}
-	smartroute.SaveSessionAfterSuccess(result.SessionKey, result.IsUserTurn, result.Tier, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+	smartroute.SaveSessionAfterSuccess(result.SessionKey, result.IsUserTurn, result.Tier, common.GetContextKeyInt(c, constant.ContextKeyChannelId), result.Effort)
 }

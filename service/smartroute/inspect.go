@@ -147,12 +147,21 @@ func BuildScorerInput(in Inspection, n int) ScorerInput {
 }
 
 func SessionKey(tokenID int, in Inspection) string {
+	return sessionKey(strconv.Itoa(tokenID), in)
+}
+
+// SessionKeyForUser 给没有令牌的请求（演练场）用，按用户区分会话。
+func SessionKeyForUser(userID int, in Inspection) string {
+	return sessionKey("u"+strconv.Itoa(userID), in)
+}
+
+func sessionKey(owner string, in Inspection) string {
 	var seed string
 	switch {
 	case in.PromptCacheKey != "":
-		seed = strconv.Itoa(tokenID) + "|pck|" + in.PromptCacheKey
+		seed = owner + "|pck|" + in.PromptCacheKey
 	case len(in.UserMessages) > 0 && in.UserMessages[0] != "":
-		seed = strconv.Itoa(tokenID) + "|first|" + in.UserMessages[0]
+		seed = owner + "|first|" + in.UserMessages[0]
 	default:
 		return ""
 	}

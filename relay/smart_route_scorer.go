@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -121,6 +122,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	if err != nil {
 		return scorerFailed("building relay info: %s", err.Error())
 	}
+	info.IsPlayground = strings.HasPrefix(parent.Request.URL.Path, "/pg")
 	// 预扣费按请求 ID 幂等，与主请求共用 ID 会让打分的预扣被当成重复
 	info.RequestId += "-scorer"
 	refund := func() {

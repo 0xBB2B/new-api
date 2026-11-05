@@ -43,6 +43,14 @@ func MainLogFields(result RouteResult, cleanedReasoning int) map[string]any {
 	}
 	fields["scorer"] = scorer
 
+	if result.Effort.Source != "" {
+		effort := map[string]any{"value": result.Effort.Value, "source": result.Effort.Source}
+		if result.Effort.From != "" {
+			effort["from"] = result.Effort.From
+		}
+		fields["effort"] = effort
+	}
+
 	if cleanedReasoning > 0 {
 		fields["cleaned_reasoning"] = cleanedReasoning
 	}

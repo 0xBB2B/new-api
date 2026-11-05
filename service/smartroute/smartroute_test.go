@@ -820,7 +820,7 @@ func TestSessionStore(t *testing.T) {
 	common.RedisEnabled = false
 
 	t.Run("empty key is never stored", func(t *testing.T) {
-		smartroute.SaveSessionAfterSuccess("", true, "hard", 7)
+		smartroute.SaveSessionAfterSuccess("", true, "hard", 7, smartroute.EffortDecision{})
 		_, ok := smartroute.LoadSession("")
 		assert.False(t, ok)
 	})
@@ -833,7 +833,7 @@ func TestSessionStore(t *testing.T) {
 	t.Run("user turn writes all three fields", func(t *testing.T) {
 		for _, route := range []string{"simple", "normal", "hard"} {
 			key := "session-store-user-turn-" + route
-			smartroute.SaveSessionAfterSuccess(key, true, route, 11)
+			smartroute.SaveSessionAfterSuccess(key, true, route, 11, smartroute.EffortDecision{})
 			got, ok := smartroute.LoadSession(key)
 			require.True(t, ok)
 			assert.Equal(t, smartroute.SessionState{CurrentRoute: route, LastNonAdvisor: route, LastChannelID: 11}, got)
@@ -842,8 +842,8 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("later user turn overwrites earlier one", func(t *testing.T) {
 		key := "session-store-overwrite"
-		smartroute.SaveSessionAfterSuccess(key, true, "simple", 1)
-		smartroute.SaveSessionAfterSuccess(key, true, "hard", 2)
+		smartroute.SaveSessionAfterSuccess(key, true, "simple", 1, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", 2, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "hard", LastChannelID: 2}, got)
@@ -851,8 +851,8 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("advisor turn keeps last non-advisor tier", func(t *testing.T) {
 		key := "session-store-advisor"
-		smartroute.SaveSessionAfterSuccess(key, true, "normal", 3)
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 4)
+		smartroute.SaveSessionAfterSuccess(key, true, "normal", 3, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 4, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "normal", LastChannelID: 4}, got)
@@ -860,7 +860,7 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("advisor turn without prior record leaves last non-advisor empty", func(t *testing.T) {
 		key := "session-store-advisor-first"
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 5)
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 5, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "", LastChannelID: 5}, got)
@@ -868,10 +868,10 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("tool result continuation only updates channel", func(t *testing.T) {
 		key := "session-store-tool-result"
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6)
-		smartroute.SaveSessionAfterSuccess(key, true, "hard", 6)
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6)
-		smartroute.SaveSessionAfterSuccess(key, false, "hard", 9)
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", 6, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, false, "hard", 9, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "hard", LastChannelID: 9}, got)
@@ -879,7 +879,7 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("tool result continuation without record writes channel only", func(t *testing.T) {
 		key := "session-store-tool-result-first"
-		smartroute.SaveSessionAfterSuccess(key, false, "normal", 8)
+		smartroute.SaveSessionAfterSuccess(key, false, "normal", 8, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{LastChannelID: 8}, got)
