@@ -21,6 +21,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { api } from '@/lib/api'
+
 import { CCSwitchDialog } from '../cc-switch-dialog'
 
 let queryClient: QueryClient
@@ -36,10 +38,12 @@ afterEach(() => {
 })
 
 function renderDialog(models = ['gpt-5.4', 'claude-sonnet-4-6']) {
-  queryClient.setQueryData(['user-models-ccswitch'], {
-    success: true,
-    data: models,
-  })
+  for (const endpoint of [undefined, 'gemini']) {
+    queryClient.setQueryData(['user-models-ccswitch', endpoint], {
+      success: true,
+      data: models,
+    })
+  }
   render(
     <QueryClientProvider client={queryClient}>
       <CCSwitchDialog open onOpenChange={vi.fn()} tokenKey='test-only' />
@@ -104,7 +108,7 @@ describe('CC Switch model selection', () => {
 
     expect(await screen.findByText('No models found')).toBeVisible()
     await act(async () => {
-      queryClient.setQueryData(['user-models-ccswitch'], {
+      queryClient.setQueryData(['user-models-ccswitch', undefined], {
         success: true,
         data: ['gpt-5.4'],
       })
@@ -123,5 +127,97 @@ describe('CC Switch model selection', () => {
 
     expect(input).toHaveValue('Development')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+})
+
+describe('CC Switch virtual models', () => {
+  let get: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    get = vi.spyOn(api, 'get').mockImplementation(async (_url, config) => {
+      const endpoint = (config?.params as { endpoint?: string } | undefined)
+        ?.endpoint
+      const byEndpoint: Record<string, string[]> = {
+        anthropic: ['gpt-5.5', 'auto-gpt'],
+        openai: ['gpt-5.5', 'auto-chat'],
+        gemini: ['gpt-5.5'],
+      }
+      return {
+        data: {
+          success: true,
+          data: byEndpoint[endpoint ?? ''] ?? [
+            'gpt-5.5',
+            'auto-gpt',
+            'auto-chat',
+          ],
+        },
+      }
+    })
+  })
+
+  function expectNoEndpointParam() {
+    expect(get).toHaveBeenCalled()
+    for (const call of get.mock.calls) {
+      const config = call[1] as { params?: { endpoint?: string } } | undefined
+      expect(config?.params?.endpoint).toBeUndefined()
+    }
+  }
+
+  afterEach(() => {
+    get.mockRestore()
+  })
+
+  function renderFetchingDialog() {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CCSwitchDialog open onOpenChange={vi.fn()} tokenKey='test-only' />
+      </QueryClientProvider>
+    )
+  }
+
+  it('lists every virtual model after the real ones for Codex', async () => {
+    renderFetchingDialog()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'Codex' }))
+    await user.click(screen.getByRole('combobox', { name: 'Primary Model' }))
+
+    const options = (await screen.findAllByRole('option')).map(
+      (option) => option.textContent
+    )
+    expect(options).toEqual(['gpt-5.5', 'auto-gpt', 'auto-chat'])
+    expectNoEndpointParam()
+  })
+
+  it.each(['Primary Model', 'Haiku Model', 'Sonnet Model', 'Opus Model'])(
+    'lists virtual models in the Claude %s dropdown',
+    async (field) => {
+      renderFetchingDialog()
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('combobox', { name: field }))
+
+      expect(
+        await screen.findByRole('option', { name: 'auto-gpt' })
+      ).toBeVisible()
+      expect(screen.getByRole('option', { name: 'auto-chat' })).toBeVisible()
+      expectNoEndpointParam()
+    }
+  )
+
+  it('requests endpoint=gemini and lists no virtual model for Gemini', async () => {
+    renderFetchingDialog()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'Gemini' }))
+    await user.click(screen.getByRole('combobox', { name: 'Primary Model' }))
+
+    expect(await screen.findByRole('option', { name: 'gpt-5.5' })).toBeVisible()
+    expect(
+      screen.queryByRole('option', { name: 'auto-gpt' })
+    ).not.toBeInTheDocument()
+    expect(get).toHaveBeenCalledWith(
+      '/api/user/models',
+      expect.objectContaining({
+        params: expect.objectContaining({ endpoint: 'gemini' }),
+      })
+    )
   })
 })

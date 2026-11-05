@@ -102,9 +102,11 @@ export function CCSwitchDialog(props: Props) {
   const [name, setName] = useState<string>(APP_CONFIGS.claude.defaultName)
   const [models, setModels] = useState<Record<string, string>>({})
 
+  const modelsEndpoint = app === 'gemini' ? 'gemini' : undefined
   const { data: modelsData } = useQuery({
-    queryKey: ['user-models-ccswitch'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
+    queryKey: ['user-models-ccswitch', modelsEndpoint],
+    queryFn: async () =>
+      requireServerSuccess(await getUserModels(modelsEndpoint)),
     enabled: props.open,
     staleTime: 5 * 60 * 1000,
   })

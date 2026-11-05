@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import type { ApiKey } from '../../types'
@@ -86,7 +87,7 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
   }
 }
 
-async function renderCreateDrawer(): Promise<void> {
+async function renderCreateDrawer(models: string[] = []): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -98,7 +99,7 @@ async function renderCreateDrawer(): Promise<void> {
   )
   queryClient.setQueryData(
     ['user-models'],
-    { success: true, data: [] },
+    { success: true, data: models },
     { updatedAt: freshAt }
   )
   queryClient.setQueryData(
@@ -422,5 +423,30 @@ describe('API keys mutate drawer user quota query switch', () => {
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
+  })
+})
+
+describe('API keys mutate drawer model limits', () => {
+  test('submits a virtual model chosen in the model limits dropdown', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads)
+    await renderCreateDrawer(['gpt-5.5', 'auto-gpt'])
+
+    fireEvent.click(findButton('Advanced Settings', true))
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByLabelText('Select models (empty for allow all)')
+    )
+    await user.click(await screen.findByRole('option', { name: 'auto-gpt' }))
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    )
+
+    changeInput(getControlByLabel('Name'), 'virtual-limit')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.model_limits_enabled).toBe(true)
+    expect(createdPayloads[0]?.model_limits).toBe('auto-gpt')
   })
 })
