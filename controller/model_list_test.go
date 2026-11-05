@@ -622,3 +622,56 @@ func TestListModelsVirtualModel(t *testing.T) {
 		})
 	}
 }
+
+func TestGetUserModelsAppendsVirtualModels(t *testing.T) {
+	originalRoutes := operation_setting.SmartRoutingRoutesToString()
+	t.Cleanup(func() { operation_setting.LoadSmartRoutesFromJSONString(originalRoutes) })
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "virtual-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "default", Model: "zz-real-model", ChannelId: 1, Enabled: true,
+	}).Error)
+
+	const routes = `[{"name":"auto-gpt","endpoints":["openai-response","anthropic"]},{"name":"auto-chat","endpoints":["openai"]}]`
+	tests := []struct {
+		name   string
+		routes string
+		query  string
+		want   []string
+	}{
+		{name: "no routes keeps real models only", routes: `[]`, query: "", want: []string{"zz-real-model"}},
+		{name: "no routes with endpoint keeps real models only", routes: `[]`, query: "?endpoint=openai", want: []string{"zz-real-model"}},
+		{name: "appends all virtual models in config order", routes: routes, query: "", want: []string{"zz-real-model", "auto-gpt", "auto-chat"}},
+		{name: "group param still appends", routes: routes, query: "?group=default", want: []string{"zz-real-model", "auto-gpt", "auto-chat"}},
+		{name: "group without real models still appends", routes: routes, query: "?group=vip", want: []string{"auto-gpt", "auto-chat"}},
+		{name: "endpoint openai", routes: routes, query: "?endpoint=openai", want: []string{"zz-real-model", "auto-chat"}},
+		{name: "endpoint anthropic", routes: routes, query: "?endpoint=anthropic", want: []string{"zz-real-model", "auto-gpt"}},
+		{name: "endpoint openai-response", routes: routes, query: "?endpoint=openai-response", want: []string{"zz-real-model", "auto-gpt"}},
+		{name: "endpoint gemini appends nothing", routes: routes, query: "?endpoint=gemini", want: []string{"zz-real-model"}},
+		{name: "unknown endpoint appends nothing", routes: routes, query: "?endpoint=xyz", want: []string{"zz-real-model"}},
+		{name: "virtual model sharing a real model name appears once", routes: `[{"name":"zz-real-model","endpoints":["openai"]},{"name":"auto-chat","endpoints":["openai"]}]`, query: "", want: []string{"zz-real-model", "auto-chat"}},
+		{name: "empty endpoint behaves like no endpoint", routes: routes, query: "?endpoint=", want: []string{"zz-real-model", "auto-gpt", "auto-chat"}},
+		{name: "group and endpoint combine", routes: routes, query: "?group=default&endpoint=openai", want: []string{"zz-real-model", "auto-chat"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			operation_setting.LoadSmartRoutesFromJSONString(tt.routes)
+
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/user/models"+tt.query, nil)
+			context.Set("id", 1004)
+
+			GetUserModels(context)
+
+			assert.Equal(t, tt.want, decodeUserModelsResponse(t, recorder))
+		})
+	}
+}

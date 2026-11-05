@@ -6,7 +6,7 @@
 | 03 | 03-effort-runtime | pending | — |
 | 04 | 04-anthropic-routing | pending | — |
 | 05 | 05-format-save-check | pending | — |
-| 06 | 06-user-models-virtual | pending | — |
+| 06 | 06-user-models-virtual | done | 2026-11-05 |
 | 07 | 07-route-form-model | pending | — |
 | 08 | 08-group-order-compact | done | 2026-11-05 |
 | 09 | 09-route-editor-dialog | pending | — |

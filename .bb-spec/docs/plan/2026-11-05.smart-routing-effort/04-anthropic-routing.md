@@ -58,4 +58,5 @@ description: 虚拟模型接收 Anthropic 格式请求：识别用户新消息�
   - [ ] 虚拟模型没勾 Anthropic → 400，信息「Virtual model auto-gpt only supports these endpoints: Responses」，没有打分记录和消费记录
   - [ ] 勾了 Anthropic → 上游请求的 model 是选中档位的真实模型名，日志 smart_routing 字段和 Responses 请求的结构相同
   - [ ] 渠道变了 → 发出的请求里没有 thinking、redacted_thinking 块，日志 `cleaned_reasoning` 等于去掉的段数；渠道没变 → 原样
+  - [ ] 思考力度改写（03 已实现、在这里端到端验证）：力度 high → 上游 `output_config.effort=high` 且没有 `thinking.budget_tokens`；力度 none → `thinking={"type":"disabled"}` 且没有 `output_config.effort`；客户端 `thinking.type=disabled` 而档位力度为 high → 去掉整个 `thinking`；不支持思考的模型 → 去掉 `thinking` 和 `output_config.effort`
 - 实测（执行完记进完成简报）：配 Claude 订阅渠道和 OpenAI 渠道各一档，用 Claude Code 在同一会话里先简单后困难问题来回换档，确认上游不报错

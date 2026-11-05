@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -651,10 +652,17 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
+	models := service.GetGroupsEnabledModels(groupsToQuery)
+	endpoint := c.Query("endpoint")
+	for _, route := range operation_setting.GetSmartRoutingSetting().Routes {
+		if (endpoint == "" || slices.Contains(route.Endpoints, endpoint)) && !slices.Contains(models, route.Name) {
+			models = append(models, route.Name)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    service.GetGroupsEnabledModels(groupsToQuery),
+		"data":    models,
 	})
 }
 
