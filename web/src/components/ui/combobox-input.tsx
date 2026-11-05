@@ -50,6 +50,29 @@ interface ComboboxInputProps {
   'aria-invalid'?: React.AriaAttributes['aria-invalid']
 }
 
+function findFixedContainingBlock(from: HTMLElement): HTMLElement | null {
+  for (
+    let node: HTMLElement | null = from;
+    node && node !== document.body && node !== document.documentElement;
+    node = node.parentElement
+  ) {
+    const style = getComputedStyle(node)
+    const isNone = (v: string) => !v || v === 'none'
+    if (
+      !isNone(style.transform) ||
+      !isNone(style.translate) ||
+      !isNone(style.scale) ||
+      !isNone(style.rotate) ||
+      !isNone(style.perspective) ||
+      !isNone(style.filter) ||
+      /paint|layout|strict|content/.test(style.contain) ||
+      /transform|perspective|filter/.test(style.willChange)
+    )
+      return node
+  }
+  return null
+}
+
 export function ComboboxInput({
   options,
   value = '',
@@ -140,19 +163,34 @@ export function ComboboxInput({
       input.closest<HTMLElement>('[role="dialog"]') ?? document.body
     const measure = () => {
       const rect = input.getBoundingClientRect()
-      setDropdown({
-        container,
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-      })
+      // position: fixed 的参照物是最近的"包含块"祖先（transform 等会让元素成为包含块），
+      // 没有时才是视口，所以坐标要换算到包含块内部
+      const block = findFixedContainingBlock(container)
+      let top = rect.bottom + 4
+      let left = rect.left
+      let width = rect.width
+      if (block) {
+        const blockRect = block.getBoundingClientRect()
+        const scale =
+          (block.offsetWidth && blockRect.width / block.offsetWidth) || 1
+        top = (top - blockRect.top - block.clientTop) / scale + block.scrollTop
+        left =
+          (left - blockRect.left - block.clientLeft) / scale + block.scrollLeft
+        width = width / scale
+      }
+      setDropdown({ container, top, left, width })
     }
     measure()
     window.addEventListener('scroll', measure, true)
     window.addEventListener('resize', measure)
+    // 打开动画（如 zoom-in-95）期间测量会偏，动画结束后补测
+    container.addEventListener('animationend', measure)
+    container.addEventListener('transitionend', measure)
     return () => {
       window.removeEventListener('scroll', measure, true)
       window.removeEventListener('resize', measure)
+      container.removeEventListener('animationend', measure)
+      container.removeEventListener('transitionend', measure)
     }
   }, [open])
 

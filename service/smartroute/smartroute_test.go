@@ -1162,18 +1162,38 @@ func TestValidateRoute_SelfUseModeKeepsVirtualNameUsable(t *testing.T) {
 	}
 }
 
-func TestValidateRoute_ScorerNeedsChatCompletionsChannel(t *testing.T) {
-	t.Run("only a Codex channel in the group", func(t *testing.T) {
+func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
+	t.Run("only a Codex channel in the group is accepted", func(t *testing.T) {
 		setupValidateRouteTest(t)
 		route := validRoute()
 		route.Scorer.Model = "m-resp"
 
 		errs, _ := smartroute.ValidateRoute(route)
 
+		assert.Empty(t, errs)
+	})
+
+	t.Run("only a Replicate channel in the group is rejected", func(t *testing.T) {
+		setupValidateRouteTest(t)
+		priority, weight := int64(0), uint(100)
+		require.NoError(t, model.DB.Create(&model.Channel{
+			Id: 8, Type: constant.ChannelTypeReplicate, Key: "key-8", Status: common.ChannelStatusEnabled,
+			Name: "channel-8", Weight: &weight, Models: "m-repl", Group: "api", Priority: &priority,
+		}).Error)
+		require.NoError(t, model.DB.Create(&model.Ability{
+			Group: "api", Model: "m-repl", ChannelId: 8, Enabled: true, Priority: &priority, Weight: weight,
+		}).Error)
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"m-priced-only":0.01,"m-repl":0.01}`))
+		model.InitChannelCache()
+		route := validRoute()
+		route.Scorer.Model = "m-repl"
+
+		errs, _ := smartroute.ValidateRoute(route)
+
 		require.Len(t, errs, 1)
 		assert.Equal(t, "scorer.model", errs[0].Field)
 		assert.Equal(t, "{{model}} has no available channel in group {{group}}", errs[0].Message.Key)
-		assert.Equal(t, "m-resp", errs[0].Message.Params["model"])
+		assert.Equal(t, "m-repl", errs[0].Message.Params["model"])
 		assert.Equal(t, "api", errs[0].Message.Params["group"])
 	})
 

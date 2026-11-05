@@ -122,7 +122,7 @@ func ValidateRoute(route operation_setting.SmartRoute) ([]FieldError, []string) 
 		}
 		var filters []dto.ChannelFilter
 		if field == "scorer.model" {
-			filters = []dto.ChannelFilter{{Kind: dto.FilterChatCompletions}}
+			filters = []dto.ChannelFilter{{Kind: dto.FilterScorerCapable}}
 		}
 		for _, group := range groups {
 			if channel, err := model.GetRandomSatisfiedChannel(group, modelName, 0, filters); err != nil || channel == nil {

@@ -306,3 +306,240 @@ describe('selected option icons', () => {
     expect(screen.queryByAltText('')).not.toBeInTheDocument()
   })
 })
+
+describe('ComboboxInput dropdown placement', () => {
+  const inputRect = {
+    left: 340,
+    top: 180,
+    right: 740,
+    bottom: 212,
+    width: 400,
+    height: 32,
+  }
+  const centered = 'translate(-50%, -50%)'
+
+  function rect(box: Partial<DOMRect> & { left: number; top: number }) {
+    return () =>
+      ({ x: box.left, y: box.top, ...box, toJSON: () => ({}) }) as DOMRect
+  }
+
+  // jsdom has no layout: an element whose inline transform is set stands for a
+  // fixed-position containing block, anything else leaves it to the viewport.
+  function containingBlock(el: HTMLElement) {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      const transform = node.style.transform
+      if (transform && transform !== 'none') return node
+    }
+    return null
+  }
+
+  function visualPosition(listbox: HTMLElement) {
+    const wrapper = listbox.parentElement as HTMLElement
+    const left = parseFloat(wrapper.style.left)
+    const top = parseFloat(wrapper.style.top)
+    const width = parseFloat(wrapper.style.width)
+    const block = containingBlock(wrapper)
+    if (!block) return { left, top, width }
+    const box = block.getBoundingClientRect()
+    const scale =
+      box.width && block.offsetWidth ? box.width / block.offsetWidth : 1
+    return {
+      left: box.left + block.clientLeft + (left - block.scrollLeft) * scale,
+      top: box.top + block.clientTop + (top - block.scrollTop) * scale,
+      width: width * scale,
+    }
+  }
+
+  function mockLayout(
+    input: HTMLElement,
+    dialog: HTMLElement | null,
+    options: {
+      scroll?: { top: number; left: number }
+      dialogBox?: { left: number; top: number }
+      transform?: string
+    } = {}
+  ) {
+    input.getBoundingClientRect = rect(inputRect)
+    if (!dialog) return
+    const {
+      scroll = { top: 0, left: 0 },
+      dialogBox = { left: 300, top: 100 },
+    } = options
+    if (options.transform) dialog.style.transform = options.transform
+    dialog.getBoundingClientRect = rect(dialogBox)
+    Object.defineProperty(dialog, 'scrollTop', {
+      value: scroll.top,
+      configurable: true,
+    })
+    Object.defineProperty(dialog, 'scrollLeft', {
+      value: scroll.left,
+      configurable: true,
+    })
+  }
+
+  function field() {
+    return (
+      <ComboboxInput
+        options={options}
+        value='openai'
+        onValueChange={() => {}}
+        aria-label='Provider'
+      />
+    )
+  }
+
+  const underInput = { left: 340, top: 216, width: 400 }
+
+  it.each([
+    { scrollTop: 0, scrollLeft: 0 },
+    { scrollTop: 50, scrollLeft: 0 },
+  ])(
+    'sits right under the input inside a transformed dialog scrolled by %o',
+    async (scroll) => {
+      render(
+        <Dialog open title='Choose a provider'>
+          {field()}
+        </Dialog>
+      )
+      const dialog = screen.getByRole('dialog')
+      const input = screen.getByRole('combobox', { name: 'Provider' })
+      mockLayout(input, dialog, {
+        transform: centered,
+        scroll: { top: scroll.scrollTop, left: scroll.scrollLeft },
+      })
+      await waitFor(() => expect(input).toHaveFocus())
+      await userEvent.setup().click(input)
+      const listbox = await screen.findByRole('listbox')
+      expect(visualPosition(listbox)).toEqual(underInput)
+    }
+  )
+
+  it('sits right under the input inside a sheet that has no transform', async () => {
+    render(
+      <Sheet open>
+        <SheetContent>
+          <SheetTitle>Choose a provider</SheetTitle>
+          {field()}
+        </SheetContent>
+      </Sheet>
+    )
+    const sheet = screen.getByRole('dialog')
+    const input = screen.getByRole('combobox', { name: 'Provider' })
+    mockLayout(input, sheet, { dialogBox: { left: 1000, top: 0 } })
+    input.getBoundingClientRect = rect({
+      ...inputRect,
+      left: 1050,
+      right: 1450,
+    })
+    await waitFor(() => expect(input).toHaveFocus())
+    await userEvent.setup().click(input)
+    const listbox = await screen.findByRole('listbox')
+    expect(visualPosition(listbox)).toEqual({
+      left: 1050,
+      top: 216,
+      width: 400,
+    })
+  })
+
+  it('sits right under the input outside any dialog', async () => {
+    render(field())
+    const input = screen.getByRole('combobox', { name: 'Provider' })
+    mockLayout(input, null)
+    await userEvent.setup().click(input)
+    const listbox = await screen.findByRole('listbox')
+    expect(visualPosition(listbox)).toEqual(underInput)
+  })
+
+  it('follows the input once the dialog open animation (scale 0.95) ends', async () => {
+    render(
+      <Dialog open title='Choose a provider'>
+        {field()}
+      </Dialog>
+    )
+    const dialog = screen.getByRole('dialog')
+    const input = screen.getByRole('combobox', { name: 'Provider' })
+    Object.defineProperty(dialog, 'offsetWidth', {
+      value: 600,
+      configurable: true,
+    })
+    mockLayout(input, dialog, {
+      transform: `${centered} scale(0.95)`,
+      dialogBox: { left: 310, top: 110 },
+    })
+    dialog.getBoundingClientRect = () =>
+      ({ left: 310, top: 110, width: 600 * 0.95 }) as DOMRect
+    input.getBoundingClientRect = rect({
+      left: 345,
+      top: 185,
+      right: 725,
+      bottom: 210,
+      width: 380,
+    })
+    await waitFor(() => expect(input).toHaveFocus())
+    await userEvent.setup().click(input)
+    await screen.findByRole('listbox')
+
+    dialog.style.transform = centered
+    mockLayout(input, dialog)
+    dialog.dispatchEvent(new Event('animationend', { bubbles: true }))
+    dialog.dispatchEvent(new Event('transitionend', { bubbles: true }))
+
+    await waitFor(() =>
+      expect(visualPosition(screen.getByRole('listbox'))).toEqual(underInput)
+    )
+  })
+
+  it('accounts for the border of a transformed container', async () => {
+    render(
+      <Dialog open title='Choose a provider'>
+        {field()}
+      </Dialog>
+    )
+    const dialog = screen.getByRole('dialog')
+    const input = screen.getByRole('combobox', { name: 'Provider' })
+    Object.defineProperty(dialog, 'clientLeft', {
+      value: 3,
+      configurable: true,
+    })
+    Object.defineProperty(dialog, 'clientTop', { value: 1, configurable: true })
+    mockLayout(input, dialog, { transform: centered })
+    await waitFor(() => expect(input).toHaveFocus())
+    await userEvent.setup().click(input)
+    const listbox = await screen.findByRole('listbox')
+    expect(visualPosition(listbox)).toEqual(underInput)
+  })
+
+  it('matches the input visual size while the dialog is still scaled to 0.95', async () => {
+    render(
+      <Dialog open title='Choose a provider'>
+        {field()}
+      </Dialog>
+    )
+    const dialog = screen.getByRole('dialog')
+    const input = screen.getByRole('combobox', { name: 'Provider' })
+    Object.defineProperty(dialog, 'offsetWidth', {
+      value: 600,
+      configurable: true,
+    })
+    mockLayout(input, dialog, {
+      transform: `${centered} scale(0.95)`,
+      dialogBox: { left: 310, top: 110 },
+    })
+    dialog.getBoundingClientRect = () =>
+      ({ left: 310, top: 110, width: 600 * 0.95 }) as DOMRect
+    input.getBoundingClientRect = rect({
+      left: 345,
+      top: 185,
+      right: 725,
+      bottom: 210,
+      width: 380,
+    })
+    await waitFor(() => expect(input).toHaveFocus())
+    await userEvent.setup().click(input)
+    const listbox = await screen.findByRole('listbox')
+    const visual = visualPosition(listbox)
+    expect(visual.width).toBeCloseTo(380, 0)
+    expect(visual.left).toBeCloseTo(345, 0)
+    expect(visual.top).toBeCloseTo(214, 0)
+  })
+})
