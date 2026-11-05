@@ -2,8 +2,12 @@ package relay
 
 import (
 	"encoding/json"
+	"strconv"
+
+	"github.com/MoeForge/moego/ojson"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/gin-gonic/gin"
 )
@@ -58,6 +62,74 @@ func stripEncryptedReasoningInput(input json.RawMessage) (json.RawMessage, int) 
 		return input, 0
 	}
 	return out, stripped
+}
+
+// 带签名的思考块只在签发它的账号里有效，换渠道后转发会被上游拒绝。去空的 assistant 消息整条删除，上游会合并相邻同角色消息。
+func stripClaudeThinkingBlocks(request *dto.ClaudeRequest) int {
+	stripped := 0
+	messages := make([]dto.ClaudeMessage, 0, len(request.Messages))
+	for _, message := range request.Messages {
+		blocks, ok := message.Content.([]any)
+		if !ok || message.Role != "assistant" {
+			messages = append(messages, message)
+			continue
+		}
+		kept := make([]any, 0, len(blocks))
+		for _, raw := range blocks {
+			block, _ := raw.(map[string]any)
+			if t := block["type"]; t == "thinking" || t == "redacted_thinking" {
+				stripped++
+				continue
+			}
+			kept = append(kept, raw)
+		}
+		if len(kept) == len(blocks) {
+			messages = append(messages, message)
+			continue
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		message.Content = kept
+		messages = append(messages, message)
+	}
+	request.Messages = messages
+	return stripped
+}
+
+func stripClaudeThinkingBlocksInBody(raw []byte) ([]byte, int, error) {
+	messages := ojson.GetBytes(raw, "messages").Array()
+	stripped := 0
+	var err error
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Get("role").String() != "assistant" {
+			continue
+		}
+		blocks := messages[i].Get("content").Array()
+		var thinking []int
+		for j, block := range blocks {
+			if t := block.Get("type").String(); t == "thinking" || t == "redacted_thinking" {
+				thinking = append(thinking, j)
+			}
+		}
+		if len(thinking) == 0 {
+			continue
+		}
+		stripped += len(thinking)
+		messagePath := "messages." + strconv.Itoa(i)
+		if len(thinking) == len(blocks) {
+			if raw, err = ojson.DeleteBytes(raw, messagePath); err != nil {
+				return nil, 0, err
+			}
+			continue
+		}
+		for k := len(thinking) - 1; k >= 0; k-- {
+			if raw, err = ojson.DeleteBytes(raw, messagePath+".content."+strconv.Itoa(thinking[k])); err != nil {
+				return nil, 0, err
+			}
+		}
+	}
+	return raw, stripped, nil
 }
 
 func recordStrippedReasoning(c *gin.Context, count int) {

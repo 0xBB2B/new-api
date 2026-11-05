@@ -481,7 +481,7 @@ func TestRequestEndpointFromPath(t *testing.T) {
 	}{
 		{"/v1/responses", responsesEndpoint},
 		{"/v1/chat/completions", chatEndpoint},
-		{"/v1/messages", ""},
+		{"/v1/messages", "anthropic"},
 		{"/v1/embeddings", ""},
 		{"", ""},
 	}
@@ -1827,4 +1827,53 @@ func TestClampEffortToCapability_NoThinkingYieldsEmpty(t *testing.T) {
 		got, _ := smartroute.ClampEffortToCapability(effort, smartroute.ThinkingCapability{Source: "builtin", NoThinking: true})
 		assert.Empty(t, got, effort)
 	}
+}
+
+func TestInspectRequest_Anthropic(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantUserTurn   bool
+		wantFirst      string
+		wantLatest     string
+		wantAttachment bool
+	}{
+		{"string content", `{"messages":[{"role":"user","content":"hello"}]}`, true, "hello", "hello", false},
+		{"text blocks are joined", `{"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]}`, true, "ab", "ab", false},
+		{"tool result only is a continuation", `{"messages":[{"role":"user","content":"first"},{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"secret result"}]}]}`, false, "first", "first", false},
+		{"tool result with text is a user turn without the result text", `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"secret result"},{"type":"text","text":"thanks, now do more"}]}]}`, true, "thanks, now do more", "thanks, now do more", false},
+		{"image is an attachment", `{"messages":[{"role":"user","content":[{"type":"text","text":"look"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}]}`, true, "look", "look", true},
+		{"document is an attachment", `{"messages":[{"role":"user","content":[{"type":"text","text":"read"},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"AA=="}}]}]}`, true, "read", "read", true},
+		{"system and thinking blocks are not user text", `{"system":"be nice","messages":[{"role":"user","content":"q1"},{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"s"},{"type":"text","text":"a1"}]},{"role":"user","content":"q2"}]}`, true, "q1", "q2", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in, err := smartroute.InspectRequest("anthropic", []byte(tt.body))
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantUserTurn, in.IsUserTurn)
+			require.NotEmpty(t, in.UserMessages)
+			assert.Equal(t, tt.wantFirst, in.UserMessages[0])
+			assert.Equal(t, tt.wantLatest, in.UserMessages[len(in.UserMessages)-1])
+			assert.Equal(t, tt.wantAttachment, in.Features.HasAttachment)
+			assert.NotContains(t, strings.Join(in.UserMessages, "|"), "secret result")
+			assert.NotContains(t, strings.Join(in.UserMessages, "|"), "be nice")
+			assert.NotContains(t, strings.Join(in.UserMessages, "|"), "hmm")
+		})
+	}
+}
+
+func TestAnthropicScorerInputAndSessionKey(t *testing.T) {
+	body := []byte(`{"system":"be nice","messages":[{"role":"user","content":"q1"},{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"s"},{"type":"text","text":"a1"}]},{"role":"user","content":"q2"}]}`)
+	in, err := smartroute.InspectRequest("anthropic", body)
+	require.NoError(t, err)
+
+	assert.Equal(t, smartroute.ScorerInput{Latest: "q2", History: []string{"q1"}}, smartroute.BuildScorerInput(in, 3))
+
+	later, err := smartroute.InspectRequest("anthropic", []byte(`{"messages":[{"role":"user","content":"q1"},{"role":"assistant","content":"a1"},{"role":"user","content":"q9"}]}`))
+	require.NoError(t, err)
+	key := smartroute.SessionKey(7, in)
+	require.NotEmpty(t, key)
+	assert.Equal(t, key, smartroute.SessionKey(7, later))
+	assert.NotEqual(t, key, smartroute.SessionKey(8, in))
 }

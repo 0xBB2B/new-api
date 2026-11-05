@@ -14,6 +14,7 @@ import (
 const (
 	endpointResponses = string(constant.EndpointTypeOpenAIResponse)
 	endpointChat      = string(constant.EndpointTypeOpenAI)
+	endpointAnthropic = string(constant.EndpointTypeAnthropic)
 
 	maxLatestRunes  = 4000
 	maxHistoryRunes = 200
@@ -44,6 +45,8 @@ func RequestEndpointFromPath(path string) string {
 		return endpointResponses
 	case "/v1/chat/completions":
 		return endpointChat
+	case "/v1/messages":
+		return endpointAnthropic
 	}
 	return ""
 }
@@ -77,6 +80,10 @@ func InspectRequest(endpoint string, body []byte) (Inspection, error) {
 		if !lastIsUser {
 			continue
 		}
+		if endpoint == endpointAnthropic && isToolResultOnly(item["content"]) {
+			lastIsUser = false
+			continue
+		}
 		text, attachment := messageText(item["content"])
 		in.UserMessages = append(in.UserMessages, text)
 		in.Features.HasAttachment = attachment
@@ -104,13 +111,27 @@ func messageText(content any) (text string, attachment bool) {
 			case "text", "input_text":
 				s, _ := part["text"].(string)
 				sb.WriteString(s)
-			case "image_url", "input_image", "input_file", "file":
+			case "image_url", "input_image", "input_file", "file", "image", "document":
 				attachment = true
 			}
 		}
 		return sb.String(), attachment
 	}
 	return "", false
+}
+
+func isToolResultOnly(content any) bool {
+	blocks, _ := content.([]any)
+	if len(blocks) == 0 {
+		return false
+	}
+	for _, raw := range blocks {
+		part, _ := raw.(map[string]any)
+		if part["type"] != "tool_result" {
+			return false
+		}
+	}
+	return true
 }
 
 func tableRows(s string) int {

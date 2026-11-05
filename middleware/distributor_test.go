@@ -1020,6 +1020,8 @@ var smartEffortTokenSeq = 9300
 const (
 	effortFollowMediumXhigh = `"effort_mode":"follow","effort_min":"medium","effort_max":"xhigh"`
 	effortFixedMedium       = `"effort_mode":"fixed","effort":"medium"`
+	effortFixedHigh         = `"effort_mode":"fixed","effort":"high"`
+	effortFixedNone         = `"effort_mode":"fixed","effort":"none"`
 )
 
 type effortTier struct{ model, fields string }
@@ -1057,7 +1059,7 @@ func setupSmartEffortTiers(t *testing.T, simple, normal, hard effortTier, capabi
 	tierJSON := func(tier effortTier) string {
 		return fmt.Sprintf(`{"model":%q,"groups":["default"],%s}`, tier.model, tier.fields)
 	}
-	operation_setting.LoadSmartRoutesFromJSONString(fmt.Sprintf(`[{"name":"eff","endpoints":["openai-response","openai"],
+	operation_setting.LoadSmartRoutesFromJSONString(fmt.Sprintf(`[{"name":"eff","endpoints":["openai-response","openai","anthropic"],
  "tiers":{"simple":%s,"normal":%s,"hard":%s},
  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
  "advisor":{"model":"eff-advisor","groups":["default"],"after_dissatisfied":1},
@@ -1408,4 +1410,211 @@ func TestSmartRouteDistributePlaygroundUsesSmartRouting(t *testing.T) {
 		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 		assert.Equal(t, "gpt-5.4-mini", seen.originalModel)
 	})
+}
+
+func smartEffortMessagesBody(message, extra string) string {
+	if extra != "" {
+		extra = "," + extra
+	}
+	return fmt.Sprintf(`{"model":"eff","max_tokens":64000,"messages":[{"role":"user","content":%q}]%s}`, message, extra)
+}
+
+func TestSmartRouteDistributeMessagesEndpoint(t *testing.T) {
+	t.Run("virtual model without anthropic is rejected before scoring", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/messages", tokenID: 9401,
+			body: `{"model":"resp-only","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`,
+		})
+
+		require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+		assert.Contains(t, recorder.Body.String(), "Virtual model resp-only only supports these endpoints: Responses")
+		assert.False(t, seen.ran)
+		assert.Zero(t, stub.calls)
+		assert.Empty(t, stub.settles)
+	})
+
+	t.Run("user message is scored and routed to the tier model", func(t *testing.T) {
+		normal := effortTier{"gpt-5.4-mini", `"effort_mode":""`}
+		hard := effortTier{"gpt-5.6-sol", `"effort_mode":""`}
+		tokenID := setupSmartEffortTiers(t, normal, normal, hard, `{}`)
+		stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("design a billing system", "")})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, 1, stub.calls)
+		assert.Equal(t, "gpt-5.6-sol", seen.originalModel)
+		assert.Equal(t, "gpt-5.6-sol", smartBodyField(t, seen.body, "model"))
+		assert.Equal(t, "main", seen.routeLog["role"])
+	})
+
+	t.Run("tool result continuation skips the scorer and keeps the session tier", func(t *testing.T) {
+		normal := effortTier{"gpt-5.4-mini", `"effort_mode":""`}
+		hard := effortTier{"gpt-5.6-sol", `"effort_mode":""`}
+		tokenID := setupSmartEffortTiers(t, normal, normal, hard, `{}`)
+		stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+		first, _ := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("continue anthropic", "")})
+		require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+		require.Equal(t, 1, stub.calls)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/messages", tokenID: tokenID,
+			body: `{"model":"eff","max_tokens":64,"messages":[{"role":"user","content":"continue anthropic"},{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}]}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, 1, stub.calls)
+		assert.Equal(t, "gpt-5.6-sol", seen.originalModel)
+		assert.Equal(t, "tool_continuation", seen.routeLog["reason"])
+		assert.NotContains(t, seen.routeLog, "labels")
+	})
+}
+
+func TestSmartRouteDistributeMessagesRewritesThinking(t *testing.T) {
+	budget := `"thinking":{"type":"enabled","budget_tokens":2048}`
+	for _, tc := range []struct {
+		name, model, fields, extra string
+		check                      func(t *testing.T, body []byte)
+	}{
+		{"manual budget claude keeps a valid budget", "claude-sonnet-4-5", effortFixedHigh, budget, func(t *testing.T, body []byte) {
+			assert.Equal(t, "enabled", smartBodyField(t, body, "thinking", "type"))
+			budgetTokens, ok := smartBodyField(t, body, "thinking", "budget_tokens").(float64)
+			require.True(t, ok, "budget_tokens missing: %s", body)
+			assert.GreaterOrEqual(t, budgetTokens, 1024.0)
+		}},
+		{"claude that disables with between_tools", "claude-sonnet-5-5", effortFixedNone, "", func(t *testing.T, body []byte) {
+			assert.Equal(t, "between_tools", smartBodyField(t, body, "thinking", "type"))
+		}},
+		{"claude with effort", "claude-opus-5-5", effortFixedHigh, "", func(t *testing.T, body []byte) {
+			assert.Equal(t, "high", smartBodyField(t, body, "output_config", "effort"))
+		}},
+		{"non claude high writes output_config effort", "gpt-5.5", effortFixedHigh, budget, func(t *testing.T, body []byte) {
+			assert.Equal(t, "high", smartBodyField(t, body, "output_config", "effort"))
+			assert.Nil(t, smartBodyField(t, body, "thinking", "budget_tokens"))
+		}},
+		{"non claude none disables thinking", "gpt-5.5", effortFixedNone, `"output_config":{"effort":"high"}`, func(t *testing.T, body []byte) {
+			assert.JSONEq(t, `{"type":"disabled"}`, mustJSON(t, smartBodyField(t, body, "thinking")))
+			assert.Nil(t, smartBodyField(t, body, "output_config", "effort"))
+		}},
+		{"client disabled thinking with high drops thinking", "gpt-5.5", effortFixedHigh, `"thinking":{"type":"disabled"}`, func(t *testing.T, body []byte) {
+			assert.Nil(t, smartBodyField(t, body, "thinking"))
+			assert.Equal(t, "high", smartBodyField(t, body, "output_config", "effort"))
+		}},
+		{"model without thinking drops both", "gpt-4.1", effortFixedHigh, budget + `,"output_config":{"effort":"high"}`, func(t *testing.T, body []byte) {
+			assert.Nil(t, smartBodyField(t, body, "thinking"))
+			assert.Nil(t, smartBodyField(t, body, "output_config", "effort"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, tc.model, tc.fields, `{}`)
+			installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("rewrite-"+tc.name, tc.extra)})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, tc.model, smartBodyField(t, seen.body, "model"))
+			tc.check(t, seen.body)
+		})
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := common.Marshal(v)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func TestSmartRouteDistributeMessagesRejectsDuplicateKeys(t *testing.T) {
+	for _, tc := range []struct{ name, extra string }{
+		{"thinking twice", `"thinking":{"type":"enabled","budget_tokens":2048},"thinking":{"type":"disabled"}`},
+		{"output_config twice", `"output_config":{"effort":"low"},"output_config":{"effort":"high"}`},
+		{"effort twice", `"output_config":{"effort":"low","effort":"high"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "gpt-5.5", effortFixedHigh, `{}`)
+			stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("dup-"+tc.name, tc.extra)})
+
+			assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			assert.False(t, seen.ran)
+			assert.Zero(t, stub.calls)
+		})
+	}
+}
+
+func TestSmartRouteDistributeMessagesThinkingRewriteDetails(t *testing.T) {
+	t.Run("missing max_tokens gets the default and the budget follows it", func(t *testing.T) {
+		tokenID := setupSmartEffortRoute(t, "claude-sonnet-4-5", effortFixedHigh, `{}`)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/messages", tokenID: tokenID,
+			body: `{"model":"eff","messages":[{"role":"user","content":"no max tokens"}]}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		maxTokens, ok := smartBodyField(t, seen.body, "max_tokens").(float64)
+		require.True(t, ok, "max_tokens missing: %s", seen.body)
+		assert.GreaterOrEqual(t, int(maxTokens), model_setting.GetClaudeSettings().GetDefaultMaxTokens("claude-sonnet-4-5"))
+		budget, ok := smartBodyField(t, seen.body, "thinking", "budget_tokens").(float64)
+		require.True(t, ok, "budget_tokens missing: %s", seen.body)
+		assert.Greater(t, budget, 1280.0)
+		assert.Less(t, budget, maxTokens)
+	})
+
+	t.Run("manual thinking constrains sampling", func(t *testing.T) {
+		tokenID := setupSmartEffortRoute(t, "claude-sonnet-4-5", effortFixedHigh, `{}`)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		_, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("sampling-manual", `"temperature":0.2,"top_k":5`)})
+
+		assert.Equal(t, "enabled", smartBodyField(t, seen.body, "thinking", "type"))
+		assert.Nil(t, smartBodyField(t, seen.body, "temperature"))
+		assert.Nil(t, smartBodyField(t, seen.body, "top_k"))
+	})
+
+	t.Run("strict sampling model clears sampling", func(t *testing.T) {
+		tokenID := setupSmartEffortRoute(t, "claude-opus-5-5", effortFixedHigh, `{}`)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		_, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("sampling-strict", `"temperature":0.2,"top_p":0.5,"top_k":5`)})
+
+		assert.Nil(t, smartBodyField(t, seen.body, "temperature"))
+		assert.Nil(t, smartBodyField(t, seen.body, "top_p"))
+		assert.Nil(t, smartBodyField(t, seen.body, "top_k"))
+	})
+
+	t.Run("display and block_binding survive an adaptive rewrite", func(t *testing.T) {
+		tokenID := setupSmartEffortRoute(t, "claude-opus-4-6", effortFixedHigh, `{}`)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		_, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("keep-display",
+			`"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"output_config":{"effort":"low"}`)})
+
+		assert.Equal(t, "adaptive", smartBodyField(t, seen.body, "thinking", "type"))
+		assert.Equal(t, "summarized", smartBodyField(t, seen.body, "thinking", "display"))
+		assert.Equal(t, map[string]any{"prefix_mismatch_behavior": "drop_block"}, smartBodyField(t, seen.body, "thinking", "block_binding"))
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "output_config", "effort"))
+	})
+
+	for _, tc := range []struct{ name, extra string }{
+		{"thinking type twice", `"thinking":{"type":"enabled","type":"disabled"}`},
+		{"thinking budget_tokens twice", `"thinking":{"type":"enabled","budget_tokens":2048,"budget_tokens":4096}`},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "gpt-5.5", effortFixedHigh, `{}`)
+			stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/messages", tokenID: tokenID, body: smartEffortMessagesBody("dup-inner-"+tc.name, tc.extra)})
+
+			assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			assert.False(t, seen.ran)
+			assert.Zero(t, stub.calls)
+		})
+	}
 }

@@ -43,7 +43,7 @@ description: 虚拟模型接收 Anthropic 格式请求：识别用户新消息�
 ### relay/smart_route_reasoning.go、relay/claude_handler.go
 | 函数名 | 职责 |
 |---|---|
-| `stripClaudeThinkingBlocks` | 去掉历史 assistant 消息里的 `thinking`、`redacted_thinking` 块，返回清理段数；去掉后内容为空的 assistant 消息保留空文字块，不删消息，保持对话轮次 |
+| `stripClaudeThinkingBlocks` | 去掉历史 assistant 消息里的 `thinking`、`redacted_thinking` 块，返回清理段数；去掉后内容为空的 assistant 消息整条删掉（Anthropic 文字块 `text` 要求 minLength 1，空文字块会被拒；连续同角色消息上游会合并成一轮，见 https://platform.claude.com/docs/en/api/messages） |
 | `ClaudeHelper` | 复制请求后、转换前，`shouldStripSmartRouteReasoning` 为真时调用 `stripClaudeThinkingBlocks`，再用 `recordStrippedReasoning` 记段数 |
 
 ## 协作关系

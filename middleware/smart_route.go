@@ -13,9 +13,11 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartroute"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
@@ -71,7 +73,11 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 		abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 		return false
 	}
-	if countTopLevelJSONKey(raw, "reasoning") > 1 || countTopLevelJSONKey(raw, "reasoning_effort") > 1 {
+	if countTopLevelJSONKey(raw, "reasoning") > 1 || countTopLevelJSONKey(raw, "reasoning_effort") > 1 ||
+		countTopLevelJSONKey(raw, "thinking") > 1 || countTopLevelJSONKey(raw, "output_config") > 1 ||
+		countTopLevelJSONKey([]byte(ojson.GetBytes(raw, "output_config").Raw), "effort") > 1 ||
+		countTopLevelJSONKey([]byte(ojson.GetBytes(raw, "thinking").Raw), "type") > 1 ||
+		countTopLevelJSONKey([]byte(ojson.GetBytes(raw, "thinking").Raw), "budget_tokens") > 1 {
 		abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": "duplicate reasoning field"}))
 		return false
 	}
@@ -249,7 +255,7 @@ func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byt
 		return err
 	}
 	if effort.Drop || (effort.Value != "" && !(effort.Source == smartroute.EffortSourceClient && effort.Value == client)) {
-		if patched, err = rewriteSmartRouteEffort(patched, endpoint, effort); err != nil {
+		if patched, err = rewriteSmartRouteEffort(patched, endpoint, realModel, effort); err != nil {
 			return err
 		}
 	}
@@ -265,7 +271,7 @@ func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byt
 	return nil
 }
 
-func rewriteSmartRouteEffort(body []byte, endpoint string, effort smartroute.EffortDecision) ([]byte, error) {
+func rewriteSmartRouteEffort(body []byte, endpoint, realModel string, effort smartroute.EffortDecision) ([]byte, error) {
 	var err error
 	switch endpoint {
 	case string(constant.EndpointTypeOpenAIResponse):
@@ -288,6 +294,9 @@ func rewriteSmartRouteEffort(body []byte, endpoint string, effort smartroute.Eff
 		}
 		return ojson.SetRawBytes(body, "reasoning", encoded)
 	case string(constant.EndpointTypeAnthropic):
+		if !effort.Drop && reasoning.IsKnownClaudeModel(realModel) {
+			return renderClaudeEffort(body, realModel, effort.Value)
+		}
 		switch {
 		case effort.Drop:
 			if body, err = ojson.DeleteBytes(body, "thinking"); err != nil {
@@ -317,6 +326,84 @@ func rewriteSmartRouteEffort(body []byte, endpoint string, effort smartroute.Eff
 		return nil, err
 	}
 	return ojson.DeleteBytes(body, "reasoning")
+}
+
+func renderClaudeEffort(body []byte, realModel, value string) ([]byte, error) {
+	intent := reasoning.Intent{Mode: reasoning.ModeEnabled, Effort: reasoning.Effort(value)}
+	if value == "none" {
+		intent.Mode = reasoning.ModeDisabled
+	}
+	thinking := ojson.GetBytes(body, "thinking")
+	switch thinking.Get("display").String() {
+	case "summarized":
+		include := true
+		intent.IncludeThoughts = &include
+	case "omitted":
+		include := false
+		intent.IncludeThoughts = &include
+	}
+
+	settings := model_setting.GetClaudeSettings()
+	var maxTokens *uint
+	if n := ojson.GetBytes(body, "max_tokens"); n.Exists() && n.Int() > 0 {
+		v := uint(n.Int())
+		maxTokens = &v
+	} else if n := settings.GetDefaultMaxTokens(realModel); n > 0 {
+		v := uint(n)
+		maxTokens = &v
+	}
+	rendered, err := reasoning.RenderClaude(realModel, intent, maxTokens, settings.ThinkingAdapterBudgetTokensPercentage)
+	if err != nil {
+		return nil, err
+	}
+	if rendered.MaxTokens != nil {
+		maxTokens = rendered.MaxTokens
+	}
+
+	if rendered.Thinking == nil {
+		body, err = ojson.DeleteBytes(body, "thinking")
+	} else {
+		if rendered.Thinking.Type == "adaptive" {
+			if binding := thinking.Get("block_binding"); binding.Exists() {
+				rendered.Thinking.BlockBinding = []byte(binding.Raw)
+			}
+		}
+		var encoded []byte
+		if encoded, err = common.Marshal(rendered.Thinking); err == nil {
+			body, err = ojson.SetRawBytes(body, "thinking", encoded)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if rendered.OutputEffort == "" {
+		body, err = ojson.DeleteBytes(body, "output_config.effort")
+	} else {
+		body, err = ojson.SetBytes(body, "output_config.effort", string(rendered.OutputEffort))
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var removed []string
+	switch {
+	case rendered.ClearSampling:
+		removed = []string{"temperature", "top_p", "top_k"}
+	case rendered.ConstrainThinkingSampling:
+		removed = []string{"temperature", "top_k"}
+		if topP := ojson.GetBytes(body, "top_p"); topP.Exists() && (topP.Float() < 0.95 || topP.Float() > 1) {
+			removed = append(removed, "top_p")
+		}
+	}
+	for _, key := range removed {
+		if body, err = ojson.DeleteBytes(body, key); err != nil {
+			return nil, err
+		}
+	}
+	if maxTokens == nil {
+		return body, nil
+	}
+	return ojson.SetBytes(body, "max_tokens", *maxTokens)
 }
 
 func saveSmartRouteSession(c *gin.Context) {
