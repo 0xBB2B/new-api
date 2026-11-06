@@ -41,11 +41,18 @@ const (
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
 	FilterScorerCapable      ChannelFilterKind = "scorer_capable"
+	FilterAcceptsFormat      ChannelFilterKind = "accepts_format"
 )
 
+type ChatResponsesPolicyFunc func(channelID, channelType int, modelName string) bool
+
 type ChannelFilter struct {
-	Kind                   ChannelFilterKind
-	RequestPath            string
+	Kind        ChannelFilterKind
+	RequestPath string
+	// Format and ChatResponsesPolicy belong to FilterAcceptsFormat; the policy
+	// callback lives in service, which model cannot import.
+	Format                 string
+	ChatResponsesPolicy    ChatResponsesPolicyFunc
 	TaskPluginKey          string
 	TaskPluginKeys         []string
 	TaskPluginChannelTypes []int

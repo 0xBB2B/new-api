@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	newapidto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -752,4 +753,34 @@ func TestPrepareResponsesRequestRetryOnLastChannelDropsStaleCleanedReasoningCoun
 	logFields, ok = common.GetContextKey(c, constant.ContextKeySmartRouteLog)
 	require.True(t, ok)
 	assert.NotContains(t, logFields.(map[string]any), "cleaned_reasoning")
+}
+
+func TestRunSmartRouteScorer_IgnoresTheMainRequestFormatFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		format      string
+		channelType int
+		key         string
+		wantSuffix  string
+	}{
+		{"chat request with a codex-only scorer group", "openai", constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "/responses"},
+		{"anthropic request with an xai-only scorer group", "anthropic", constant.ChannelTypeXai, "sk-placeholder", "/chat/completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			addScorerChannel(t, f, 2, tt.channelType, tt.key, "default", f.upstream.URL)
+			parent := scorerContext("auto")
+			service.GetChannelConstraints(parent).AddFilter(newapidto.ChannelFilter{
+				Kind: newapidto.FilterAcceptsFormat, Format: tt.format, ChatResponsesPolicy: service.ShouldChatCompletionsUseResponsesGlobal,
+			})
+
+			outcome, err := runSmartRouteScorer(parent, scorerRoute(5000, "default"), scorerInspection(t))
+
+			require.NoError(t, err)
+			require.Empty(t, outcome.Failure)
+			require.Equal(t, int32(1), f.hits.Load())
+			assert.True(t, strings.HasSuffix(<-f.paths, tt.wantSuffix))
+		})
+	}
 }

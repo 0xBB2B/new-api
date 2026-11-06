@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
@@ -13,6 +14,7 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
 	dto.FilterScorerCapable,
+	dto.FilterAcceptsFormat,
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
@@ -140,6 +142,10 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		}
 	case dto.FilterScorerCapable:
 		return ch.Type != constant.ChannelTypeReplicate
+	case dto.FilterAcceptsFormat:
+		converts := RequestConvertsToResponses(filter.Format, ch.Id, ch.Type, modelName, filter.ChatResponsesPolicy,
+			func() bool { return ch.GetSetting().PassThroughBodyEnabled })
+		return ChannelAcceptsFormat(ch.Type, filter.Format, converts)
 	default:
 		return true
 	}
@@ -170,4 +176,24 @@ var formatRejectingChannelTypes = map[string][]int{
 // explicitly returns an error for the request format.
 func ChannelTypeRejectsFormat(channelType int, format string) bool {
 	return slices.Contains(formatRejectingChannelTypes[format], channelType)
+}
+
+// RequestConvertsToResponses reports whether a Chat Completions or Anthropic
+// request sent to this channel is first converted to a Responses request.
+// channelPassThrough is only evaluated once the policy hits, so callers that
+// must load the channel setting pay for it only then.
+func RequestConvertsToResponses(format string, channelID, channelType int, modelName string, policy dto.ChatResponsesPolicyFunc, channelPassThrough func() bool) bool {
+	return format != string(constant.EndpointTypeOpenAIResponse) &&
+		!model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
+		policy != nil && policy(channelID, channelType, modelName) &&
+		!channelPassThrough()
+}
+
+// ChannelAcceptsFormat judges the format the adaptor actually receives: a
+// request converted to Responses is accepted or rejected as Responses.
+func ChannelAcceptsFormat(channelType int, format string, convertsToResponses bool) bool {
+	if convertsToResponses {
+		format = string(constant.EndpointTypeOpenAIResponse)
+	}
+	return !ChannelTypeRejectsFormat(channelType, format)
 }

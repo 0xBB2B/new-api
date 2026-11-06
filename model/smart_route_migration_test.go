@@ -115,7 +115,7 @@ func TestMigrateSmartRouteSettings_EndpointIntersection(t *testing.T) {
 	}{
 		{"models share both endpoints", "m-both", "m-both", []string{"openai-response", "openai"}},
 		{"advisor narrows to responses", "m-both", "m-resp", []string{"openai-response"}},
-		{"empty intersection falls back to responses", "m-both", "m-unknown", []string{"openai-response"}},
+		{"empty intersection stays empty for the next run", "m-both", "m-unknown", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -125,6 +125,10 @@ func TestMigrateSmartRouteSettings_EndpointIntersection(t *testing.T) {
 
 			routes := parseRoutes(t, storedSmartRoutes(t))
 			require.Len(t, routes, 1)
+			if tt.want == nil {
+				assert.Empty(t, routes[0].Endpoints)
+				return
+			}
 			assert.Equal(t, tt.want, routes[0].Endpoints)
 		})
 	}
@@ -177,24 +181,63 @@ func TestMigrateSmartRouteSettings_WithoutOptionDoesNotCreateIt(t *testing.T) {
 	assert.Zero(t, count)
 }
 
-func TestMigrateSmartRouteSettings_EmptyPricingFailsWithoutWriting(t *testing.T) {
-	legacy := "[" + legacyRouteJSON("auto-gpt", "m-both", "m-both", "low", "", "") + "]"
+func emptyPricingMigrationFixture(t *testing.T, legacy string) {
+	t.Helper()
 	setupSmartRouteMigrationTest(t, legacy)
 	require.NoError(t, DB.Exec("DELETE FROM abilities").Error)
 	require.NoError(t, DB.Exec("DELETE FROM channels").Error)
 	InitChannelCache()
 	RefreshPricing()
 	require.Empty(t, GetPricing())
+}
 
-	before := operation_setting.SmartRoutingRoutesToString()
-	require.Error(t, MigrateSmartRouteSettings())
+func TestMigrateSmartRouteSettings_EmptyPricingStillMigratesEffortAndLeavesEndpointsEmpty(t *testing.T) {
+	legacy := "[" + legacyRouteJSON("auto-gpt", "m-both", "m-both", "low", "", "high") + "]"
+	emptyPricingMigrationFixture(t, legacy)
 
-	assert.Equal(t, legacy, storedSmartRoutes(t))
-	assert.Equal(t, before, operation_setting.SmartRoutingRoutesToString())
+	require.NoError(t, MigrateSmartRouteSettings())
+
+	stored := parseRoutes(t, storedSmartRoutes(t))
+	require.Len(t, stored, 1)
+	assert.Empty(t, stored[0].Endpoints)
+	assert.Equal(t, "fixed", stored[0].Tiers["simple"].EffortMode)
+	assert.Equal(t, "low", stored[0].Tiers["simple"].Effort)
+	assert.Equal(t, "", stored[0].Tiers["normal"].EffortMode)
+	assert.Equal(t, "fixed", stored[0].Tiers["hard"].EffortMode)
 	live, ok := operation_setting.FindSmartRoute("auto-gpt")
 	require.True(t, ok)
 	assert.Empty(t, live.Endpoints)
-	assert.Equal(t, "", live.Tiers["simple"].EffortMode)
+	assert.Equal(t, "fixed", live.Tiers["simple"].EffortMode)
+}
+
+func TestMigrateSmartRouteSettings_EmptyPricingTwiceGivesSameResult(t *testing.T) {
+	legacy := "[" + legacyRouteJSON("auto-gpt", "m-both", "m-both", "low", "", "") + "]"
+	emptyPricingMigrationFixture(t, legacy)
+
+	require.NoError(t, MigrateSmartRouteSettings())
+	first := storedSmartRoutes(t)
+	require.NoError(t, MigrateSmartRouteSettings())
+
+	assert.Equal(t, first, storedSmartRoutes(t))
+}
+
+func TestMigrateSmartRouteSettings_InfersEndpointsOnceAvailableAfterEmptyRun(t *testing.T) {
+	legacy := "[" + legacyRouteJSON("auto-gpt", "m-both", "m-both", "low", "", "") + "]"
+	emptyPricingMigrationFixture(t, legacy)
+	require.NoError(t, MigrateSmartRouteSettings())
+	require.Empty(t, parseRoutes(t, storedSmartRoutes(t))[0].Endpoints)
+
+	insertPricingEndpointChannel(t, 1, constant.ChannelTypeXai, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 1, "m-both")
+	InitChannelCache()
+	RefreshPricing()
+	require.NoError(t, MigrateSmartRouteSettings())
+
+	routes := parseRoutes(t, storedSmartRoutes(t))
+	require.Len(t, routes, 1)
+	assert.Equal(t, []string{"openai-response", "openai"}, routes[0].Endpoints)
+	assert.Equal(t, "fixed", routes[0].Tiers["simple"].EffortMode)
+	assert.Equal(t, "low", routes[0].Tiers["simple"].Effort)
 }
 
 func TestMigrateSmartRouteSettings_CorruptJSONFailsWithoutWriting(t *testing.T) {

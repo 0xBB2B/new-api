@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
@@ -9,7 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
-// 旧格式没有 endpoints，可用接口由三档和顾问模型支持接口的交集推出；这里按同样规则写进配置，升级后客户端能用的接口不变。
+// 旧格式没有 endpoints，可用接口由三档和顾问模型支持接口的交集推出；定价还没数据或交集为空时先留空，等下次启动定价有数据再推断。
 func MigrateSmartRouteSettings() error {
 	common.OptionMapRWMutex.RLock()
 	value, ok := common.OptionMap[operation_setting.SmartRoutingRoutesOptionKey]
@@ -23,18 +22,15 @@ func MigrateSmartRouteSettings() error {
 		return err
 	}
 
-	changed, pricingChecked := false, false
+	changed := false
+	pricingReady := len(GetPricing()) > 0
 	for i := range routes {
 		route := &routes[i]
-		if len(route.Endpoints) == 0 {
-			if !pricingChecked {
-				if len(GetPricing()) == 0 {
-					return errors.New("pricing is empty, cannot infer endpoints for smart routing migration")
-				}
-				pricingChecked = true
+		if len(route.Endpoints) == 0 && pricingReady {
+			if endpoints := InferSmartRouteEndpoints(*route); len(endpoints) > 0 {
+				route.Endpoints = endpoints
+				changed = true
 			}
-			route.Endpoints = legacySmartRouteEndpoints(*route)
-			changed = true
 		}
 		for name, tier := range route.Tiers {
 			if tier.Effort != "" && tier.EffortMode == "" {
@@ -55,7 +51,8 @@ func MigrateSmartRouteSettings() error {
 	return UpdateOption(operation_setting.SmartRoutingRoutesOptionKey, string(raw))
 }
 
-func legacySmartRouteEndpoints(route operation_setting.SmartRoute) []string {
+// InferSmartRouteEndpoints 返回三档和顾问模型支持接口的交集。
+func InferSmartRouteEndpoints(route operation_setting.SmartRoute) []string {
 	endpoints := []constant.EndpointType{constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAI}
 	for _, modelName := range []string{
 		route.Tiers[operation_setting.SmartTierSimple].Model,
@@ -70,9 +67,6 @@ func legacySmartRouteEndpoints(route operation_setting.SmartRoute) []string {
 		endpoints = slices.DeleteFunc(endpoints, func(endpoint constant.EndpointType) bool {
 			return !slices.Contains(supported, endpoint)
 		})
-	}
-	if len(endpoints) == 0 {
-		return []string{string(constant.EndpointTypeOpenAIResponse)}
 	}
 	result := make([]string, len(endpoints))
 	for i, endpoint := range endpoints {

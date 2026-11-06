@@ -1585,8 +1585,6 @@ func TestValidateRoute_Endpoints(t *testing.T) {
 		endpoints []string
 		wantKey   string
 	}{
-		{"empty is rejected", nil, "Select at least one endpoint"},
-		{"empty slice is rejected", []string{}, "Select at least one endpoint"},
 		{"gemini is rejected", []string{"gemini"}, ""},
 		{"valid value mixed with gemini is rejected", []string{"openai", "gemini"}, ""},
 		{"all three accepted", []string{"openai-response", "openai", "anthropic"}, "-"},
@@ -1616,6 +1614,55 @@ func TestValidateRoute_Endpoints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRoute_EmptyEndpointsAreInferredFromModelMetadata(t *testing.T) {
+	setupValidateRouteTest(t)
+	legacy := validRoute()
+	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+		setTier(&legacy, name, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
+	}
+	legacy.Advisor.Model = "m-chat"
+	legacy.Endpoints = nil
+
+	disjoint := legacy
+	disjoint.Tiers = map[string]operation_setting.SmartRouteTier{}
+	for name, tier := range legacy.Tiers {
+		disjoint.Tiers[name] = tier
+	}
+	setTier(&disjoint, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-resp" })
+
+	t.Run("inferable set passes", func(t *testing.T) {
+		assert.Empty(t, smartroute.ValidateRoute(legacy))
+	})
+
+	t.Run("empty slice is inferred the same way", func(t *testing.T) {
+		route := legacy
+		route.Endpoints = []string{}
+		assert.Empty(t, smartroute.ValidateRoute(route))
+	})
+
+	t.Run("empty inferred set is still rejected", func(t *testing.T) {
+		errs := smartroute.ValidateRoute(disjoint)
+
+		require.Len(t, errs, 1)
+		assert.Equal(t, "endpoints", errs[0].Field)
+		assert.Equal(t, "Select at least one endpoint", errs[0].Message.Key)
+	})
+
+	t.Run("a legacy route saved together with a complete route", func(t *testing.T) {
+		complete := validRoute()
+		complete.Name = "smart-b"
+
+		assert.NoError(t, smartroute.ValidateRoutes([]operation_setting.SmartRoute{legacy, complete}))
+	})
+
+	t.Run("a legacy route with an empty inferred set fails the whole batch", func(t *testing.T) {
+		complete := validRoute()
+		complete.Name = "smart-b"
+
+		assert.Error(t, smartroute.ValidateRoutes([]operation_setting.SmartRoute{disjoint, complete}))
+	})
 }
 
 func TestValidateRoute_TierModelsMayUseDifferentEndpoints(t *testing.T) {

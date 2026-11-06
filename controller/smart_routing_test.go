@@ -186,15 +186,70 @@ func TestUpdateOption_SmartRoutesValidation(t *testing.T) {
 	assert.Equal(t, smartRoutingBaseRoutes, operation_setting.SmartRoutingRoutesToString())
 }
 
+func addSmartRoutingModel(t *testing.T, id, channelType int, modelName string) {
+	t.Helper()
+	priority := int64(0)
+	weight := uint(100)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: id, Type: channelType, Key: fmt.Sprintf("key-%d", id), Status: common.ChannelStatusEnabled,
+		Name: fmt.Sprintf("channel-%d", id), Weight: &weight, Models: modelName, Group: "api", Priority: &priority,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: "api", Model: modelName, ChannelId: id, Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01}`))
+	model.InitChannelCache()
+	model.RefreshPricing()
+}
+
+func legacyRouteWithoutEndpoints(name, simpleModel string) string {
+	route := strings.Replace(smartRouteJSON(name, 3), `"endpoints":["openai-response","openai"],`, "", 1)
+	return strings.Replace(route, `"simple":{"model":"m-both"`, fmt.Sprintf(`"simple":{"model":%q`, simpleModel), 1)
+}
+
 func TestValidateSmartRoute_EndpointsFieldErrors(t *testing.T) {
 	setupSmartRoutingControllerTest(t)
-	route := strings.Replace(smartRouteJSON("smart-a", 3), `"endpoints":["openai-response","openai"]`, `"endpoints":[]`, 1)
+	addSmartRoutingModel(t, 2, constant.ChannelTypeOpenRouter, "m-chat")
+	addSmartRoutingModel(t, 3, constant.ChannelTypeCodex, "m-resp")
+	disjoint := strings.Replace(smartRouteJSON("smart-a", 3), `"endpoints":["openai-response","openai"]`, `"endpoints":[]`, 1)
+	disjoint = strings.Replace(disjoint, `"simple":{"model":"m-both"`, `"simple":{"model":"m-resp"`, 1)
+	disjoint = strings.Replace(disjoint, `"normal":{"model":"m-both"`, `"normal":{"model":"m-chat"`, 1)
 
-	_, response := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s}`, route))
+	_, response := postValidateSmartRoute(t, fmt.Sprintf(`{"route":%s}`, disjoint))
 
 	require.Len(t, response.Data.Errors, 1)
 	assert.Equal(t, "endpoints", response.Data.Errors[0].Field)
 	assert.Equal(t, "Select at least one endpoint", response.Data.Errors[0].Message.Key)
+}
+
+func TestUpdateRequestPolicy_SavesLegacyRouteWithoutEndpointsAlongsideCompleteRoute(t *testing.T) {
+	setupSmartRoutingControllerTest(t)
+	routes := "[" + legacyRouteWithoutEndpoints("smart-old", "m-both") + "," + smartRouteJSON("smart-new", 3) + "]"
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	body, err := common.Marshal(map[string]any{"options": map[string]string{operation_setting.SmartRoutingRoutesOptionKey: routes}})
+	require.NoError(t, err)
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/api/option/request_policy", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateRequestPolicy(ctx)
+
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, true, response["success"], recorder.Body.String())
+	_, ok := operation_setting.FindSmartRoute("smart-old")
+	assert.True(t, ok)
+}
+
+func TestUpdateOption_SavesLegacyRouteWithoutEndpointsAlongsideCompleteRoute(t *testing.T) {
+	setupSmartRoutingControllerTest(t)
+	seedQuotaResetOption(t, operation_setting.SmartRoutingRoutesOptionKey, smartRoutingBaseRoutes)
+	routes := "[" + legacyRouteWithoutEndpoints("smart-old", "m-both") + "," + smartRouteJSON("smart-new", 3) + "]"
+
+	recorder := putQuotaResetOption(t, operation_setting.SmartRoutingRoutesOptionKey, routes)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.True(t, decodeQuotaResetOptionResponse(t, recorder).Success, recorder.Body.String())
 }
 
 func TestThinkingCapabilitiesOption(t *testing.T) {

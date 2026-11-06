@@ -52,6 +52,10 @@ export function parseSmartRoutes(text: string): {
   return { routes: parsed as SmartRoute[], error: null }
 }
 
+export function hasMissingEndpoints(routes: SmartRoute[]) {
+  return routes.some((route) => !Array.isArray(route.endpoints))
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -64,7 +68,6 @@ function isCompleteRoute(route: unknown) {
   if (!isObject(route) || !isObject(route.tiers)) return false
   const tiers = route.tiers
   return (
-    Array.isArray(route.endpoints) &&
     SMART_TIER_IDS.every((id) => hasGroups(tiers[id])) &&
     hasGroups(route.scorer) &&
     hasGroups(route.advisor)

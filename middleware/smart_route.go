@@ -10,6 +10,7 @@ import (
 	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -46,6 +47,9 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	}
 	endpoint := smartroute.RequestEndpointFromPath(path)
 	supported := route.Endpoints
+	if len(supported) == 0 {
+		supported = model.InferSmartRouteEndpoints(route)
+	}
 	if endpoint == "" || !slices.Contains(supported, endpoint) {
 		names := make([]string, 0, len(supported))
 		for _, e := range supported {
@@ -57,6 +61,10 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 		}))
 		return false
 	}
+
+	service.GetChannelConstraints(c).AddFilter(dto.ChannelFilter{
+		Kind: dto.FilterAcceptsFormat, Format: endpoint, ChatResponsesPolicy: service.ShouldChatCompletionsUseResponsesGlobal,
+	})
 
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -315,7 +323,15 @@ func rewriteSmartRouteEffort(body []byte, endpoint, realModel string, effort sma
 		if ojson.GetBytes(body, "thinking.type").String() == "disabled" {
 			return ojson.DeleteBytes(body, "thinking")
 		}
-		return ojson.DeleteBytes(body, "thinking.budget_tokens")
+		if ojson.GetBytes(body, "thinking.type").String() != "enabled" {
+			return body, nil
+		}
+		// 名字认不出的模型可能只支持手动思考，别名映射后收到 adaptive 会被拒，所以保持 enabled 并按档位力度重算 budget_tokens。
+		if body, err = renderClaudeEffort(body, realModel, effort.Value); err != nil {
+			return nil, err
+		}
+		return ojson.SetBytes(body, "output_config.effort", effort.Value)
+
 	}
 	// reasoning 对象里的 effort 或 max_tokens 会被部分适配器优先使用，留着就能绕过档位的思考力度。
 	if !effort.Drop {

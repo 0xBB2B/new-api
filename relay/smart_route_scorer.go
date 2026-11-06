@@ -47,7 +47,11 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	system, user := smartroute.BuildScorerMessages(input, in.Features)
 	var channel *model.Channel
 	var group string
-	filters := append(slices.Clone(service.GetChannelConstraints(parent).Filters), newapidto.ChannelFilter{Kind: newapidto.FilterScorerCapable})
+	// 打分请求的格式由打分渠道决定，和主请求的格式无关。
+	filters := slices.DeleteFunc(slices.Clone(service.GetChannelConstraints(parent).Filters), func(f newapidto.ChannelFilter) bool {
+		return f.Kind == newapidto.FilterAcceptsFormat
+	})
+	filters = append(filters, newapidto.ChannelFilter{Kind: newapidto.FilterScorerCapable})
 	for _, g := range smartroute.ScorerGroups(parent, route) {
 		if channel, _ = model.GetRandomSatisfiedChannel(g, scorerModel, 0, filters); channel != nil {
 			group = g

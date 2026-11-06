@@ -2210,3 +2210,109 @@ it('the override dialog puts the No thinking text before its switch', async () =
     text.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING
   ).toBeTruthy()
 })
+
+const noThinkingNotice =
+  'This model does not support reasoning effort. No reasoning parameter is sent with the request'
+
+it.each([
+  ['Fixed without a value', 'Fixed'],
+  ['Follow scoring', 'Follow scoring'],
+])(
+  'switching a tier set to %s onto a no-thinking model clears the effort, saves cleanly and restores Not overridden on a thinking model',
+  async (_name, mode) => {
+    mockDialogApis({ errors: [], endpoints: [] })
+    show()
+    const dialog = await openTierPanel('auto-gpt', /^Simple/)
+    await userEvent.click(screen.getByRole('button', { name: mode }))
+    if (mode === 'Follow scoring') {
+      await userEvent.click(
+        screen.getByRole('combobox', { name: 'Minimum effort' })
+      )
+      await userEvent.click(await screen.findByRole('option', { name: 'low' }))
+      await userEvent.click(
+        screen.getByRole('combobox', { name: 'Maximum effort' })
+      )
+      await userEvent.click(await screen.findByRole('option', { name: 'high' }))
+    }
+    await pickModel('Simple tier model', 'gpt-4.1')
+    expect(await within(dialog).findByText(noThinkingNotice)).toBeVisible()
+    await saveDialog()
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+    expect(sentRoute().tiers.simple).toMatchObject({
+      effort_mode: '',
+      effort: '',
+      effort_min: '',
+      effort_max: '',
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  }
+)
+
+it('a tier switched to a no-thinking model and back shows Not overridden again with no stale effort error', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openTierPanel('auto-gpt', /^Simple/)
+  await userEvent.click(screen.getByRole('button', { name: 'Fixed' }))
+  await pickModel('Simple tier model', 'gpt-4.1')
+  expect(await within(dialog).findByText(noThinkingNotice)).toBeVisible()
+  await pickModel('Simple tier model', 'gpt-mini')
+  expect(
+    await screen.findByRole('button', { name: 'Not overridden' })
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Fixed' })).toHaveAttribute(
+    'aria-pressed',
+    'false'
+  )
+  expect(
+    screen.queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  expect(screen.getByRole('tab', { name: /^Tiers/ })).not.toHaveTextContent(
+    /error/i
+  )
+})
+
+it('a stored virtual model without endpoints survives adding a new one in the visual view', async () => {
+  const { endpoints: _drop, ...legacy } = autoGpt
+  setRoutes([{ ...legacy, name: 'legacy-old' }, autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+  show()
+  const add = (
+    await screen.findAllByRole('button', { name: 'Add virtual model' })
+  )[0]
+  await userEvent.click(add)
+  await fillNewRoute('auto-new')
+  await saveDialog()
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(post).toHaveBeenCalledTimes(1)
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(savedRoutes().map((route) => route.name)).toEqual(
+    expect.arrayContaining(['legacy-old', 'auto-new'])
+  )
+})
+
+it('saving an old route without endpoints and no interface pressed shows the translated message', async () => {
+  const { endpoints: _drop, ...legacy } = autoGpt
+  setRoutes([{ ...legacy, name: 'legacy-old' }, autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openEditDialog('legacy-old')
+  for (const name of ['Responses', 'Chat', 'Anthropic']) {
+    const button = within(dialog).getByRole('button', { name })
+    if (button.getAttribute('aria-pressed') === 'true') {
+      await userEvent.click(button)
+    }
+  }
+  await saveDialog()
+  expect(
+    await within(dialog).findByText('Select at least one endpoint')
+  ).toBeVisible()
+  expect(
+    within(dialog).queryByText(/expected|received|undefined|invalid/i)
+  ).toBeNull()
+  expect(post).not.toHaveBeenCalled()
+})

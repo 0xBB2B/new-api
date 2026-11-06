@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm, useWatch, type FieldPath } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -177,6 +177,25 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     normal: isUnavailable(route.tiers.normal.model),
     hard: isUnavailable(route.tiers.hard.model),
   }
+  const noThinkingKey = SMART_TIER_IDS.filter((id) => {
+    const model = route.tiers[id].model
+    const settled = model in builtin || !!props.overrides[model]
+    return model !== '' && settled && capabilities[id].noThinking
+  }).join(',')
+  useEffect(() => {
+    for (const id of noThinkingKey ? noThinkingKey.split(',') : []) {
+      const base = `tiers.${id as SmartTierId}` as const
+      form.setValue(`${base}.effort_mode`, '')
+      form.setValue(`${base}.effort`, '')
+      form.setValue(`${base}.effort_min`, '')
+      form.setValue(`${base}.effort_max`, '')
+      form.clearErrors([
+        `${base}.effort`,
+        `${base}.effort_min`,
+        `${base}.effort_max`,
+      ])
+    }
+  }, [noThinkingKey, form])
   function isUnavailable(model: string) {
     return model !== '' && !(model in builtin) && !props.overrides[model]
   }

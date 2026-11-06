@@ -6,6 +6,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -13,9 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func claudeRequestFromJSON(t *testing.T, body string) *dto.ClaudeRequest {
@@ -201,4 +203,83 @@ func TestClaudeHelperStripsThinkingBlocksOnTheWire(t *testing.T) {
 		assert.JSONEq(t, plain, string(sent))
 		assert.Nil(t, cleanedReasoningLog(t, a.c))
 	})
+}
+
+func TestClaudeHelperDisablesThinkingWhenLastTurnLosesItsThinkingBlock(t *testing.T) {
+	const toolTurn = `{"type":"tool_use","id":"t1","name":"f","input":{}}`
+	const toolResult = `{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}`
+	build := func(thinking, lastAssistant string) string {
+		return `{"model":"claude-sonnet-4-5","max_tokens":4096,"thinking":` + thinking + `,"output_config":{"effort":"high"},` +
+			`"messages":[{"role":"user","content":"q"},{"role":"assistant","content":[` + lastAssistant + `]},` + toolResult + `]}`
+	}
+	const enabled = `{"type":"enabled","budget_tokens":2048}`
+	const adaptive = `{"type":"adaptive"}`
+	withThinking := `{"type":"thinking","thinking":"a","signature":"s"},` + toolTurn
+
+	for _, mode := range []struct {
+		name    string
+		setting dto.ChannelSettings
+	}{
+		{"converted", dto.ChannelSettings{}},
+		{"channel passthrough", dto.ChannelSettings{PassThroughBodyEnabled: true}},
+	} {
+		t.Run(mode.name+" enabled thinking is disabled", func(t *testing.T) {
+			raw := build(enabled, withThinking)
+			a := newClaudeAttempt(t, raw, mode.setting, 5)
+
+			sent := a.run(t, raw, 9)
+
+			assert.JSONEq(t, `{"type":"disabled"}`, string(ojson.GetBytes(sent, "thinking").Raw))
+			assert.False(t, ojson.GetBytes(sent, "output_config.effort").Exists(), string(sent))
+		})
+
+		t.Run(mode.name+" adaptive thinking is untouched", func(t *testing.T) {
+			raw := build(adaptive, withThinking)
+			a := newClaudeAttempt(t, raw, mode.setting, 5)
+
+			sent := a.run(t, raw, 9)
+
+			assert.Equal(t, "adaptive", ojson.GetBytes(sent, "thinking.type").String())
+			assert.Equal(t, "high", ojson.GetBytes(sent, "output_config.effort").String())
+		})
+
+		t.Run(mode.name+" thinking is disabled when the first assistant message of the turn loses its thinking block", func(t *testing.T) {
+			raw := `{"model":"claude-sonnet-4-5","max_tokens":4096,"thinking":` + enabled + `,"output_config":{"effort":"high"},` +
+				`"messages":[{"role":"user","content":"q"},{"role":"assistant","content":[` + withThinking + `]},` + toolResult +
+				`,{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"f","input":{}}]},` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}]}`
+			a := newClaudeAttempt(t, raw, mode.setting, 5)
+
+			sent := a.run(t, raw, 9)
+
+			assert.JSONEq(t, `{"type":"disabled"}`, string(ojson.GetBytes(sent, "thinking").Raw))
+			assert.False(t, ojson.GetBytes(sent, "output_config.effort").Exists(), string(sent))
+		})
+
+		t.Run(mode.name+" a new user question keeps enabled thinking after the history is cleaned", func(t *testing.T) {
+			raw := `{"model":"claude-sonnet-4-5","max_tokens":4096,"thinking":` + enabled + `,"output_config":{"effort":"high"},` +
+				`"messages":[{"role":"user","content":"q"},{"role":"assistant","content":[{"type":"thinking","thinking":"a","signature":"s"},{"type":"text","text":"answer"}]},` +
+				`{"role":"user","content":"q2"}]}`
+			a := newClaudeAttempt(t, raw, mode.setting, 5)
+
+			sent := a.run(t, raw, 9)
+
+			assert.Equal(t, "enabled", ojson.GetBytes(sent, "thinking.type").String())
+			assert.Equal(t, int64(2048), ojson.GetBytes(sent, "thinking.budget_tokens").Int())
+			assert.Equal(t, "high", ojson.GetBytes(sent, "output_config.effort").String())
+			assert.NotContains(t, string(sent), `"thinking":"a"`)
+		})
+
+		t.Run(mode.name+" last turn without thinking blocks keeps enabled thinking", func(t *testing.T) {
+			raw := `{"model":"claude-sonnet-4-5","max_tokens":4096,"thinking":` + enabled + `,"output_config":{"effort":"high"},` +
+				`"messages":[{"role":"user","content":"q"},{"role":"assistant","content":[{"type":"thinking","thinking":"a","signature":"s"},{"type":"text","text":"answer"}]},` +
+				`{"role":"user","content":"again"},{"role":"assistant","content":[` + toolTurn + `]},` + toolResult + `]}`
+			a := newClaudeAttempt(t, raw, mode.setting, 5)
+
+			sent := a.run(t, raw, 9)
+
+			assert.Equal(t, "enabled", ojson.GetBytes(sent, "thinking.type").String())
+			assert.Equal(t, int64(2048), ojson.GetBytes(sent, "thinking.budget_tokens").Int())
+		})
+	}
 }

@@ -491,13 +491,13 @@ func setupSmartRouteDistributeTest(t *testing.T) {
 		group       string
 		modelName   string
 	}{
-		{101, constant.ChannelTypeXai, "default", "t-simple"},
-		{smartNormalChannelID, constant.ChannelTypeXai, "default", "t-normal"},
-		{smartHardChannelID, constant.ChannelTypeXai, "vip", "t-hard"},
-		{smartAdvisorChannelID, constant.ChannelTypeXai, "default", "t-advisor"},
-		{105, constant.ChannelTypeXai, "default", "m-scorer"},
+		{101, constant.ChannelTypeOpenAI, "default", "t-simple"},
+		{smartNormalChannelID, constant.ChannelTypeOpenAI, "default", "t-normal"},
+		{smartHardChannelID, constant.ChannelTypeOpenAI, "vip", "t-hard"},
+		{smartAdvisorChannelID, constant.ChannelTypeOpenAI, "default", "t-advisor"},
+		{105, constant.ChannelTypeOpenAI, "default", "m-scorer"},
 		{106, constant.ChannelTypeCodex, "default", "r-resp"},
-		{107, constant.ChannelTypeXai, "hidden", "t-advisor-hidden"},
+		{107, constant.ChannelTypeOpenAI, "hidden", "t-advisor-hidden"},
 		{108, constant.ChannelTypeOpenRouter, "default", "c-chat"},
 	} {
 		require.NoError(t, db.Create(&model.Channel{
@@ -1047,7 +1047,7 @@ func setupSmartEffortTiers(t *testing.T, simple, normal, hard effortTier, capabi
 	for i, name := range models {
 		id := 201 + i
 		require.NoError(t, model.DB.Create(&model.Channel{
-			Id: id, Type: constant.ChannelTypeXai, Key: fmt.Sprintf("key-%d", id),
+			Id: id, Type: constant.ChannelTypeOpenAI, Key: fmt.Sprintf("key-%d", id),
 			Status: common.ChannelStatusEnabled, Name: fmt.Sprintf("channel-%d", id),
 			Weight: &weight, Models: name, Group: "default", Priority: &priority,
 		}).Error)
@@ -1491,9 +1491,13 @@ func TestSmartRouteDistributeMessagesRewritesThinking(t *testing.T) {
 		{"claude with effort", "claude-opus-5-5", effortFixedHigh, "", func(t *testing.T, body []byte) {
 			assert.Equal(t, "high", smartBodyField(t, body, "output_config", "effort"))
 		}},
-		{"non claude high writes output_config effort", "gpt-5.5", effortFixedHigh, budget, func(t *testing.T, body []byte) {
+		{"non claude high converts the budget and writes output_config effort", "gpt-5.5", effortFixedHigh, budget, func(t *testing.T, body []byte) {
 			assert.Equal(t, "high", smartBodyField(t, body, "output_config", "effort"))
-			assert.Nil(t, smartBodyField(t, body, "thinking", "budget_tokens"))
+			assert.Equal(t, "enabled", smartBodyField(t, body, "thinking", "type"))
+			budgetTokens, ok := smartBodyField(t, body, "thinking", "budget_tokens").(float64)
+			require.True(t, ok, "budget_tokens missing: %s", body)
+			assert.GreaterOrEqual(t, budgetTokens, 1024.0)
+			assert.NotEqual(t, 2048.0, budgetTokens)
 		}},
 		{"non claude none disables thinking", "gpt-5.5", effortFixedNone, `"output_config":{"effort":"high"}`, func(t *testing.T, body []byte) {
 			assert.JSONEq(t, `{"type":"disabled"}`, mustJSON(t, smartBodyField(t, body, "thinking")))
@@ -1617,4 +1621,166 @@ func TestSmartRouteDistributeMessagesThinkingRewriteDetails(t *testing.T) {
 			assert.Zero(t, stub.calls)
 		})
 	}
+}
+
+func addSmartRouteChannel(t *testing.T, id, channelType int, priority int64, group, modelName string) {
+	t.Helper()
+	weight := uint(100)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: id, Type: channelType, Key: fmt.Sprintf("key-%d", id),
+		Status: common.ChannelStatusEnabled, Name: fmt.Sprintf("channel-%d", id),
+		Weight: &weight, Models: modelName, Group: group, Priority: &priority,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: group, Model: modelName, ChannelId: id,
+		Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+}
+
+func loadSingleModelSmartRoute(name, endpointsField, modelName string) {
+	tier := fmt.Sprintf(`{"model":%q,"groups":["default"]}`, modelName)
+	operation_setting.LoadSmartRoutesFromJSONString(fmt.Sprintf(`[{"name":%q,%s"tiers":{"simple":%s,"normal":%s,"hard":%s},
+ "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+ "advisor":{"model":%q,"groups":["default"],"after_dissatisfied":3},
+ "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`,
+		name, endpointsField, tier, tier, tier, modelName))
+}
+
+func TestSmartRouteDistributeRouteWithoutEndpointsInfersFromModelMetadata(t *testing.T) {
+	const chatPath, responsesPath = "/v1/chat/completions", "/v1/responses"
+	for _, tc := range []struct {
+		name        string
+		channelType int
+		path, body  string
+		wantStatus  int
+	}{
+		{"chat on a plain openai model", constant.ChannelTypeOpenAI, chatPath, `{"model":"legacy-auto","messages":[{"role":"user","content":"hi"}]}`, http.StatusOK},
+		{"responses on a plain openai model is rejected", constant.ChannelTypeOpenAI, responsesPath, `{"model":"legacy-auto","input":"hi"}`, http.StatusBadRequest},
+		{"responses on a codex model", constant.ChannelTypeCodex, responsesPath, `{"model":"legacy-auto","input":"hi"}`, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			addSmartRouteChannel(t, 301, tc.channelType, 0, "default", "legacy-m")
+			loadSingleModelSmartRoute("legacy-auto", "", "legacy-m")
+			model.InitChannelCache()
+			model.RefreshPricing()
+			installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, body: tc.body, tokenID: 9801})
+
+			require.Equal(t, tc.wantStatus, recorder.Code, recorder.Body.String())
+			if tc.wantStatus == http.StatusBadRequest {
+				assert.Contains(t, recorder.Body.String(), "only supports these endpoints: Chat Completions")
+				assert.False(t, seen.ran)
+				return
+			}
+			assert.True(t, seen.ran)
+			assert.Equal(t, "legacy-m", seen.originalModel)
+		})
+	}
+}
+
+func TestSmartRouteDistributeAnthropicUnknownModelConvertsBudgetFromTierEffort(t *testing.T) {
+	budgets := map[string]float64{}
+	for _, tc := range []struct{ effort, tierFields string }{
+		{"high", effortFixedHigh},
+		{"low", `"effort_mode":"fixed","effort":"low"`},
+	} {
+		t.Run(tc.effort, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "my-claude", tc.tierFields, `{}`)
+			installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{
+				path: "/v1/messages", tokenID: tokenID,
+				body: smartEffortMessagesBody("alias-claude", `"thinking":{"type":"enabled","budget_tokens":10000}`),
+			})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, "my-claude", smartBodyField(t, seen.body, "model"))
+			assert.Equal(t, tc.effort, smartBodyField(t, seen.body, "output_config", "effort"))
+			assert.Equal(t, "enabled", smartBodyField(t, seen.body, "thinking", "type"))
+			budget, ok := smartBodyField(t, seen.body, "thinking", "budget_tokens").(float64)
+			require.True(t, ok, "enabled thinking without budget_tokens: %s", seen.body)
+			assert.GreaterOrEqual(t, budget, 1024.0)
+			assert.NotEqual(t, 10000.0, budget)
+			budgets[tc.effort] = budget
+		})
+	}
+	if high, low := budgets["high"], budgets["low"]; high != 0 && low != 0 {
+		assert.Less(t, low, high)
+	}
+}
+
+func TestSmartRouteDistributeSkipsChannelsThatRejectTheRequestFormat(t *testing.T) {
+	const codexID, openAIID = 311, 312
+	setup := func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		addSmartRouteChannel(t, codexID, constant.ChannelTypeCodex, 10, "default", "fmt-m")
+		addSmartRouteChannel(t, openAIID, constant.ChannelTypeOpenAI, 0, "default", "fmt-m")
+		addSmartRouteChannel(t, 313, constant.ChannelTypeCodex, 0, "default", "fmt-codex-only")
+		loadSingleModelSmartRoute("fmt-route", `"endpoints":["openai-response","openai"],`, "fmt-m")
+		model.InitChannelCache()
+		model.RefreshPricing()
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+	}
+	chatBody := func(name string) string {
+		return fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]}`, name)
+	}
+
+	t.Run("chat request picks the channel that accepts chat every time", func(t *testing.T) {
+		setup(t)
+		for i := range 10 {
+			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/chat/completions", body: chatBody("fmt-route"), tokenID: 9810 + i})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, openAIID, seen.channelID, "attempt %d", i)
+		}
+	})
+
+	t.Run("responses request keeps the higher priority channel", func(t *testing.T) {
+		setup(t)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/responses", tokenID: 9830,
+			body: `{"model":"fmt-route","input":"hi"}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, codexID, seen.channelID)
+	})
+
+	t.Run("chat request converted to responses by policy counts codex as accepting", func(t *testing.T) {
+		setup(t)
+		settings := model_setting.GetGlobalSettings()
+		original := settings.ChatCompletionsToResponsesPolicy
+		t.Cleanup(func() { settings.ChatCompletionsToResponsesPolicy = original })
+		settings.ChatCompletionsToResponsesPolicy = model_setting.ChatCompletionsToResponsesPolicy{
+			Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^fmt-"},
+		}
+
+		recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/chat/completions", body: chatBody("fmt-route"), tokenID: 9831})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, codexID, seen.channelID)
+	})
+
+	t.Run("group with only rejecting channels reports no available channel", func(t *testing.T) {
+		setup(t)
+		loadSingleModelSmartRoute("fmt-route", `"endpoints":["openai-response","openai"],`, "fmt-codex-only")
+
+		recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/chat/completions", body: chatBody("fmt-route"), tokenID: 9832})
+
+		assert.NotEqual(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Contains(t, recorder.Body.String(), "No available channel for model fmt-codex-only under group default")
+		assert.False(t, seen.ran)
+	})
+
+	t.Run("direct request for the real model is not filtered", func(t *testing.T) {
+		setup(t)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/chat/completions", body: chatBody("fmt-m"), tokenID: 9833})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, codexID, seen.channelID)
+	})
 }

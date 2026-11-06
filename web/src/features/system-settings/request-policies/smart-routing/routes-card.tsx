@@ -47,6 +47,7 @@ import type { BuiltinThinkingCapabilities } from './api'
 import { effectiveCapability, effortOverflow } from './capability'
 import {
   endpointShortNames,
+  hasMissingEndpoints,
   parseSmartRoutes,
   serializeSmartRoutes,
   smartRoutesErrorMessage,
@@ -83,7 +84,9 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       setMode('json')
       return
     }
-    const { error } = parseSmartRoutes(props.value)
+    const parsed = parseSmartRoutes(props.value)
+    const error =
+      parsed.error ?? (hasMissingEndpoints(parsed.routes) ? 'incomplete' : null)
     if (error) {
       toast.error(smartRoutesErrorMessage(t, error))
       return
@@ -261,7 +264,7 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
           className: 'w-[16%]',
           cell: (route) => {
             const endpointText = t('{{endpoint}} endpoint', {
-              endpoint: endpointShortNames(route.endpoints),
+              endpoint: endpointShortNames(route.endpoints ?? []),
               interpolation: { escapeValue: false },
             })
             return (

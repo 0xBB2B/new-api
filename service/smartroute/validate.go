@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
-	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
@@ -50,6 +49,11 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 		add("name", "{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": route.Name})
 	}
 
+	endpoints := route.Endpoints
+	if len(endpoints) == 0 {
+		endpoints = model.InferSmartRouteEndpoints(route)
+	}
+
 	checkSlot := func(field, groupsField string, modelName string, groups []string, checkFormat bool) {
 		if modelName == "" {
 			add(field, "Select a model")
@@ -76,33 +80,26 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 		if !checkFormat {
 			return
 		}
-		passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
-		responses := string(constant.EndpointTypeOpenAIResponse)
-		type groupChannel struct {
-			model.GroupChannel
-			convertsToResponses bool
-		}
-		groupChannels := make(map[string][]groupChannel, len(groups))
+		groupChannels := make(map[string][]model.GroupChannel, len(groups))
 		for _, group := range groups {
-			for _, ch := range model.GroupModelChannels(group, modelName) {
-				converts := false
-				if !passThroughGlobal && service.ShouldChatCompletionsUseResponsesGlobal(ch.Id, ch.Type, modelName) {
-					channel, err := model.CacheGetChannel(ch.Id)
-					converts = err == nil && !channel.GetSetting().PassThroughBodyEnabled
-				}
-				groupChannels[group] = append(groupChannels[group], groupChannel{ch, converts})
-			}
+			groupChannels[group] = model.GroupModelChannels(group, modelName)
 		}
-		for _, format := range route.Endpoints {
+		passThrough := map[int]bool{}
+		channelPassThrough := func(id int) bool {
+			if known, ok := passThrough[id]; ok {
+				return known
+			}
+			channel, err := model.CacheGetChannel(id)
+			passThrough[id] = err != nil || channel.GetSetting().PassThroughBodyEnabled
+			return passThrough[id]
+		}
+		for _, format := range endpoints {
 			for _, group := range groups {
 				rejectedTypes := []string{}
 				accepted := false
 				for _, ch := range groupChannels[group] {
-					target := format
-					if format != responses && ch.convertsToResponses {
-						target = responses
-					}
-					if !model.ChannelTypeRejectsFormat(ch.Type, target) {
+					converts := model.RequestConvertsToResponses(format, ch.Id, ch.Type, modelName, service.ShouldChatCompletionsUseResponsesGlobal, func() bool { return channelPassThrough(ch.Id) })
+					if model.ChannelAcceptsFormat(ch.Type, format, converts) {
 						accepted = true
 						break
 					}
@@ -155,9 +152,9 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 		add("default_tier", "Select a default tier", nil)
 	}
 	switch {
-	case len(route.Endpoints) == 0:
+	case len(endpoints) == 0:
 		add("endpoints", "Select at least one endpoint")
-	case slices.ContainsFunc(route.Endpoints, func(endpoint string) bool { return !slices.Contains(routeEndpointTypes, endpoint) }):
+	case slices.ContainsFunc(endpoints, func(endpoint string) bool { return !slices.Contains(routeEndpointTypes, endpoint) }):
 		add("endpoints", "Select a valid endpoint")
 	}
 	for _, name := range tierOrder {

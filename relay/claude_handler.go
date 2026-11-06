@@ -35,7 +35,13 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	if shouldStripSmartRouteReasoning(c, info.ChannelId) {
+		lastTurnHadThinking := claudeTurnLostThinking(request)
 		recordStrippedReasoning(c, stripClaudeThinkingBlocks(request))
+		if lastTurnHadThinking {
+			if err := disableClaudeThinking(request); err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+		}
 	} else {
 		recordStrippedReasoning(c, 0)
 	}
