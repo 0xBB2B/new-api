@@ -103,9 +103,11 @@ opts={o["key"]:o["value"] for o in json.load(sys.stdin)["data"]}
 model=json.loads(opts.get("ModelRatio") or "{}")
 completion=json.loads(opts.get("CompletionRatio") or "{}")
 model.update({"gpt-5.4-mini":0.125,"gpt-5.5":1,"gpt-5.6-sol":1.25,"gpt-5.6-luna":0.05,"gpt-5.6-terra":1.5,"gpt-5.6-ghost":1,
-              "gpt-4.1":1,"glm-5.1":0.5,"claude-sonnet-4-5":1.5,"gemini-2.5-pro":0.625,"deepseek-v4-pro":0.3,"o3-pro":10})
+              "gpt-4.1":1,"glm-5.1":0.5,"claude-sonnet-4-5":1.5,"gemini-2.5-pro":0.625,"deepseek-v4-pro":0.3,"o3-pro":10,
+              "claude-opus-4-6":2.5,"gemini-3.8-flash":0.15,"gpt-5.2":0.875})
 completion.update({"gpt-5.4-mini":8,"gpt-5.5":8,"gpt-5.6-sol":8,"gpt-5.6-luna":5,"gpt-5.6-terra":8,"gpt-5.6-ghost":8,
-                   "gpt-4.1":4,"glm-5.1":4,"claude-sonnet-4-5":5,"gemini-2.5-pro":8,"deepseek-v4-pro":2,"o3-pro":4})
+                   "gpt-4.1":4,"glm-5.1":4,"claude-sonnet-4-5":5,"gemini-2.5-pro":8,"deepseek-v4-pro":2,"o3-pro":4,
+                   "claude-opus-4-6":5,"gemini-3.8-flash":4,"gpt-5.2":8})
 model.pop("scorer-mini",None)
 print(json.dumps(model)); print(json.dumps(completion))')
 put_option ModelRatio "$(printf '%s\n' "$ratios" | sed -n 1p)"
@@ -128,6 +130,8 @@ add_channel codex-unpriced "$CHANNEL_TYPE_CODEX" 'subscription,api' 'scorer-mini
 add_channel codex-team "$CHANNEL_TYPE_CODEX" team-b 'gpt-5.5' "$CODEX_KEY"
 add_channel openai-sub "$CHANNEL_TYPE_OPENAI" subscription 'gpt-5.6-sol,gpt-4.1,glm-5.1' 'sk-fake-openai-key'
 add_channel openai-api "$CHANNEL_TYPE_OPENAI" api 'gpt-5.5,gpt-5.6-sol,gpt-4.1,glm-5.1,claude-sonnet-4-5,gemini-2.5-pro,deepseek-v4-pro,o3-pro' 'sk-fake-openai-key'
+# 已有环境里 openai-api 会被跳过、不会补模型，所以能力表口径变更后新加的模型单独放一个渠道
+add_channel openai-api-cap "$CHANNEL_TYPE_OPENAI" api 'claude-opus-4-6,gemini-3.8-flash,gpt-5.2' 'sk-fake-openai-key'
 add_channel openai-team "$CHANNEL_TYPE_OPENAI" team-b 'gpt-5.5' 'sk-fake-openai-key'
 add_channel minimax-team "$CHANNEL_TYPE_MINIMAX" team-a 'gpt-5.5' 'fake-minimax-key'
 SUB_CHANNEL=$(psql_exec -c "select id from channels where name='codex-sub'")
@@ -286,13 +290,15 @@ cat <<EOF
   codex-team     Codex   team-b            gpt-5.5
   openai-sub     OpenAI  subscription      gpt-5.6-sol、gpt-4.1、glm-5.1
   openai-api     OpenAI  api               gpt-5.5、gpt-5.6-sol、gpt-4.1、glm-5.1、claude-sonnet-4-5、gemini-2.5-pro、deepseek-v4-pro、o3-pro
+  openai-api-cap OpenAI  api               claude-opus-4-6、gemini-3.8-flash、gpt-5.2
   openai-team    OpenAI  team-b            gpt-5.5
   minimax-team   MiniMax team-a            gpt-5.5
 关键组合：
   gpt-5.5 在 subscription 里只有 Codex 渠道（勾 Anthropic / Chat 会被拦下）；在 team-b 里有 Codex 和 OpenAI；在 team-a 里只有 MiniMax
   gpt-5.4-mini 只有 Codex 渠道，模型列表里只支持 Responses；o3-pro 只支持 Responses、glm-5.1 只支持 Chat（都在 OpenAI 渠道上）
   gpt-5.6-terra 只在 subscription；gpt-5.6-ghost 有价格没渠道；scorer-mini 有渠道没价格
-内置思考能力：gpt-5.4-mini、gpt-5.5、gpt-5.6-sol、gpt-4.1（不支持思考）、claude-sonnet-4-5、gemini-2.5-pro、deepseek-v4-pro；glm-5.1、o3-pro 未确认
+内置思考能力（只收 2026 年发布的模型，不支持思考的老模型除外）：gpt-5.4-mini、gpt-5.5、gpt-5.6-sol、gpt-4.1（不支持思考）、claude-opus-4-6、gemini-3.8-flash、deepseek-v4-pro；
+  未确认：glm-5.1、o3-pro，以及 2025 年发布的 claude-sonnet-4-5、gemini-2.5-pro、gpt-5.2
 智能路由配置：一期格式的 auto-gpt 已由启动迁移改成新格式（接口 Responses，困难档固定 high），模型思考能力覆盖为空
 使用日志（时间为执行脚本前 1~8 分钟；括号里是思考力度）：
   req_b2c9f0      root   gpt-5.5       打分超时，普通档（high，跟随打分，由 xhigh 降档）

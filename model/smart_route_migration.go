@@ -53,6 +53,7 @@ func MigrateSmartRouteSettings() error {
 
 // InferSmartRouteEndpoints 返回三档和顾问模型支持接口的交集。
 func InferSmartRouteEndpoints(route operation_setting.SmartRoute) []string {
+	GetPricing()
 	endpoints := []constant.EndpointType{constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAI}
 	for _, modelName := range []string{
 		route.Tiers[operation_setting.SmartTierSimple].Model,

@@ -226,7 +226,7 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 
 	// 覆盖表里的值不应出现在接口结果中：接口只返回内置值。
 	originalOverrides := operation_setting.ThinkingCapabilitiesToString()
-	operation_setting.LoadThinkingCapabilitiesFromJSONString(`{"gpt-5":{"no_thinking":true,"efforts":[]}}`)
+	operation_setting.LoadThinkingCapabilitiesFromJSONString(`{"gpt-5.4":{"no_thinking":true,"efforts":[]}}`)
 	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(originalOverrides) })
 
 	newToken := func(role int, name string, scopes ...string) string {
@@ -266,13 +266,13 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 	}
 
 	t.Run("root 带 option:read 的访问令牌返回内置值", func(t *testing.T) {
-		recorder := get(rootRead, "?models=gpt-5,gpt-4.1,glm-5.1")
+		recorder := get(rootRead, "?models=gpt-5.4,gpt-4.1,glm-5.1")
 		require.Equal(t, http.StatusOK, recorder.Code)
 		var got response
 		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &got))
 		assert.True(t, got.Success)
 		assert.Equal(t, map[string]capability{
-			"gpt-5":   {Known: true, NoThinking: false, Efforts: []string{"minimal", "low", "medium", "high"}},
+			"gpt-5.4": {Known: true, NoThinking: false, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
 			"gpt-4.1": {Known: true, NoThinking: true, Efforts: []string{}},
 			"glm-5.1": {Known: false, NoThinking: false, Efforts: []string{"low", "medium", "high"}},
 		}, got.Data)
@@ -286,11 +286,11 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 	})
 
 	t.Run("缺少 option:read 的令牌被拒绝", func(t *testing.T) {
-		assert.Equal(t, http.StatusForbidden, get(rootUserScopeOnly, "?models=gpt-5").Code)
+		assert.Equal(t, http.StatusForbidden, get(rootUserScopeOnly, "?models=gpt-5.4").Code)
 	})
 
 	t.Run("非 root 用户被拒绝", func(t *testing.T) {
-		assert.Equal(t, http.StatusForbidden, get(adminRead, "?models=gpt-5").Code)
-		assert.Equal(t, http.StatusForbidden, get(commonRead, "?models=gpt-5").Code)
+		assert.Equal(t, http.StatusForbidden, get(adminRead, "?models=gpt-5.4").Code)
+		assert.Equal(t, http.StatusForbidden, get(commonRead, "?models=gpt-5.4").Code)
 	})
 }

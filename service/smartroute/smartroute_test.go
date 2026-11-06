@@ -1760,22 +1760,24 @@ func TestBuiltinThinkingCapability(t *testing.T) {
 		noThinking bool
 		efforts    []string
 	}{
-		{"gpt-5 支持 minimal 到 high", "gpt-5", "builtin", false, []string{"minimal", "low", "medium", "high"}},
-		{"gpt-5.1 默认 none 且支持 low 到 high", "gpt-5.1", "builtin", false, []string{"none", "low", "medium", "high"}},
 		{"gpt-4.1 非推理模型", "gpt-4.1", "builtin", true, []string{}},
 		{"deepseek-v4-pro 可关闭且有 low/high/max", "deepseek-v4-pro", "builtin", false, []string{"none", "low", "high", "max"}},
-		{"claude opus 4.6", "claude-opus-4-6", "builtin", false, []string{"none", "low", "medium", "high", "max"}},
-		{"gemini 3 pro", "gemini-3-pro-preview", "builtin", false, []string{"low", "high"}},
+		{"claude opus 4.6 按 relaykit 能力", "claude-opus-4-6", "builtin", false, nil},
+		{"claude sonnet 5.5 按 relaykit 能力", "claude-sonnet-5-5", "builtin", false, nil},
+		{"claude haiku 5.5 按 relaykit 能力", "claude-haiku-5-5", "builtin", false, nil},
+		{"gemini 3.1 pro 按 relaykit 能力", "gemini-3.1-pro-preview", "builtin", false, nil},
+		{"gemini 3.8 flash 按 relaykit 能力", "gemini-3.8-flash", "builtin", false, nil},
+		{"glm-5.3", "glm-5.3", "builtin", false, []string{"low", "high", "max"}},
+		{"glm-5.3-flash", "glm-5.3-flash", "builtin", false, []string{"low", "high", "max"}},
+		{"glm-5.3-flashx", "glm-5.3-flashx", "builtin", false, []string{"low", "high", "max"}},
+		{"glm-5.2", "glm-5.2", "builtin", false, []string{"none", "high", "max"}},
 		{"gemini 图像模型不支持思考", "gemini-2.5-flash-image", "builtin", true, []string{}},
 		{"gpt-4o 非推理", "gpt-4o", "builtin", true, []string{}},
 		{"gpt-4.1-mini 非推理", "gpt-4.1-mini", "builtin", true, []string{}},
-		{"gpt-5-pro 只有 high", "gpt-5-pro", "builtin", false, []string{"high"}},
-		{"gpt-5.2", "gpt-5.2", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
 		{"gpt-5.4", "gpt-5.4", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
 		{"gpt-5.4-mini", "gpt-5.4-mini", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
 		{"gpt-5.4-nano", "gpt-5.4-nano", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
 		{"gpt-5.5", "gpt-5.5", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
-		{"gpt-5.2-pro", "gpt-5.2-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
 		{"gpt-5.4-pro", "gpt-5.4-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
 		{"gpt-5.5-pro", "gpt-5.5-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
 		{"gpt-5.2-codex", "gpt-5.2-codex", "builtin", false, []string{"low", "medium", "high", "xhigh"}},
@@ -1790,26 +1792,46 @@ func TestBuiltinThinkingCapability(t *testing.T) {
 		{"gpt-6-astra", "gpt-6-astra", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
 		{"gpt-6.1-sol", "gpt-6.1-sol", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
 		{"deepseek-v4-flash", "deepseek-v4-flash", "builtin", false, []string{"none", "low", "high", "max"}},
+		{"2025 年及以前发布 gpt-5 未确认", "gpt-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5.1 未确认", "gpt-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5-pro 未确认", "gpt-5-pro", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5.2 未确认", "gpt-5.2", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5.2-pro 未确认", "gpt-5.2-pro", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-sonnet-4-5 未确认", "claude-sonnet-4-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-opus-4-5 未确认", "claude-opus-4-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-haiku-4-5 未确认", "claude-haiku-4-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-opus-4-1 未确认", "claude-opus-4-1", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-sonnet-4 未确认", "claude-sonnet-4", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-3-7-sonnet 未确认", "claude-3-7-sonnet", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-2.5-pro 未确认", "gemini-2.5-pro", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-2.5-flash 未确认", "gemini-2.5-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-3-pro-preview 未确认", "gemini-3-pro-preview", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-3-flash-preview 未确认", "gemini-3-flash-preview", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-flash-latest 未确认", "gemini-flash-latest", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 glm-5 未确认", "glm-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 glm-5.1 未确认", "glm-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"o3 文档未写明档位，未确认", "o3", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"o4-mini 文档未写明档位，未确认", "o4-mini", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"gpt-5-mini 文档未写明档位，未确认", "gpt-5-mini", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"gpt-5.6-cyber 文档未写明档位，未确认", "gpt-5.6-cyber", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"deepseek-flash 文档未写明档位，未确认", "deepseek-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
-		{"日期快照后缀 gpt-5-2025-08-07 同 gpt-5", "gpt-5-2025-08-07", "builtin", false, []string{"minimal", "low", "medium", "high"}},
+		{"日期快照后缀 gpt-5.6-sol-2026-07-09 同 gpt-5.6-sol", "gpt-5.6-sol-2026-07-09", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"日期快照后缀 gpt-5-2025-08-07 同 gpt-5，未确认", "gpt-5-2025-08-07", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"日期快照后缀 gpt-5.4-2026-03-05 同 gpt-5.4", "gpt-5.4-2026-03-05", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
 		{"大小写不敏感 GPT-5.5 同 gpt-5.5", "GPT-5.5", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
-		{"前缀不误匹配 gpt-5-pro-2025-10-06 同 gpt-5-pro", "gpt-5-pro-2025-10-06", "builtin", false, []string{"high"}},
+		{"前缀不误匹配 gpt-5-pro-2025-10-06 同 gpt-5-pro，未确认", "gpt-5-pro-2025-10-06", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"gpt-4o-mini-tts 不是 Gemini 家族，未确认", "gpt-4o-mini-tts", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"qwen3-tts-flash 不是 Gemini 家族，未确认", "qwen3-tts-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"qwen3-livetranslate-flash 不是 Gemini 家族，未确认", "qwen3-livetranslate-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
-		{"未收录模型未确认", "glm-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := smartroute.BuiltinThinkingCapability(tt.model)
 			assert.Equal(t, tt.source, got.Source)
 			assert.Equal(t, tt.noThinking, got.NoThinking)
-			assert.Equal(t, tt.efforts, got.Efforts)
+			if tt.efforts != nil {
+				assert.Equal(t, tt.efforts, got.Efforts)
+			}
 		})
 	}
 }
@@ -1844,8 +1866,8 @@ func TestEffectiveThinkingCapability(t *testing.T) {
 	})
 
 	t.Run("内置查询不受覆盖影响", func(t *testing.T) {
-		useThinkingOverrides(t, `{"gpt-5":{"no_thinking":true,"efforts":[]}}`)
-		assert.Equal(t, "builtin", smartroute.BuiltinThinkingCapability("gpt-5").Source)
+		useThinkingOverrides(t, `{"gpt-5.4":{"no_thinking":true,"efforts":[]}}`)
+		assert.Equal(t, "builtin", smartroute.BuiltinThinkingCapability("gpt-5.4").Source)
 	})
 }
 

@@ -54,7 +54,7 @@ env:
 
 | 用例 id | 说明 | last-run 状态 |
 | --- | --- | --- |
-| [capability-table-sources](web/smart-routing-capability/capability-table-sources.md) | 能力卡片只列档位用到的模型、同一模型一行；来源、档位小标签、操作按规则显示；Claude / Gemini / DeepSeek 内置档位和代码一致 | ✅ 通过（2026-11-06） |
+| [capability-table-sources](web/smart-routing-capability/capability-table-sources.md) | 能力卡片只列档位用到的模型、同一模型一行；来源、档位小标签、操作按规则显示；今年发布的 Claude / Gemini / DeepSeek 内置档位和代码一致，2025 年发布的模型显示「未确认」 | 未运行（口径变更） |
 | [capability-override-flow](web/smart-routing-capability/capability-override-flow.md) | 覆盖 gpt-5.6-sol 去掉 xhigh、max 后「已覆盖」，表格标黄「超出模型能力，实际按 high 发送」；保存更改后生效；恢复内置后标黄消失 | ✅ 通过（2026-11-06） |
 | [capability-override-glm-and-unsaved](web/smart-routing-capability/capability-override-glm-and-unsaved.md) | 覆盖弹窗一档不勾报错；glm-5.1 覆盖成 low、high 后力度下拉只有这两档；不保存更改就刷新，覆盖丢失 | ✅ 通过（2026-11-06） |
 | [capability-empty-after-delete](web/smart-routing-capability/capability-empty-after-delete.md) | 删掉唯一的虚拟模型后，能力卡片显示「还没有虚拟模型用到的模型」 | ✅ 通过（2026-11-06） |
