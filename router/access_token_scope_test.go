@@ -1,21 +1,29 @@
 package router
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // accessTokenExemptRoutes are /api routes that never reach dashboard
@@ -199,4 +207,90 @@ func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
 		_, listed := service.AccessTokenVerificationScope(scope)
 		assert.True(t, listed, "verification scope %s has no access token rule", scope)
 	}
+}
+
+func TestThinkingCapabilitiesRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
+
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	model.DB, model.LOG_DB = db, db
+	t.Cleanup(func() { model.DB, model.LOG_DB = previousDB, previousLogDB })
+	require.NoError(t, i18n.Init())
+	require.NoError(t, authz.Init(db))
+
+	// 覆盖表里的值不应出现在接口结果中：接口只返回内置值。
+	originalOverrides := operation_setting.ThinkingCapabilitiesToString()
+	operation_setting.LoadThinkingCapabilitiesFromJSONString(`{"gpt-5.4":{"no_thinking":true,"efforts":[]}}`)
+	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(originalOverrides) })
+
+	newToken := func(role int, name string, scopes ...string) string {
+		user := model.User{Username: name, Role: role, Status: common.UserStatusEnabled, AffCode: name}
+		require.NoError(t, db.Create(&user).Error)
+		suffix, err := common.GenerateRandomCharsKey(43)
+		require.NoError(t, err)
+		raw := model.AccessTokenPrefix + suffix
+		token := &model.UserAccessToken{Name: name, TokenHash: model.AccessTokenFingerprint(raw), TokenHint: model.AccessTokenHint(raw)}
+		require.NoError(t, token.SetScopes(scopes))
+		require.NoError(t, model.CreateUserAccessToken(user.Id, token, service.AccessTokenMaxPerUser))
+		return raw
+	}
+	rootRead := newToken(common.RoleRootUser, "thinking_root_read", "option:read")
+	rootUserScopeOnly := newToken(common.RoleRootUser, "thinking_root_user_scope", "user:read")
+	adminRead := newToken(common.RoleAdminUser, "thinking_admin_read", "option:read")
+	commonRead := newToken(common.RoleCommonUser, "thinking_common_read", "option:read")
+
+	engine := gin.New()
+	SetApiRouter(engine)
+	get := func(token, query string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/option/smart_routing/thinking_capabilities"+query, nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		engine.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	type capability struct {
+		Known      bool     `json:"known"`
+		NoThinking bool     `json:"no_thinking"`
+		Efforts    []string `json:"efforts"`
+	}
+	type response struct {
+		Success bool                  `json:"success"`
+		Data    map[string]capability `json:"data"`
+	}
+
+	t.Run("root 带 option:read 的访问令牌返回内置值", func(t *testing.T) {
+		recorder := get(rootRead, "?models=gpt-5.4,gpt-4.1,glm-5.1")
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var got response
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &got))
+		assert.True(t, got.Success)
+		assert.Equal(t, map[string]capability{
+			"gpt-5.4": {Known: true, NoThinking: false, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
+			"gpt-4.1": {Known: true, NoThinking: true, Efforts: []string{}},
+			"glm-5.1": {Known: false, NoThinking: false, Efforts: []string{"low", "medium", "high"}},
+		}, got.Data)
+		assert.Contains(t, recorder.Body.String(), `"efforts":[]`)
+	})
+
+	t.Run("不带 models 返回空对象", func(t *testing.T) {
+		recorder := get(rootRead, "")
+		require.Equal(t, http.StatusOK, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), `"data":{}`)
+	})
+
+	t.Run("缺少 option:read 的令牌被拒绝", func(t *testing.T) {
+		assert.Equal(t, http.StatusForbidden, get(rootUserScopeOnly, "?models=gpt-5.4").Code)
+	})
+
+	t.Run("非 root 用户被拒绝", func(t *testing.T) {
+		assert.Equal(t, http.StatusForbidden, get(adminRead, "?models=gpt-5.4").Code)
+		assert.Equal(t, http.StatusForbidden, get(commonRead, "?models=gpt-5.4").Code)
+	})
 }

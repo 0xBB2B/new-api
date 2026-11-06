@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import type { SmartRoute } from './types'
+import type { SmartEffort, SmartRoute } from './types'
 
 type SmartRouteValidationError = {
   field: string
@@ -29,7 +29,7 @@ type SmartRouteValidationError = {
 type ValidateResponse = {
   success: boolean
   message?: string
-  data: { errors: SmartRouteValidationError[]; endpoints: string[] }
+  data: { errors: SmartRouteValidationError[] }
 }
 
 export async function validateSmartRoute(body: { route: SmartRoute }) {
@@ -37,5 +37,21 @@ export async function validateSmartRoute(body: { route: SmartRoute }) {
     '/api/option/smart_routing/validate',
     body
   )
+  return requireServerSuccess(response.data).data
+}
+
+export type BuiltinThinkingCapabilities = Record<
+  string,
+  { known: boolean; no_thinking: boolean; efforts: SmartEffort[] }
+>
+
+export async function getBuiltinThinkingCapabilities(models: string[]) {
+  const response = await api.get<{
+    success: boolean
+    message?: string
+    data: BuiltinThinkingCapabilities
+  }>('/api/option/smart_routing/thinking_capabilities', {
+    params: { models: models.join(',') },
+  })
   return requireServerSuccess(response.data).data
 }

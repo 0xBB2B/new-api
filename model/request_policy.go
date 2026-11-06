@@ -52,6 +52,7 @@ func requestPolicyDefaultOptions() map[string]string {
 		}
 	}
 	defaults[operation_setting.SmartRoutingRoutesOptionKey] = operation_setting.SmartRoutingRoutesToString()
+	defaults[operation_setting.SmartThinkingCapabilitiesOptionKey] = operation_setting.ThinkingCapabilitiesToString()
 	defaults["RetryTimes"] = strconv.Itoa(common.RetryTimes)
 	defaults["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
 	defaults["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -66,7 +67,7 @@ func requestPolicyDefaultOptions() map[string]string {
 }
 
 func IsRequestPolicyOption(key string) bool {
-	if strings.HasPrefix(key, "channel_affinity_setting.") || key == operation_setting.SmartRoutingRoutesOptionKey {
+	if strings.HasPrefix(key, "channel_affinity_setting.") || key == operation_setting.SmartRoutingRoutesOptionKey || key == operation_setting.SmartThinkingCapabilitiesOptionKey {
 		return true
 	}
 	switch key {

@@ -528,3 +528,33 @@ func geminiLevelForEffort(model string, effort Effort) (string, error) {
 func clampGeminiBudget(budget int, capabilities geminiCapabilities) int {
 	return min(max(budget, capabilities.minBudget), capabilities.maxBudget)
 }
+
+// GeminiSupportedEfforts lists, in canonical order, the efforts a Gemini model
+// can run at. Level models list the levels they take as given; budget models
+// derive a budget from any level, so they list all of them. noThinking is true
+// for models whose thinking cannot be configured. known is false for models
+// outside the Gemini family or its capability table.
+func GeminiSupportedEfforts(model string) (efforts []Effort, noThinking bool, known bool) {
+	lower := strings.ToLower(model)
+	if !strings.HasPrefix(lower, "gemini-") && !strings.HasPrefix(lower, "nano-banana-pro") {
+		return nil, false, false
+	}
+	capabilities := geminiCapabilitiesFor(model)
+	switch capabilities.kind {
+	case geminiThinkingNotConfigurable:
+		return nil, true, true
+	case geminiThinkingBudget:
+		if capabilities.supportsDisable {
+			efforts = append(efforts, EffortNone)
+		}
+		return append(efforts, EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax), false, true
+	case geminiThinkingLevel:
+		for _, effort := range []Effort{EffortMinimal, EffortLow, EffortMedium, EffortHigh} {
+			if level, err := geminiLevelForEffort(model, effort); err == nil && level == string(effort) {
+				efforts = append(efforts, effort)
+			}
+		}
+		return efforts, false, true
+	}
+	return nil, false, false
+}

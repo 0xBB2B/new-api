@@ -19,6 +19,7 @@ type RouteResult struct {
 	SessionKey             string
 	Session                *SessionRecord
 	StrippedReasoningCount int
+	Effort                 EffortDecision
 }
 
 const (

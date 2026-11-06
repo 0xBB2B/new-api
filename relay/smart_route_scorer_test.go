@@ -5,12 +5,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	newapidto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -41,6 +43,8 @@ type scorerFixture struct {
 	upstream  *httptest.Server
 	hits      atomic.Int32
 	bodies    chan []byte
+	paths     chan string
+	failEvent bool
 	status    int
 	content   string
 	delay     time.Duration
@@ -51,7 +55,7 @@ func setupScorerFixture(t *testing.T, userQuota int) *scorerFixture {
 	t.Helper()
 	require.NoError(t, i18n.Init())
 
-	f := &scorerFixture{status: http.StatusOK, content: scorerLabelsJSON, bodies: make(chan []byte, 4), cancelled: make(chan struct{}, 1)}
+	f := &scorerFixture{status: http.StatusOK, content: scorerLabelsJSON, bodies: make(chan []byte, 4), paths: make(chan string, 4), cancelled: make(chan struct{}, 1)}
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -64,6 +68,7 @@ func setupScorerFixture(t *testing.T, userQuota int) *scorerFixture {
 		f.hits.Add(1)
 		body, _ := io.ReadAll(r.Body)
 		f.bodies <- body
+		f.paths <- r.URL.Path
 		select {
 		case <-time.After(f.delay):
 		case <-r.Context().Done():
@@ -82,6 +87,17 @@ func setupScorerFixture(t *testing.T, userQuota int) *scorerFixture {
 		content, err := common.Marshal(f.content)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/responses") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			if f.failEvent {
+				_, _ = fmt.Fprint(w, "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n")
+				return
+			}
+			_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]}}\n\n")
+			_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":%s}]}}\n\n", content)
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"created_at\":1,\"status\":\"completed\",\"model\":\"scorer-x\",\"output\":[],\"usage\":{\"input_tokens\":100,\"output_tokens\":20,\"total_tokens\":120}}}\n\n")
 			return
 		}
 		_, _ = fmt.Fprintf(w, `{"id":"x","object":"chat.completion","created":1,"model":"scorer-x","choices":[{"index":0,"message":{"role":"assistant","content":%s},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}`, content)
@@ -207,6 +223,29 @@ func TestRunSmartRouteScorer_ValidLabelsAreBilledAtSettle(t *testing.T) {
 	}
 }
 
+func TestRunSmartRouteScorer_PlaygroundWithoutTokenIsBilledToTheUser(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	c := scorerContext("api")
+	c.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyTokenId, 0)
+	common.SetContextKey(c, constant.ContextKeyTokenUnlimited, false)
+
+	outcome, err := runSmartRouteScorer(c, scorerRoute(5000, "api"), scorerInspection(t))
+
+	require.NoError(t, err)
+	require.Empty(t, outcome.Failure)
+	require.NotNil(t, outcome.Labels)
+	require.NotNil(t, outcome.Settle)
+
+	outcome.Settle("hard", "gpt-x")
+
+	logs := scorerConsumeLogs(t, f.db)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "scorer-x", logs[0].ModelName)
+	assert.Equal(t, scorerChargeAtRate, logs[0].Quota)
+	assert.Equal(t, scorerTestQuota-scorerChargeAtRate, scorerUserQuota(t))
+}
+
 func TestRunSmartRouteScorer_SendsFixedChatRequest(t *testing.T) {
 	f := setupScorerFixture(t, scorerTestQuota)
 	in := scorerInspection(t)
@@ -244,7 +283,7 @@ func TestRunSmartRouteScorer_NonJSONContentIsInvalidButStillBilled(t *testing.T)
 	outcome, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(5000, "api"), scorerInspection(t))
 
 	require.NoError(t, err)
-	assert.Equal(t, "scorer_invalid", outcome.Failure)
+	assert.Equal(t, smartroute.FailureScorerInvalid, outcome.Failure)
 	assert.Nil(t, outcome.Labels)
 	require.NotNil(t, outcome.Settle)
 
@@ -264,13 +303,13 @@ func TestRunSmartRouteScorer_NoUsageMeansRefundAndNoLog(t *testing.T) {
 		setup       func(f *scorerFixture)
 		wantFailure string
 	}{
-		{"upstream 500", 5000, []string{"api"}, func(f *scorerFixture) { f.status = http.StatusInternalServerError }, "scorer_error"},
-		{"upstream slower than timeout_ms", 100, []string{"api"}, func(f *scorerFixture) { f.delay = 500 * time.Millisecond }, "scorer_timeout"},
+		{"upstream 500", 5000, []string{"api"}, func(f *scorerFixture) { f.status = http.StatusInternalServerError }, smartroute.FailureScorerError},
+		{"upstream slower than timeout_ms", 100, []string{"api"}, func(f *scorerFixture) { f.delay = 500 * time.Millisecond }, smartroute.FailureScorerTimeout},
 		{"no scorer channel in the token group", 5000, []string{"api"}, func(f *scorerFixture) {
 			f.db.Exec("DELETE FROM abilities")
 			f.db.Exec("DELETE FROM channels")
 			model.InitChannelCache()
-		}, "scorer_error"},
+		}, smartroute.FailureScorerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -353,7 +392,7 @@ func TestRunSmartRouteScorer_SubscriptionBillingIsIndependentFromMainRequest(t *
 		f.delay = 500 * time.Millisecond
 		outcome, err := runSmartRouteScorer(subscriptionFirstContext(), scorerRoute(100, "api"), scorerInspection(t))
 		require.NoError(t, err)
-		require.Equal(t, "scorer_timeout", outcome.Failure)
+		require.Equal(t, smartroute.FailureScorerTimeout, outcome.Failure)
 
 		settleMainRequest(t, subscriptionFirstContext(), mainActualQuota)
 
@@ -362,22 +401,131 @@ func TestRunSmartRouteScorer_SubscriptionBillingIsIndependentFromMainRequest(t *
 	})
 }
 
-func TestRunSmartRouteScorer_SkipsChannelsWithoutChatCompletions(t *testing.T) {
-	f := setupScorerFixture(t, scorerTestQuota)
+func addScorerChannel(t *testing.T, f *scorerFixture, id, channelType int, key, group, baseURL string) {
+	t.Helper()
 	priority, weight := int64(0), uint(100)
-	deadURL := "http://127.0.0.1:1"
 	require.NoError(t, f.db.Create(&model.Channel{
-		Id: 2, Type: constant.ChannelTypeCodex, Key: "sk-placeholder", Status: common.ChannelStatusEnabled,
-		Name: "codex-channel", Models: "scorer-x", Group: "default", BaseURL: &deadURL, Weight: &weight, Priority: &priority,
+		Id: id, Type: channelType, Key: key, Status: common.ChannelStatusEnabled,
+		Name: fmt.Sprintf("channel-%d", id), Models: "scorer-x", Group: group, BaseURL: &baseURL, Weight: &weight, Priority: &priority,
 	}).Error)
-	require.NoError(t, f.db.Create(&model.Ability{Group: "default", Model: "scorer-x", ChannelId: 2, Enabled: true, Priority: &priority, Weight: weight}).Error)
+	require.NoError(t, f.db.Create(&model.Ability{Group: group, Model: "scorer-x", ChannelId: id, Enabled: true, Priority: &priority, Weight: weight}).Error)
 	model.InitChannelCache()
+}
+
+func TestRunSmartRouteScorer_SkipsChannelsWithoutAnyScorerEndpoint(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	addScorerChannel(t, f, 2, constant.ChannelTypeReplicate, "sk-placeholder", "default", "http://127.0.0.1:1")
 
 	outcome, err := runSmartRouteScorer(scorerContext("auto"), scorerRoute(5000, "default", "api"), scorerInspection(t))
 
 	require.NoError(t, err)
 	assert.Empty(t, outcome.Failure)
 	assert.Equal(t, int32(1), f.hits.Load())
+	assert.Equal(t, "/v1/chat/completions", <-f.paths)
+}
+
+func TestRunSmartRouteScorer_CodexChannelGetsResponsesRequest(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "default", f.upstream.URL)
+	in := scorerInspection(t)
+
+	outcome, err := runSmartRouteScorer(scorerContext("auto"), scorerRoute(5000, "default", "api"), in)
+
+	require.NoError(t, err)
+	require.Empty(t, outcome.Failure)
+	require.NotNil(t, outcome.Labels)
+	assert.Equal(t, "plan", outcome.Labels.TaskType)
+	assert.Equal(t, 0.9, outcome.Labels.Confidence)
+	assert.Equal(t, int32(1), f.hits.Load())
+	assert.True(t, strings.HasSuffix(<-f.paths, "/responses"))
+
+	var sent struct {
+		Model           string `json:"model"`
+		MaxOutputTokens *int   `json:"max_output_tokens"`
+		Reasoning       struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+		Stream       bool    `json:"stream"`
+		Messages     []any   `json:"messages"`
+		MaxTokens    *int    `json:"max_tokens"`
+		Input        any     `json:"input"`
+		Instructions string  `json:"instructions"`
+		Temperature  float64 `json:"temperature"`
+	}
+	require.NoError(t, common.Unmarshal(<-f.bodies, &sent))
+	system, user := smartroute.BuildScorerMessages(smartroute.BuildScorerInput(in, 2), in.Features)
+	assert.Equal(t, "scorer-x", sent.Model)
+	assert.Nil(t, sent.MaxOutputTokens)
+	assert.Equal(t, "low", sent.Reasoning.Effort)
+	assert.Empty(t, sent.Messages)
+	assert.Nil(t, sent.MaxTokens)
+	assert.Contains(t, fmt.Sprint(sent.Input, sent.Instructions), user)
+	assert.Contains(t, fmt.Sprint(sent.Input, sent.Instructions), system)
+	items, isList := sent.Input.([]any)
+	require.True(t, isList, "input must be a list of messages, got %T", sent.Input)
+	require.NotEmpty(t, items)
+	first, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "user", first["role"])
+	assert.IsType(t, "", first["content"])
+
+	require.NotNil(t, outcome.Settle)
+	outcome.Settle("hard", "gpt-x")
+
+	logs := scorerConsumeLogs(t, f.db)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "scorer-x", logs[0].ModelName)
+	assert.Equal(t, scorerTestRequest, logs[0].RequestId)
+	assert.Equal(t, 100, logs[0].PromptTokens)
+	assert.Equal(t, 20, logs[0].CompletionTokens)
+	assert.Equal(t, scorerChargeAtRate/2, logs[0].Quota) // default 分组倍率 1，是 api 分组倍率 2 的一半
+}
+
+func TestRunSmartRouteScorer_CodexUpstreamFailureRefundsAndWritesNoLog(t *testing.T) {
+	failures := []struct {
+		name  string
+		setup func(f *scorerFixture)
+	}{
+		{"response.failed event", func(f *scorerFixture) { f.failEvent = true }},
+		{"HTTP 500", func(f *scorerFixture) { f.status = http.StatusInternalServerError }},
+	}
+	for _, failure := range failures {
+		t.Run(failure.name+" with wallet billing", func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "default", f.upstream.URL)
+			failure.setup(f)
+
+			outcome, err := runSmartRouteScorer(scorerContext("auto"), scorerRoute(5000, "default", "api"), scorerInspection(t))
+
+			require.NoError(t, err)
+			assert.Equal(t, smartroute.FailureScorerError, outcome.Failure)
+			assert.Nil(t, outcome.Labels)
+			assert.Nil(t, outcome.Settle)
+			assert.True(t, strings.HasSuffix(<-f.paths, "/responses"))
+			assert.Empty(t, scorerConsumeLogs(t, f.db))
+			assert.Equal(t, scorerTestQuota, scorerUserQuota(t))
+		})
+
+		t.Run(failure.name+" with subscription billing", func(t *testing.T) {
+			const mainActualQuota = 25000
+			f := setupScorerFixture(t, scorerTestQuota)
+			seedScorerSubscription(t, f.db)
+			require.NoError(t, f.db.Exec("DELETE FROM abilities WHERE channel_id = 1").Error)
+			require.NoError(t, f.db.Exec("DELETE FROM channels WHERE id = 1").Error)
+			addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "api", f.upstream.URL)
+			failure.setup(f)
+
+			outcome, err := runSmartRouteScorer(subscriptionFirstContext(), scorerRoute(5000, "api"), scorerInspection(t))
+
+			require.NoError(t, err)
+			assert.Equal(t, smartroute.FailureScorerError, outcome.Failure)
+			assert.True(t, strings.HasSuffix(<-f.paths, "/responses"))
+			assert.Nil(t, outcome.Settle)
+			settleMainRequest(t, subscriptionFirstContext(), mainActualQuota)
+			assert.Equal(t, int64(mainActualQuota), subscriptionAmountUsed(t, f.db))
+			assert.Empty(t, scorerConsumeLogs(t, f.db))
+		})
+	}
 }
 
 func TestRunSmartRouteScorer_StripsThinkingSuffixFromUpstreamModel(t *testing.T) {
@@ -445,7 +593,7 @@ func TestRunSmartRouteScorer_TimeoutCancelsUpstreamRequest(t *testing.T) {
 	outcome, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(100, "api"), scorerInspection(t))
 
 	require.NoError(t, err)
-	assert.Equal(t, "scorer_timeout", outcome.Failure)
+	assert.Equal(t, smartroute.FailureScorerTimeout, outcome.Failure)
 	require.Eventually(t, func() bool {
 		select {
 		case <-f.cancelled:
@@ -605,4 +753,34 @@ func TestPrepareResponsesRequestRetryOnLastChannelDropsStaleCleanedReasoningCoun
 	logFields, ok = common.GetContextKey(c, constant.ContextKeySmartRouteLog)
 	require.True(t, ok)
 	assert.NotContains(t, logFields.(map[string]any), "cleaned_reasoning")
+}
+
+func TestRunSmartRouteScorer_IgnoresTheMainRequestFormatFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		format      string
+		channelType int
+		key         string
+		wantSuffix  string
+	}{
+		{"chat request with a codex-only scorer group", "openai", constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "/responses"},
+		{"anthropic request with an xai-only scorer group", "anthropic", constant.ChannelTypeXai, "sk-placeholder", "/chat/completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			addScorerChannel(t, f, 2, tt.channelType, tt.key, "default", f.upstream.URL)
+			parent := scorerContext("auto")
+			service.GetChannelConstraints(parent).AddFilter(newapidto.ChannelFilter{
+				Kind: newapidto.FilterAcceptsFormat, Format: tt.format, ChatResponsesPolicy: service.ShouldChatCompletionsUseResponsesGlobal,
+			})
+
+			outcome, err := runSmartRouteScorer(parent, scorerRoute(5000, "default"), scorerInspection(t))
+
+			require.NoError(t, err)
+			require.Empty(t, outcome.Failure)
+			require.Equal(t, int32(1), f.hits.Load())
+			assert.True(t, strings.HasSuffix(<-f.paths, tt.wantSuffix))
+		})
+	}
 }

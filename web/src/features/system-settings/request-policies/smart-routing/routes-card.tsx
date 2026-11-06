@@ -42,21 +42,27 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 
+import type { BuiltinThinkingCapabilities } from './api'
+import { effectiveCapability, effortOverflow } from './capability'
 import {
+  endpointShortNames,
+  hasMissingEndpoints,
   parseSmartRoutes,
-  routeEndpoints,
   serializeSmartRoutes,
   smartRoutesErrorMessage,
   SMART_TIER_IDS,
+  tierEffortSummary,
 } from './lib'
 import { RouteEditorDialog } from './route-editor-dialog'
-import type { SmartRoute } from './types'
+import { normalizeTier } from './route-form'
+import type { SmartRoute, ThinkingCapabilityOverride } from './types'
 
 type SmartRoutesCardProps = {
   value: string
   onChange: (value: string) => void
+  overrides: Record<string, ThinkingCapabilityOverride>
+  builtin: BuiltinThinkingCapabilities | undefined
 }
 
 export function SmartRoutesCard(props: SmartRoutesCardProps) {
@@ -78,7 +84,9 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       setMode('json')
       return
     }
-    const { error } = parseSmartRoutes(props.value)
+    const parsed = parseSmartRoutes(props.value)
+    const error =
+      parsed.error ?? (hasMissingEndpoints(parsed.routes) ? 'incomplete' : null)
     if (error) {
       toast.error(smartRoutesErrorMessage(t, error))
       return
@@ -129,6 +137,8 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
           <TabsContent value='visual' className='min-w-0'>
             <SmartRoutesTable
               routes={routes}
+              overrides={props.overrides}
+              builtin={props.builtin}
               onAdd={() => setEditorTarget({ route: null, index: -1 })}
               onEdit={(route) =>
                 setEditorTarget({ route, index: routes.indexOf(route) })
@@ -154,6 +164,8 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       {editorTarget !== null && (
         <RouteEditorDialog
           route={editorTarget.route}
+          overrides={props.overrides}
+          builtin={props.builtin}
           otherNames={routes
             .filter((_, index) => index !== editorTarget.index)
             .map((item) => item.name)}
@@ -198,6 +210,8 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
 
 type SmartRoutesTableProps = {
   routes: SmartRoute[]
+  overrides: Record<string, ThinkingCapabilityOverride>
+  builtin: BuiltinThinkingCapabilities | undefined
   onAdd: () => void
   onEdit: (route: SmartRoute) => void
   onDelete: (route: SmartRoute) => void
@@ -205,7 +219,7 @@ type SmartRoutesTableProps = {
 
 function SmartRoutesTable(props: SmartRoutesTableProps) {
   const { t } = useTranslation()
-  const { models } = usePricingData()
+  const builtin = props.builtin ?? {}
   const tierTitles = {
     simple: t('Simple tier'),
     normal: t('Normal tier'),
@@ -249,24 +263,22 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
           header: t('Name'),
           className: 'w-[16%]',
           cell: (route) => {
-            const endpoints = routeEndpoints(route, models)
+            const endpointText = t('{{endpoint}} endpoint', {
+              endpoint: endpointShortNames(route.endpoints ?? []),
+              interpolation: { escapeValue: false },
+            })
             return (
               <div className='flex min-w-0 flex-col gap-1.5'>
                 <TruncatedCell tabIndex={0}>{route.name}</TruncatedCell>
-                {endpoints.length > 0 ? (
-                  <div
-                    className='text-muted-foreground min-w-0'
-                    data-table-text='secondary'
-                    aria-label={t('Endpoints')}
-                  >
-                    <TruncatedCell tabIndex={0}>
-                      {t('{{endpoint}} endpoint', {
-                        endpoint: endpoints.join(' / '),
-                        interpolation: { escapeValue: false },
-                      })}
-                    </TruncatedCell>
-                  </div>
-                ) : null}
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                  aria-label={t('Endpoints')}
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={endpointText}>
+                    <code>{endpointText}</code>
+                  </TruncatedCell>
+                </div>
               </div>
             )
           },
@@ -274,72 +286,103 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
         ...SMART_TIER_IDS.map((id) => ({
           id,
           header: tierTitles[id],
-          cell: (route: SmartRoute) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <div className='flex min-w-0 items-center gap-2'>
-                <TruncatedCell tabIndex={0}>
-                  {route.tiers[id].model}
-                </TruncatedCell>
-                {route.default_tier === id ? (
-                  <Badge variant='outline' className='shrink-0'>
-                    {t('Default')}
-                  </Badge>
+          cell: (route: SmartRoute) => {
+            const tier = normalizeTier(route.tiers[id])
+            const known = tier.model in builtin || !!props.overrides[tier.model]
+            const capability = effectiveCapability(
+              tier.model,
+              builtin,
+              props.overrides
+            )
+            const overflow = known
+              ? effortOverflow(tier, capability)
+              : { overflow: false, actual: '' }
+            const overflowText = t(
+              'Exceeds the model capability, sent as {{effort}}',
+              { effort: overflow.actual }
+            )
+            const summary = tierEffortSummary(tier, capability, t)
+            const lineText = `${summary} · ${tier.groups.join(' → ')}`
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
+                <div className='flex min-w-0 items-center gap-2'>
+                  <TruncatedCell tabIndex={0}>{tier.model}</TruncatedCell>
+                  {route.default_tier === id ? (
+                    <Badge variant='outline' className='shrink-0'>
+                      {t('Default')}
+                    </Badge>
+                  ) : null}
+                </div>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                  aria-label={t('Groups')}
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={lineText}>
+                    <code>
+                      <span className={overflow.overflow ? 'text-warning' : ''}>
+                        {summary}
+                      </span>{' '}
+                      · {tier.groups.join(' → ')}
+                    </code>
+                  </TruncatedCell>
+                </div>
+                {overflow.overflow ? (
+                  <div
+                    className='text-warning min-w-0'
+                    data-table-text='secondary'
+                  >
+                    <TruncatedCell tabIndex={0}>{overflowText}</TruncatedCell>
+                  </div>
                 ) : null}
               </div>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-                aria-label={t('Groups')}
-              >
-                <TruncatedCell tabIndex={0}>
-                  <code>
-                    {route.tiers[id].groups.join(' → ')} ·{' '}
-                    {route.tiers[id].effort || t('Keep client value')}
-                  </code>
-                </TruncatedCell>
-              </div>
-            </div>
-          ),
+            )
+          },
         })),
         {
           id: 'scorer',
           header: t('Scorer model'),
-          cell: (route) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <TruncatedCell tabIndex={0}>{route.scorer.model}</TruncatedCell>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-                aria-label={t('Groups')}
-              >
-                <TruncatedCell tabIndex={0}>
-                  <code>
-                    {route.scorer.groups.join(' → ')} ·{' '}
-                    {t('Timeout {{ms}} ms', { ms: route.scorer.timeout_ms })}
-                  </code>
-                </TruncatedCell>
+          cell: (route) => {
+            const scorerText = `${route.scorer.groups.join(' → ')} · ${t('Timeout {{ms}} ms', { ms: route.scorer.timeout_ms })}`
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
+                <TruncatedCell tabIndex={0}>{route.scorer.model}</TruncatedCell>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                  aria-label={t('Groups')}
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={scorerText}>
+                    <code>{scorerText}</code>
+                  </TruncatedCell>
+                </div>
               </div>
-            </div>
-          ),
+            )
+          },
         },
         {
           id: 'advisor',
           header: t('Advisor'),
-          cell: (route) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <TruncatedCell tabIndex={0}>{route.advisor.model}</TruncatedCell>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-              >
+          cell: (route) => {
+            const advisorText = t('After {{count}} dissatisfied messages', {
+              count: route.advisor.after_dissatisfied,
+            })
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
                 <TruncatedCell tabIndex={0}>
-                  {t('After {{count}} dissatisfied messages', {
-                    count: route.advisor.after_dissatisfied,
-                  })}
+                  {route.advisor.model}
                 </TruncatedCell>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={advisorText}>
+                    <code>{advisorText}</code>
+                  </TruncatedCell>
+                </div>
               </div>
-            </div>
-          ),
+            )
+          },
         },
         {
           id: 'actions',

@@ -19,6 +19,8 @@ type SessionState struct {
 	CurrentRoute   string `json:"current_route"`
 	LastNonAdvisor string `json:"last_non_advisor"`
 	LastChannelID  int    `json:"last_channel_id"`
+	Effort         string `json:"effort,omitempty"`
+	EffortSource   string `json:"effort_source,omitempty"`
 }
 
 var (
@@ -61,7 +63,7 @@ func LoadSession(sessionKey string) (SessionState, bool) {
 	return state, true
 }
 
-func SaveSessionAfterSuccess(sessionKey string, isUserTurn bool, route string, channelID int) {
+func SaveSessionAfterSuccess(sessionKey string, isUserTurn bool, route string, channelID int, effort EffortDecision) {
 	if sessionKey == "" {
 		return
 	}
@@ -76,6 +78,7 @@ func SaveSessionAfterSuccess(sessionKey string, isUserTurn bool, route string, c
 		if route != RouteAdvisor {
 			state.LastNonAdvisor = route
 		}
+		state.Effort, state.EffortSource = effort.Value, effort.Source
 	}
 	if err := getSessionCache().SetWithTTL(sessionKey, state, sessionCacheTTLSeconds*time.Second); err != nil {
 		common.SysError(common.LogText("smart routing session save failed: %s", err.Error()))

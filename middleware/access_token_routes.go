@@ -149,6 +149,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),
 	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
+	"GET /api/option/smart_routing/thinking_capabilities":        accessTokenScopeRule("option:read"),
 	"POST /api/option/smart_routing/validate":                    accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),

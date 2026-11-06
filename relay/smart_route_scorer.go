@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +28,10 @@ import (
 	"github.com/samber/lo"
 )
 
-const scorerRequestPath = "/v1/chat/completions"
+const (
+	scorerRequestPath          = "/v1/chat/completions"
+	scorerResponsesRequestPath = "/v1/responses"
+)
 
 func init() {
 	smartroute.ScorerRunner = runSmartRouteScorer
@@ -41,13 +45,54 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	}
 	input := smartroute.BuildScorerInput(in, route.Advisor.AfterDissatisfied)
 	system, user := smartroute.BuildScorerMessages(input, in.Features)
-	body, err := common.Marshal(&dto.GeneralOpenAIRequest{
-		Model:       scorerModel,
-		Messages:    []dto.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
-		MaxTokens:   lo.ToPtr(uint(300)),
-		Temperature: lo.ToPtr(0.0),
-		Stream:      lo.ToPtr(false),
+	var channel *model.Channel
+	var group string
+	// 打分请求的格式由打分渠道决定，和主请求的格式无关。
+	filters := slices.DeleteFunc(slices.Clone(service.GetChannelConstraints(parent).Filters), func(f newapidto.ChannelFilter) bool {
+		return f.Kind == newapidto.FilterAcceptsFormat
 	})
+	filters = append(filters, newapidto.ChannelFilter{Kind: newapidto.FilterScorerCapable})
+	for _, g := range smartroute.ScorerGroups(parent, route) {
+		if channel, _ = model.GetRandomSatisfiedChannel(g, scorerModel, 0, filters); channel != nil {
+			group = g
+			break
+		}
+	}
+	if channel == nil {
+		return scorerFailed("no available channel for %s in groups %v", scorerModel, smartroute.ScorerGroups(parent, route))
+	}
+	var request dto.Request
+	var requestPath string
+	var relayFormat types.RelayFormat
+	if channel.Type == constant.ChannelTypeCodex {
+		// Codex 上游只有 Responses 接口
+		instructions, err := common.Marshal(system)
+		if err != nil {
+			return scorerFailed("building the scorer request: %s", err.Error())
+		}
+		userInput, err := common.Marshal([]map[string]string{{"role": "user", "content": user}})
+		if err != nil {
+			return scorerFailed("building the scorer request: %s", err.Error())
+		}
+		request = &dto.OpenAIResponsesRequest{
+			Model:        scorerModel,
+			Instructions: instructions,
+			Input:        userInput,
+			Reasoning:    &dto.Reasoning{Effort: "low"},
+			Stream:       lo.ToPtr(false),
+		}
+		requestPath, relayFormat = scorerResponsesRequestPath, types.RelayFormatOpenAIResponses
+	} else {
+		request = &dto.GeneralOpenAIRequest{
+			Model:       scorerModel,
+			Messages:    []dto.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
+			MaxTokens:   lo.ToPtr(uint(300)),
+			Temperature: lo.ToPtr(0.0),
+			Stream:      lo.ToPtr(false),
+		}
+		requestPath, relayFormat = scorerRequestPath, types.RelayFormatOpenAI
+	}
+	body, err := common.Marshal(request)
 	if err != nil {
 		return scorerFailed("building the scorer request: %s", err.Error())
 	}
@@ -64,39 +109,24 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Keys = parent.Copy().Keys
-	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, scorerRequestPath, bytes.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(common.KeyBodyStorage, bodyStorage)
 	c.Set(common.KeyRequestBody, nil)
 	common.SetContextKey(c, constant.ContextKeyOriginalModel, scorerModel)
 	common.SetContextKey(c, constant.ContextKeyIsStream, false)
 
-	var channel *model.Channel
-	var group string
-	filters := append(slices.Clone(service.GetChannelConstraints(parent).Filters), newapidto.ChannelFilter{Kind: newapidto.FilterChatCompletions})
-	for _, g := range smartroute.ScorerGroups(parent, route) {
-		if channel, _ = model.GetRandomSatisfiedChannel(g, scorerModel, 0, filters); channel != nil {
-			group = g
-			break
-		}
-	}
-	if channel == nil {
-		return scorerFailed("no available channel for %s in groups %v", scorerModel, smartroute.ScorerGroups(parent, route))
-	}
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 	common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
 	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, scorerModel); apiErr != nil {
 		return scorerFailed("setting up the scorer channel: %s", apiErr.Error())
 	}
 
-	request := &dto.GeneralOpenAIRequest{}
-	if err := common.Unmarshal(body, request); err != nil {
-		return scorerFailed("decoding the scorer request: %s", err.Error())
-	}
-	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, request, nil)
+	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 	if err != nil {
 		return scorerFailed("building relay info: %s", err.Error())
 	}
+	info.IsPlayground = strings.HasPrefix(parent.Request.URL.Path, "/pg")
 	// 预扣费按请求 ID 幂等，与主请求共用 ID 会让打分的预扣被当成重复
 	info.RequestId += "-scorer"
 	refund := func() {
@@ -158,7 +188,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	return outcome, nil
 }
 
-func callScorerUpstream(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest, recorder *httptest.ResponseRecorder) (*dto.Usage, string, *types.NewAPIError) {
+func callScorerUpstream(c *gin.Context, info *relaycommon.RelayInfo, request dto.Request, recorder *httptest.ResponseRecorder) (*dto.Usage, string, *types.NewAPIError) {
 	info.InitChannelMeta(c)
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
 		return nil, "", types.NewError(err, types.ErrorCodeChannelModelMappedError)
@@ -172,7 +202,13 @@ func callScorerUpstream(c *gin.Context, info *relaycommon.RelayInfo, request *dt
 	}
 	adaptor.Init(info)
 
-	converted, err := adaptor.ConvertOpenAIRequest(c, info, request)
+	var converted any
+	var err error
+	if responsesRequest, ok := request.(*dto.OpenAIResponsesRequest); ok {
+		converted, err = adaptor.ConvertOpenAIResponsesRequest(c, info, *responsesRequest)
+	} else {
+		converted, err = adaptor.ConvertOpenAIRequest(c, info, request.(*dto.GeneralOpenAIRequest))
+	}
 	if err != nil {
 		return nil, "", types.NewError(err, types.ErrorCodeConvertRequestFailed)
 	}
@@ -204,6 +240,24 @@ func callScorerUpstream(c *gin.Context, info *relaycommon.RelayInfo, request *dt
 	usage, apiErr := adaptor.DoResponse(c, httpResp, info)
 	if apiErr != nil {
 		return nil, "", apiErr
+	}
+
+	if info.RelayFormat == types.RelayFormatOpenAIResponses {
+		var response dto.OpenAIResponsesResponse
+		if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			return usage.(*dto.Usage), "", nil
+		}
+		for _, output := range response.Output {
+			if output.Type != "message" {
+				continue
+			}
+			for _, part := range output.Content {
+				if part.Type == "output_text" {
+					return usage.(*dto.Usage), part.Text, nil
+				}
+			}
+		}
+		return usage.(*dto.Usage), "", nil
 	}
 
 	var completion struct {

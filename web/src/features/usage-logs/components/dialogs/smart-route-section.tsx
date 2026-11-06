@@ -32,6 +32,7 @@ import type { UsageLog } from '../../data/schema'
 import { parseLogOther } from '../../lib/format'
 import {
   isSmartRouteScoringFailed,
+  smartRouteEffortText,
   smartRouteTierText,
 } from '../../lib/smart-route'
 import type { SmartRouteLabels, SmartRouting } from '../../types'
@@ -337,6 +338,12 @@ export function SmartRouteSection(props: {
           mono
         />
         <DetailRow label={t('Tier')} value={tierText} />
+        {routing.effort && (
+          <DetailRow
+            label={t('Reasoning effort')}
+            value={smartRouteEffortText(t, routing.effort)}
+          />
+        )}
         {reason && (
           <DetailRow
             label={t('Tier reason')}

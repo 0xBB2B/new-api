@@ -129,7 +129,7 @@ func TestIsRequestPolicyOption_SmartRouting(t *testing.T) {
 
 func TestSmartRoutingRoutesOptionReload(t *testing.T) {
 	const key = "smart_routing_setting.routes"
-	const fullRoutes = `[{"name":"auto-gpt","tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"],"effort":"low"},"normal":{"model":"gpt-5.5","groups":["subscription","api"],"effort":""},"hard":{"model":"gpt-5.6-sol","groups":["subscription","api"],"effort":"high"}},"default_tier":"normal","scorer":{"model":"gpt-5.6-luna","groups":["api"],"timeout_ms":1500},"advisor":{"model":"gpt-5.6-pro","groups":["subscription"],"after_dissatisfied":3},"downgrade_max_history_tokens":30000,"confidence_threshold":0.7,"simple_max_message_chars":1500}]`
+	const fullRoutes = `[{"name":"auto-gpt","endpoints":["openai-response","openai"],"tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"],"effort_mode":"follow","effort":"","effort_min":"low","effort_max":"high"},"normal":{"model":"gpt-5.5","groups":["subscription","api"],"effort_mode":"","effort":"","effort_min":"","effort_max":""},"hard":{"model":"gpt-5.6-sol","groups":["subscription","api"],"effort_mode":"fixed","effort":"high","effort_min":"","effort_max":""}},"default_tier":"normal","scorer":{"model":"gpt-5.6-luna","groups":["api"],"timeout_ms":1500},"advisor":{"model":"gpt-5.6-pro","groups":["subscription"],"after_dissatisfied":3},"downgrade_max_history_tokens":30000,"confidence_threshold":0.7,"simple_max_message_chars":1500}]`
 	const otherRoutes = `[{"name":"auto-chat","tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"]}}}]`
 
 	originalMap := common.OptionMap
@@ -144,8 +144,14 @@ func TestSmartRoutingRoutesOptionReload(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "gpt-5.6-sol", route.Tiers["hard"].Model)
 	assert.Equal(t, []string{"subscription", "api"}, route.Tiers["hard"].Groups)
+	assert.Equal(t, []string{"openai-response", "openai"}, route.Endpoints)
+	assert.Equal(t, "fixed", route.Tiers["hard"].EffortMode)
 	assert.Equal(t, "high", route.Tiers["hard"].Effort)
+	assert.Equal(t, "", route.Tiers["normal"].EffortMode)
 	assert.Equal(t, "", route.Tiers["normal"].Effort)
+	assert.Equal(t, "follow", route.Tiers["simple"].EffortMode)
+	assert.Equal(t, "low", route.Tiers["simple"].EffortMin)
+	assert.Equal(t, "high", route.Tiers["simple"].EffortMax)
 	assert.Equal(t, "normal", route.DefaultTier)
 	assert.Equal(t, "gpt-5.6-luna", route.Scorer.Model)
 	assert.Equal(t, 1500, route.Scorer.TimeoutMs)

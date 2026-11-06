@@ -142,6 +142,11 @@ export interface SmartRouting {
   labels?: SmartRouteLabels
   scorer?: { status: string; billed?: boolean }
   cleaned_reasoning?: number
+  effort?: {
+    value: string
+    source: string
+    from?: string
+  }
   main_tier?: string
   main_model?: string
 }

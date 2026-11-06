@@ -26,8 +26,6 @@ export const STATIC_I18N_KEYS = [
   '{{model}} has no price yet. Set it in Model Pricing first',
   'Select a default tier',
   'Select a valid reasoning effort',
-  '{{model}} supports neither Responses nor Chat Completions',
-  '{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}',
   'Virtual model {{name}}: {{detail}}',
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',

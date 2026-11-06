@@ -221,4 +221,37 @@ describe('API key group combobox Auto effect', () => {
     expect(within(autoOption).getByText('Auto')).toBeInTheDocument()
     setReducedMotion(false)
   })
+
+  test('only the compact variant gives the popup a minimum width', () => {
+    setReducedMotion(false)
+    const { unmount } = render(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyGroupCombobox
+          options={options}
+          value='default'
+          onValueChange={() => {}}
+        />
+      </I18nextProvider>
+    )
+    fireEvent.click(getTrigger())
+    expect(
+      getCommandItem('User group').closest('[data-slot="popover-content"]')
+    ).not.toHaveClass('min-w-64')
+    unmount()
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyGroupCombobox
+          compact
+          options={options}
+          value='default'
+          onValueChange={() => {}}
+        />
+      </I18nextProvider>
+    )
+    fireEvent.click(getTrigger())
+    expect(
+      getCommandItem('User group').closest('[data-slot="popover-content"]')
+    ).toHaveClass('min-w-64')
+  })
 })

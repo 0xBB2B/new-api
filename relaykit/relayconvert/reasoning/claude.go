@@ -495,3 +495,29 @@ func effortPercentage(effort Effort, adapterBudgetPercentage float64) int {
 	}
 	return percentage
 }
+
+// ClaudeSupportedEfforts lists, in canonical order, the efforts a Claude model
+// can run at. Models that take an effort level list the levels they accept;
+// manual-budget models derive a budget from any level, so they list all of
+// them. It returns false for models outside the Claude capability table.
+func ClaudeSupportedEfforts(model string) ([]Effort, bool) {
+	if !isKnownClaudeModel(strings.ToLower(model)) {
+		return nil, false
+	}
+	capabilities := claudeCapabilitiesFor(model)
+	var efforts []Effort
+	if capabilities.supportsDisable || capabilities.disableAsBetweenTools {
+		efforts = append(efforts, EffortNone)
+	}
+	if !capabilities.supportsEffort {
+		return append(efforts, EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax), true
+	}
+	efforts = append(efforts, EffortLow, EffortMedium, EffortHigh)
+	if capabilities.supportsXHigh {
+		efforts = append(efforts, EffortXHigh)
+	}
+	if capabilities.supportsMax {
+		efforts = append(efforts, EffortMax)
+	}
+	return efforts, true
+}

@@ -18,16 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
-import type { SmartRoute, SmartTierId } from './types'
+import type { EffectiveCapability } from './capability'
+import type {
+  SmartEndpoint,
+  SmartRoute,
+  SmartRouteTier,
+  SmartTierId,
+  ThinkingCapabilityOverride,
+} from './types'
 
 export const SMART_ROUTES_OPTION_KEY = 'smart_routing_setting.routes'
 
-export const SMART_TIER_IDS: SmartTierId[] = ['simple', 'normal', 'hard']
+export const SMART_THINKING_CAPABILITIES_OPTION_KEY =
+  'smart_routing_setting.thinking_capabilities'
 
-const ENDPOINT_NAMES: [string, string][] = [
-  ['openai-response', 'Responses'],
-  ['openai', 'Chat Completions'],
-]
+export const SMART_TIER_IDS: SmartTierId[] = ['simple', 'normal', 'hard']
 
 type SmartRoutesParseError = 'invalid' | 'not-array' | 'incomplete'
 
@@ -45,6 +50,10 @@ export function parseSmartRoutes(text: string): {
   if (!Array.isArray(parsed)) return { routes: [], error: 'not-array' }
   if (!parsed.every(isCompleteRoute)) return { routes: [], error: 'incomplete' }
   return { routes: parsed as SmartRoute[], error: null }
+}
+
+export function hasMissingEndpoints(routes: SmartRoute[]) {
+  return routes.some((route) => !Array.isArray(route.endpoints))
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -72,7 +81,7 @@ export function smartRoutesErrorMessage(
   if (error === 'not-array') return t('Smart routing JSON must be an array')
   if (error === 'incomplete') {
     return t(
-      'Each virtual model in the JSON must include tiers, scorer and advisor'
+      'Each virtual model in the JSON must include endpoints, tiers, scorer and advisor'
     )
   }
   return t('Invalid smart routing JSON')
@@ -82,27 +91,58 @@ export function serializeSmartRoutes(routes: SmartRoute[], indent?: number) {
   return JSON.stringify(routes, null, indent)
 }
 
-export function routeEndpoints(
-  route: SmartRoute,
-  models: { model_name: string; supported_endpoint_types?: string[] }[]
-): string[] {
-  const endpointsByModel = new Map(
-    models.map((model) => [model.model_name, model.supported_endpoint_types])
-  )
-  const used = [
-    ...SMART_TIER_IDS.map((id) => route.tiers[id].model),
-    route.advisor.model,
-  ]
-  let common: Set<string> | null = null
-  for (const name of used) {
-    const endpoints = endpointsByModel.get(name)
-    if (!endpoints) continue
-    common = new Set(
-      common ? endpoints.filter((e) => common?.has(e)) : endpoints
-    )
+export function parseThinkingCapabilities(
+  text: string
+): Record<string, ThinkingCapabilityOverride> {
+  if (!text.trim()) return {}
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return isObject(parsed)
+      ? (parsed as Record<string, ThinkingCapabilityOverride>)
+      : {}
+  } catch {
+    return {}
   }
-  const shared = common
-  return ENDPOINT_NAMES.filter(([type]) => shared?.has(type)).map(
-    ([, label]) => label
-  )
+}
+
+export function serializeThinkingCapabilities(
+  map: Record<string, ThinkingCapabilityOverride>,
+  indent?: number
+) {
+  return JSON.stringify(map, null, indent)
+}
+
+const ENDPOINT_SHORT_NAMES: Record<SmartEndpoint, string> = {
+  'openai-response': 'Responses',
+  openai: 'Chat',
+  anthropic: 'Anthropic',
+}
+
+export function endpointShortNames(endpoints: SmartEndpoint[]) {
+  return endpoints.map((endpoint) => ENDPOINT_SHORT_NAMES[endpoint]).join(' / ')
+}
+
+export function tierEffortSummary(
+  tier: SmartRouteTier,
+  capability: EffectiveCapability,
+  t: TFunction
+) {
+  if (capability.noThinking) return t('No thinking')
+  if (!tier.effort_mode) return t('Not overridden')
+  if (tier.effort_mode === 'fixed') {
+    return t('Fixed {{effort}}', { effort: tier.effort })
+  }
+  return t('Follow scoring {{min}}～{{max}}', {
+    min: tier.effort_min,
+    max: tier.effort_max,
+  })
+}
+
+export function slotSummaries(route: SmartRoute, t: TFunction) {
+  const tierCount = SMART_TIER_IDS.filter((id) => route.tiers[id].model).length
+  return {
+    scorer: route.scorer.model || t('Not set'),
+    tiers: t('{{count}}/3 set', { count: tierCount }),
+    advisor: route.advisor.model || t('Not set'),
+  }
 }

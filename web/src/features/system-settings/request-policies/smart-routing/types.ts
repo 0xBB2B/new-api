@@ -17,13 +17,31 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export type SmartTierId = 'simple' | 'normal' | 'hard'
+export type SmartEndpoint = 'openai-response' | 'openai' | 'anthropic'
+export type SmartEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+export type SmartEffortMode = '' | 'fixed' | 'follow'
 export type SmartRouteTier = {
   model: string
   groups: string[]
-  effort: '' | 'low' | 'medium' | 'high'
+  effort_mode: SmartEffortMode
+  effort: SmartEffort | ''
+  effort_min: SmartEffort | ''
+  effort_max: SmartEffort | ''
+}
+export type ThinkingCapabilityOverride = {
+  no_thinking: boolean
+  efforts: SmartEffort[]
 }
 export type SmartRoute = {
   name: string
+  endpoints: SmartEndpoint[]
   tiers: Record<SmartTierId, SmartRouteTier>
   default_tier: SmartTierId
   scorer: { model: string; groups: string[]; timeout_ms: number }

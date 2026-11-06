@@ -38,3 +38,42 @@ export function smartRouteTierText(
   }
   return names[tier ?? ''] ?? tier ?? '-'
 }
+
+const EFFORT_ORDER = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]
+
+export function smartRouteEffortText(
+  t: TFunction,
+  effort: SmartRouting['effort']
+): string {
+  if (!effort) return ''
+  if (effort.source === 'no_thinking') {
+    return t('Not sent (model does not support thinking)')
+  }
+  if (effort.source === 'client_unset') {
+    return t('Not sent (client did not specify)')
+  }
+  let source =
+    {
+      follow: t('Follow scoring'),
+      fixed: t('Fixed', { context: 'routing' }),
+      client: effort.from
+        ? t('Not overridden')
+        : t('Not overridden, sent by the client'),
+    }[effort.source] ?? effort.source
+  if (effort.from) {
+    const lowered =
+      EFFORT_ORDER.indexOf(effort.value) < EFFORT_ORDER.indexOf(effort.from)
+    source = lowered
+      ? t('{{source}}, lowered from {{from}}', { source, from: effort.from })
+      : t('{{source}}, raised from {{from}}', { source, from: effort.from })
+  }
+  return t('{{effort}} ({{source}})', { effort: effort.value, source })
+}

@@ -27,11 +27,17 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { getPolicyConfig } from './api'
+import { getBuiltinThinkingCapabilities } from './smart-routing/api'
+import { ThinkingCapabilitiesCard } from './smart-routing/capabilities-card'
+import { tierModelsOfRoutes } from './smart-routing/capability'
 import {
   parseSmartRoutes,
+  parseThinkingCapabilities,
   serializeSmartRoutes,
+  serializeThinkingCapabilities,
   smartRoutesErrorMessage,
   SMART_ROUTES_OPTION_KEY,
+  SMART_THINKING_CAPABILITIES_OPTION_KEY,
 } from './smart-routing/lib'
 import { SmartRoutesCard } from './smart-routing/routes-card'
 import { useSavePolicy } from './use-save-policy'
@@ -40,10 +46,26 @@ export function SmartRoutingSection() {
   const { t } = useTranslation()
   const mutation = useSavePolicy()
   const [draft, setDraft] = useState<string | null>(null)
+  const [capabilitiesDraft, setCapabilitiesDraft] = useState<string | null>(
+    null
+  )
   const query = useQuery({
     queryKey: ['request-policy'],
     queryFn: getPolicyConfig,
     staleTime: Infinity,
+  })
+  const baseline = query.data?.options[SMART_ROUTES_OPTION_KEY] ?? ''
+  const capabilitiesBaseline =
+    query.data?.options[SMART_THINKING_CAPABILITIES_OPTION_KEY] ?? ''
+  const value = draft ?? baseline
+  const capabilitiesValue = capabilitiesDraft ?? capabilitiesBaseline
+  const { routes } = parseSmartRoutes(value)
+  const overrides = parseThinkingCapabilities(capabilitiesValue)
+  const tierModels = tierModelsOfRoutes(routes).sort()
+  const builtinQuery = useQuery({
+    queryKey: ['smart-routing', 'builtin-capabilities', tierModels],
+    queryFn: () => getBuiltinThinkingCapabilities(tierModels),
+    enabled: tierModels.length > 0,
   })
   if (query.isPending) return <LoadingState />
   if (query.isError) {
@@ -55,9 +77,6 @@ export function SmartRoutingSection() {
     )
   }
 
-  const baseline = query.data.options[SMART_ROUTES_OPTION_KEY] ?? ''
-  const value = draft ?? baseline
-
   const save = async () => {
     const next = parseSmartRoutes(value)
     if (next.error) {
@@ -65,15 +84,27 @@ export function SmartRoutingSection() {
       return
     }
     const serialized = serializeSmartRoutes(next.routes)
-    if (
-      serialized === serializeSmartRoutes(parseSmartRoutes(baseline).routes)
-    ) {
+    const serializedCapabilities = serializeThinkingCapabilities(overrides)
+    const routesChanged =
+      serialized !== serializeSmartRoutes(parseSmartRoutes(baseline).routes)
+    const capabilitiesChanged =
+      serializedCapabilities !==
+      serializeThinkingCapabilities(
+        parseThinkingCapabilities(capabilitiesBaseline)
+      )
+    if (!routesChanged && !capabilitiesChanged) {
       toast.info(t('No changes to save'))
       return
     }
     try {
-      await mutation.mutateAsync({ [SMART_ROUTES_OPTION_KEY]: serialized })
+      await mutation.mutateAsync({
+        ...(routesChanged && { [SMART_ROUTES_OPTION_KEY]: serialized }),
+        ...(capabilitiesChanged && {
+          [SMART_THINKING_CAPABILITIES_OPTION_KEY]: serializedCapabilities,
+        }),
+      })
       setDraft(null)
+      setCapabilitiesDraft(null)
     } catch (error) {
       handleServerError(error)
     }
@@ -87,9 +118,20 @@ export function SmartRoutingSection() {
       />
       <SmartRoutesCard
         value={value}
-        onChange={(next) => {
-          setDraft(next)
-        }}
+        overrides={overrides}
+        builtin={builtinQuery.data}
+        onChange={setDraft}
+      />
+      <ThinkingCapabilitiesCard
+        routes={routes}
+        builtin={builtinQuery.data}
+        isPending={builtinQuery.isPending && tierModels.length > 0}
+        isError={builtinQuery.isError}
+        onRetry={() => void builtinQuery.refetch()}
+        overrides={overrides}
+        onChange={(next) =>
+          setCapabilitiesDraft(serializeThinkingCapabilities(next))
+        }
       />
     </div>
   )

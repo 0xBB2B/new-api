@@ -307,3 +307,42 @@ func CacheUpdateChannel(channel *Channel) {
 	channelSyncLock.Unlock()
 	InvalidatePricingCache()
 }
+
+type GroupChannel struct {
+	Id   int
+	Type int
+}
+
+// GroupModelChannels lists the enabled channels that serve modelName in group.
+func GroupModelChannels(group, modelName string) []GroupChannel {
+	var channels []GroupChannel
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		ids := group2model2channels[group][modelName]
+		if len(ids) == 0 {
+			ids = group2model2channels[group][ratio_setting.RoutingMatchModelName(modelName)]
+		}
+		for _, id := range ids {
+			if channel, ok := channelsIDM[id]; ok {
+				channels = append(channels, GroupChannel{Id: id, Type: channel.Type})
+			}
+		}
+		return channels
+	}
+	abilities, err := GetAllEnableAbilityWithChannels()
+	if err != nil {
+		return nil
+	}
+	for _, name := range []string{modelName, ratio_setting.RoutingMatchModelName(modelName)} {
+		for _, ability := range abilities {
+			if ability.Group == group && ability.Model == name {
+				channels = append(channels, GroupChannel{Id: ability.ChannelId, Type: ability.ChannelType})
+			}
+		}
+		if len(channels) > 0 {
+			break
+		}
+	}
+	return channels
+}

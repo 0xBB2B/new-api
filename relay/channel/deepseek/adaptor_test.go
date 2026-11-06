@@ -172,6 +172,8 @@ func TestModelModifiersUpstreamFields(t *testing.T) {
 				responses: `"reasoning":{"effort":"high"}`}},
 		{name: "budget overrides client effort none", model: "deepseek-flash@thinking:8192", thinking: "enabled", effort: "medium", logEffort: "high",
 			client: client{responses: `"reasoning":{"effort":"none"}`}},
+		{name: "modifier wins over client effort none", model: "deepseek-flash@effort:low", thinking: "enabled", effort: "low", logEffort: "low",
+			client: client{chat: `"reasoning_effort":"none"`}},
 		{name: "@ effort wins over a tail", model: "deepseek-flash-max@effort:low", thinking: "enabled", effort: "low", logEffort: "low"},
 		{name: "no modifier", model: "deepseek-flash",
 			client: client{chat: `"thinking":{"type":"disabled"},"reasoning_effort":"low"`, claude: `"thinking":{"type":"adaptive"},"output_config":{"effort":"low"}`, responses: `"reasoning":{"effort":"low"}`}},
@@ -265,6 +267,37 @@ func TestModelModifiersUpstreamFields(t *testing.T) {
 				}
 				assert.Equal(t, tt.logEffort, info.ReasoningEffort, format)
 			}
+		})
+	}
+}
+
+func TestChatReasoningEffortReachesDeepSeekAsItsOwnThinkingSwitch(t *testing.T) {
+	tests := []struct {
+		name, model, effort string
+		wantModel           string
+		wantThinking        string
+		wantEffort          string
+	}{
+		{name: "none turns thinking off", model: "deepseek-v4-pro", effort: "none", wantModel: "deepseek-v4-pro", wantThinking: "disabled"},
+		{name: "high is sent as is", model: "deepseek-v4-pro", effort: "high", wantModel: "deepseek-v4-pro", wantEffort: "high"},
+		{name: "none suffix keeps turning thinking off", model: "deepseek-v4-pro-none", effort: "high", wantModel: "deepseek-v4-pro", wantThinking: "disabled"},
+		{name: "flash family is rewritten too", model: "deepseek-flash", effort: "none", wantModel: "deepseek-flash", wantThinking: "disabled"},
+		{name: "other families pass none through", model: "deepseek-chat", effort: "none", wantModel: "deepseek-chat", wantEffort: "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{OriginModelName: tt.model, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: tt.model}}
+			request := &dto.GeneralOpenAIRequest{Model: tt.model, ReasoningEffort: tt.effort}
+
+			converted, err := (&Adaptor{}).ConvertOpenAIRequest(nil, info, request)
+			require.NoError(t, err)
+			sent, err := common.Marshal(converted)
+			require.NoError(t, err)
+
+			wire := ojson.ParseBytes(sent)
+			assert.Equal(t, tt.wantModel, wire.Get("model").String())
+			assert.Equal(t, tt.wantEffort, wire.Get("reasoning_effort").String())
+			assert.Equal(t, tt.wantThinking, wire.Get("thinking.type").String())
 		})
 	}
 }

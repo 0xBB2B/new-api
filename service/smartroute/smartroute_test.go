@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -481,7 +482,7 @@ func TestRequestEndpointFromPath(t *testing.T) {
 	}{
 		{"/v1/responses", responsesEndpoint},
 		{"/v1/chat/completions", chatEndpoint},
-		{"/v1/messages", ""},
+		{"/v1/messages", "anthropic"},
 		{"/v1/embeddings", ""},
 		{"", ""},
 	}
@@ -820,7 +821,7 @@ func TestSessionStore(t *testing.T) {
 	common.RedisEnabled = false
 
 	t.Run("empty key is never stored", func(t *testing.T) {
-		smartroute.SaveSessionAfterSuccess("", true, "hard", 7)
+		smartroute.SaveSessionAfterSuccess("", true, "hard", 7, smartroute.EffortDecision{})
 		_, ok := smartroute.LoadSession("")
 		assert.False(t, ok)
 	})
@@ -833,7 +834,7 @@ func TestSessionStore(t *testing.T) {
 	t.Run("user turn writes all three fields", func(t *testing.T) {
 		for _, route := range []string{"simple", "normal", "hard"} {
 			key := "session-store-user-turn-" + route
-			smartroute.SaveSessionAfterSuccess(key, true, route, 11)
+			smartroute.SaveSessionAfterSuccess(key, true, route, 11, smartroute.EffortDecision{})
 			got, ok := smartroute.LoadSession(key)
 			require.True(t, ok)
 			assert.Equal(t, smartroute.SessionState{CurrentRoute: route, LastNonAdvisor: route, LastChannelID: 11}, got)
@@ -842,8 +843,8 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("later user turn overwrites earlier one", func(t *testing.T) {
 		key := "session-store-overwrite"
-		smartroute.SaveSessionAfterSuccess(key, true, "simple", 1)
-		smartroute.SaveSessionAfterSuccess(key, true, "hard", 2)
+		smartroute.SaveSessionAfterSuccess(key, true, "simple", 1, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", 2, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "hard", LastChannelID: 2}, got)
@@ -851,8 +852,8 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("advisor turn keeps last non-advisor tier", func(t *testing.T) {
 		key := "session-store-advisor"
-		smartroute.SaveSessionAfterSuccess(key, true, "normal", 3)
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 4)
+		smartroute.SaveSessionAfterSuccess(key, true, "normal", 3, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 4, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "normal", LastChannelID: 4}, got)
@@ -860,7 +861,7 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("advisor turn without prior record leaves last non-advisor empty", func(t *testing.T) {
 		key := "session-store-advisor-first"
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 5)
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 5, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "", LastChannelID: 5}, got)
@@ -868,10 +869,10 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("tool result continuation only updates channel", func(t *testing.T) {
 		key := "session-store-tool-result"
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6)
-		smartroute.SaveSessionAfterSuccess(key, true, "hard", 6)
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6)
-		smartroute.SaveSessionAfterSuccess(key, false, "hard", 9)
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", 6, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, false, "hard", 9, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "hard", LastChannelID: 9}, got)
@@ -879,7 +880,7 @@ func TestSessionStore(t *testing.T) {
 
 	t.Run("tool result continuation without record writes channel only", func(t *testing.T) {
 		key := "session-store-tool-result-first"
-		smartroute.SaveSessionAfterSuccess(key, false, "normal", 8)
+		smartroute.SaveSessionAfterSuccess(key, false, "normal", 8, smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
 		assert.Equal(t, smartroute.SessionState{LastChannelID: 8}, got)
@@ -966,7 +967,8 @@ func setupValidateRouteTest(t *testing.T) {
 func validRoute() operation_setting.SmartRoute {
 	tier := operation_setting.SmartRouteTier{Model: "m-both", Groups: []string{"api"}}
 	return operation_setting.SmartRoute{
-		Name: "smart-a",
+		Name:      "smart-a",
+		Endpoints: []string{responsesEndpoint, chatEndpoint},
 		Tiers: map[string]operation_setting.SmartRouteTier{
 			operation_setting.SmartTierSimple: tier,
 			operation_setting.SmartTierNormal: tier,
@@ -990,10 +992,7 @@ func setTier(route *operation_setting.SmartRoute, name string, mutate func(*oper
 func TestValidateRoute_ValidRoute(t *testing.T) {
 	setupValidateRouteTest(t)
 
-	errs, endpoints := smartroute.ValidateRoute(validRoute())
-
-	assert.Empty(t, errs)
-	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, endpoints)
+	assert.Empty(t, smartroute.ValidateRoute(validRoute()))
 }
 
 func TestValidateRoute_SingleFieldErrors(t *testing.T) {
@@ -1050,22 +1049,8 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 		}, "", "tiers.normal.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
 		{"advisor model without price", func(r *operation_setting.SmartRoute) { r.Advisor.Model = "m-noprice" }, "",
 			"advisor.model", keyNoPrice, map[string]any{"model": "m-noprice"}},
-		{"tier endpoint conflicts with advisor", func(r *operation_setting.SmartRoute) {
-			for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
-				setTier(r, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-			}
-			r.Advisor.Model = "m-resp"
-		}, "", "advisor.model",
-			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "Responses", "other": "Chat Completions"}},
-		{"endpoint conflict points at the model that empties the shared set", func(r *operation_setting.SmartRoute) {
-			setTier(r, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
-			setTier(r, operation_setting.SmartTierNormal, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
-			r.Advisor.Model = "m-both"
-		}, "", "tiers.hard.model",
-			"{{model}} only supports {{endpoint}}. The other models of this virtual model use {{other}}", map[string]any{"model": "m-resp", "endpoint": "Responses", "other": "Chat Completions"}},
 		{"unknown reasoning effort", func(r *operation_setting.SmartRoute) {
-			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.Effort = "ultra" })
+			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.EffortMode = "fixed"; t.Effort = "ultra" })
 		}, "", "tiers.hard.effort", "Select a valid reasoning effort", nil},
 	}
 
@@ -1076,7 +1061,7 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 			route := validRoute()
 			tt.mutate(&route)
 
-			errs, _ := smartroute.ValidateRoute(route)
+			errs := smartroute.ValidateRoute(route)
 
 			require.Len(t, errs, 1)
 			assert.Equal(t, tt.wantField, errs[0].Field)
@@ -1089,25 +1074,11 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 	}
 }
 
-func TestValidateRoute_EndpointMismatchReportsNoEndpoints(t *testing.T) {
-	setupValidateRouteTest(t)
-	route := validRoute()
-	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
-		setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-	}
-	route.Advisor.Model = "m-resp"
-
-	errs, endpoints := smartroute.ValidateRoute(route)
-
-	require.NotEmpty(t, errs)
-	assert.Empty(t, endpoints)
-}
-
 func TestValidateRoute_SavedRouteWithSameNameIsNotDuplicate(t *testing.T) {
 	setupValidateRouteTest(t)
 	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"smart-a"}]`)
 
-	errs, _ := smartroute.ValidateRoute(validRoute())
+	errs := smartroute.ValidateRoute(validRoute())
 
 	assert.Empty(t, errs)
 }
@@ -1151,7 +1122,7 @@ func TestValidateRoute_SelfUseModeKeepsVirtualNameUsable(t *testing.T) {
 			route := validRoute()
 			route.Name = tt.route
 
-			errs, _ := smartroute.ValidateRoute(route)
+			errs := smartroute.ValidateRoute(route)
 
 			require.Len(t, errs, tt.wantErrs)
 			if tt.wantErrs > 0 {
@@ -1162,18 +1133,38 @@ func TestValidateRoute_SelfUseModeKeepsVirtualNameUsable(t *testing.T) {
 	}
 }
 
-func TestValidateRoute_ScorerNeedsChatCompletionsChannel(t *testing.T) {
-	t.Run("only a Codex channel in the group", func(t *testing.T) {
+func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
+	t.Run("only a Codex channel in the group is accepted", func(t *testing.T) {
 		setupValidateRouteTest(t)
 		route := validRoute()
 		route.Scorer.Model = "m-resp"
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
+
+		assert.Empty(t, errs)
+	})
+
+	t.Run("only a Replicate channel in the group is rejected", func(t *testing.T) {
+		setupValidateRouteTest(t)
+		priority, weight := int64(0), uint(100)
+		require.NoError(t, model.DB.Create(&model.Channel{
+			Id: 8, Type: constant.ChannelTypeReplicate, Key: "key-8", Status: common.ChannelStatusEnabled,
+			Name: "channel-8", Weight: &weight, Models: "m-repl", Group: "api", Priority: &priority,
+		}).Error)
+		require.NoError(t, model.DB.Create(&model.Ability{
+			Group: "api", Model: "m-repl", ChannelId: 8, Enabled: true, Priority: &priority, Weight: weight,
+		}).Error)
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"m-priced-only":0.01,"m-repl":0.01}`))
+		model.InitChannelCache()
+		route := validRoute()
+		route.Scorer.Model = "m-repl"
+
+		errs := smartroute.ValidateRoute(route)
 
 		require.Len(t, errs, 1)
 		assert.Equal(t, "scorer.model", errs[0].Field)
 		assert.Equal(t, "{{model}} has no available channel in group {{group}}", errs[0].Message.Key)
-		assert.Equal(t, "m-resp", errs[0].Message.Params["model"])
+		assert.Equal(t, "m-repl", errs[0].Message.Params["model"])
 		assert.Equal(t, "api", errs[0].Message.Params["group"])
 	})
 
@@ -1191,7 +1182,7 @@ func TestValidateRoute_ScorerNeedsChatCompletionsChannel(t *testing.T) {
 		route := validRoute()
 		route.Scorer.Model = "m-resp"
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
 
 		assert.Empty(t, errs)
 	})
@@ -1203,8 +1194,9 @@ func TestValidateRoute_ScorerNeedsChatCompletionsChannel(t *testing.T) {
 			setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
 		}
 		route.Advisor.Model = "m-resp"
+		route.Endpoints = []string{responsesEndpoint}
 
-		errs, _ := smartroute.ValidateRoute(route)
+		errs := smartroute.ValidateRoute(route)
 
 		assert.Empty(t, errs)
 	})
@@ -1218,11 +1210,9 @@ func TestValidateRoute_ScorerMayUseDifferentEndpoint(t *testing.T) {
 	}
 	route.Advisor.Model = "m-resp"
 	route.Scorer.Model = "m-chat"
+	route.Endpoints = []string{responsesEndpoint}
 
-	errs, endpoints := smartroute.ValidateRoute(route)
-
-	assert.Empty(t, errs)
-	assert.Equal(t, []string{responsesEndpoint}, endpoints)
+	assert.Empty(t, smartroute.ValidateRoute(route))
 }
 
 func TestValidateRoute_NumberRanges(t *testing.T) {
@@ -1264,7 +1254,7 @@ func TestValidateRoute_NumberRanges(t *testing.T) {
 			route := validRoute()
 			tt.set(&route)
 
-			errs, _ := smartroute.ValidateRoute(route)
+			errs := smartroute.ValidateRoute(route)
 
 			if tt.wantField == "" {
 				assert.Empty(t, errs)
@@ -1279,22 +1269,6 @@ func TestValidateRoute_NumberRanges(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestRouteEndpoints(t *testing.T) {
-	setupValidateRouteTest(t)
-	mixed := validRoute()
-	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
-		setTier(&mixed, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-both" })
-	}
-	mixed.Advisor.Model = "m-resp"
-	conflict := validRoute()
-	setTier(&conflict, operation_setting.SmartTierSimple, func(t *operation_setting.SmartRouteTier) { t.Model = "m-chat" })
-	conflict.Advisor.Model = "m-resp"
-
-	assert.ElementsMatch(t, []string{chatEndpoint, responsesEndpoint}, smartroute.RouteEndpoints(validRoute()))
-	assert.Equal(t, []string{responsesEndpoint}, smartroute.RouteEndpoints(mixed))
-	assert.Empty(t, smartroute.RouteEndpoints(conflict))
 }
 
 func TestValidateRoutes(t *testing.T) {
@@ -1325,7 +1299,7 @@ func TestValidateRoutes_DetailIsTranslatableMessage(t *testing.T) {
 	setTier(&noChannel, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
 		tier.Groups = []string{"missing-group"}
 	})
-	fieldErrs, _ := smartroute.ValidateRoute(noChannel)
+	fieldErrs := smartroute.ValidateRoute(noChannel)
 	require.NotEmpty(t, fieldErrs)
 
 	err := smartroute.ValidateRoutes([]operation_setting.SmartRoute{noChannel})
@@ -1601,4 +1575,660 @@ func TestDecideRoute_ScorerTimeoutCarriesTimeoutMs(t *testing.T) {
 	got := smartroute.DecideRoute(smartroute.DecideInput{Cfg: cfg, IsUserTurn: true, ScorerFailure: "scorer_timeout", LatestChars: 10})
 	assert.Equal(t, "scorer_timeout", got.Reason)
 	assert.Equal(t, map[string]any{"timeout_ms": 2000}, got.Params)
+}
+
+var effortLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+func TestValidateRoute_Endpoints(t *testing.T) {
+	tests := []struct {
+		name      string
+		endpoints []string
+		wantKey   string
+	}{
+		{"gemini is rejected", []string{"gemini"}, ""},
+		{"valid value mixed with gemini is rejected", []string{"openai", "gemini"}, ""},
+		{"all three accepted", []string{"openai-response", "openai", "anthropic"}, "-"},
+		{"anthropic only accepted", []string{"anthropic"}, "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupValidateRouteTest(t)
+			route := validRoute()
+			for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+				setTier(&route, name, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
+			}
+			route.Advisor.Model = "m-chat"
+			route.Endpoints = tt.endpoints
+
+			errs := smartroute.ValidateRoute(route)
+
+			if tt.wantKey == "-" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, "endpoints", errs[0].Field)
+			if tt.wantKey != "" {
+				require.NotNil(t, errs[0].Message)
+				assert.Equal(t, tt.wantKey, errs[0].Message.Key)
+			}
+		})
+	}
+}
+
+func TestValidateRoute_EmptyEndpointsAreInferredFromModelMetadata(t *testing.T) {
+	setupValidateRouteTest(t)
+	legacy := validRoute()
+	for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+		setTier(&legacy, name, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
+	}
+	legacy.Advisor.Model = "m-chat"
+	legacy.Endpoints = nil
+
+	disjoint := legacy
+	disjoint.Tiers = map[string]operation_setting.SmartRouteTier{}
+	for name, tier := range legacy.Tiers {
+		disjoint.Tiers[name] = tier
+	}
+	setTier(&disjoint, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-resp" })
+
+	t.Run("inferable set passes", func(t *testing.T) {
+		assert.Empty(t, smartroute.ValidateRoute(legacy))
+	})
+
+	t.Run("empty slice is inferred the same way", func(t *testing.T) {
+		route := legacy
+		route.Endpoints = []string{}
+		assert.Empty(t, smartroute.ValidateRoute(route))
+	})
+
+	t.Run("empty inferred set is still rejected", func(t *testing.T) {
+		errs := smartroute.ValidateRoute(disjoint)
+
+		require.Len(t, errs, 1)
+		assert.Equal(t, "endpoints", errs[0].Field)
+		assert.Equal(t, "Select at least one endpoint", errs[0].Message.Key)
+	})
+
+	t.Run("a legacy route saved together with a complete route", func(t *testing.T) {
+		complete := validRoute()
+		complete.Name = "smart-b"
+
+		assert.NoError(t, smartroute.ValidateRoutes([]operation_setting.SmartRoute{legacy, complete}))
+	})
+
+	t.Run("a legacy route with an empty inferred set fails the whole batch", func(t *testing.T) {
+		complete := validRoute()
+		complete.Name = "smart-b"
+
+		assert.Error(t, smartroute.ValidateRoutes([]operation_setting.SmartRoute{disjoint, complete}))
+	})
+}
+
+func TestValidateRoute_TierModelsMayUseDifferentEndpoints(t *testing.T) {
+	setupValidateRouteTest(t)
+	addFormatTestChannel(t, 20, constant.ChannelTypeOpenAI, "api", "m-resp")
+	route := validRoute()
+	setTier(&route, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-resp" })
+	setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
+	setTier(&route, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-both" })
+	route.Advisor.Model = "m-chat"
+
+	errs := smartroute.ValidateRoute(route)
+
+	for _, fieldErr := range errs {
+		require.NotNil(t, fieldErr.Message)
+		assert.NotContains(t, fieldErr.Message.Key, "The other models of this virtual model use")
+	}
+	assert.Empty(t, errs)
+}
+
+func TestValidateRoute_EffortModes(t *testing.T) {
+	tests := []struct {
+		name string
+		tier operation_setting.SmartRouteTier
+		ok   bool
+	}{
+		{"no override", operation_setting.SmartRouteTier{}, true},
+		{"no override with effort", operation_setting.SmartRouteTier{Effort: "low"}, false},
+		{"no override with effort_min", operation_setting.SmartRouteTier{EffortMin: "low"}, false},
+		{"no override with effort_max", operation_setting.SmartRouteTier{EffortMax: "high"}, false},
+		{"unknown mode", operation_setting.SmartRouteTier{EffortMode: "auto"}, false},
+		{"fixed empty effort", operation_setting.SmartRouteTier{EffortMode: "fixed"}, false},
+		{"fixed unknown effort", operation_setting.SmartRouteTier{EffortMode: "fixed", Effort: "ultra"}, false},
+		{"follow min above max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "high", EffortMax: "low"}, false},
+		{"follow unknown min", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "ultra", EffortMax: "high"}, false},
+		{"follow unknown max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "low", EffortMax: "ultra"}, false},
+		{"follow empty min", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMax: "high"}, false},
+		{"follow empty max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "low"}, false},
+		{"follow min equals max", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "medium", EffortMax: "medium"}, true},
+		{"follow full range", operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: "none", EffortMax: "max"}, true},
+	}
+	for _, level := range effortLevels {
+		tests = append(tests, struct {
+			name string
+			tier operation_setting.SmartRouteTier
+			ok   bool
+		}{"fixed " + level, operation_setting.SmartRouteTier{EffortMode: "fixed", Effort: level}, true})
+	}
+	for lo, minLevel := range effortLevels {
+		for _, maxLevel := range effortLevels[lo:] {
+			tests = append(tests, struct {
+				name string
+				tier operation_setting.SmartRouteTier
+				ok   bool
+			}{"follow " + minLevel + " to " + maxLevel, operation_setting.SmartRouteTier{EffortMode: "follow", EffortMin: minLevel, EffortMax: maxLevel}, true})
+		}
+	}
+
+	setupValidateRouteTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := validRoute()
+			setTier(&route, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
+				tier.EffortMode = tt.tier.EffortMode
+				tier.Effort = tt.tier.Effort
+				tier.EffortMin = tt.tier.EffortMin
+				tier.EffortMax = tt.tier.EffortMax
+			})
+
+			errs := smartroute.ValidateRoute(route)
+
+			if tt.ok {
+				assert.Empty(t, errs)
+				return
+			}
+			require.NotEmpty(t, errs)
+			assert.True(t, strings.HasPrefix(errs[0].Field, "tiers.hard.effort"), errs[0].Field)
+		})
+	}
+}
+
+func useThinkingOverrides(t *testing.T, value string) {
+	t.Helper()
+	original := operation_setting.ThinkingCapabilitiesToString()
+	operation_setting.LoadThinkingCapabilitiesFromJSONString(value)
+	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(original) })
+}
+
+func TestBuiltinThinkingCapability(t *testing.T) {
+	useThinkingOverrides(t, `{}`)
+	tests := []struct {
+		name       string
+		model      string
+		source     string
+		noThinking bool
+		efforts    []string
+	}{
+		{"gpt-4.1 非推理模型", "gpt-4.1", "builtin", true, []string{}},
+		{"deepseek-v4-pro 可关闭且有 low/high/max", "deepseek-v4-pro", "builtin", false, []string{"none", "low", "high", "max"}},
+		{"claude opus 4.6 按 relaykit 能力", "claude-opus-4-6", "builtin", false, nil},
+		{"claude sonnet 5.5 按 relaykit 能力", "claude-sonnet-5-5", "builtin", false, nil},
+		{"claude haiku 5.5 按 relaykit 能力", "claude-haiku-5-5", "builtin", false, nil},
+		{"gemini 3.1 pro 按 relaykit 能力", "gemini-3.1-pro-preview", "builtin", false, nil},
+		{"gemini 3.8 flash 按 relaykit 能力", "gemini-3.8-flash", "builtin", false, nil},
+		{"glm-5.3", "glm-5.3", "builtin", false, []string{"low", "high", "max"}},
+		{"glm-5.3-flash", "glm-5.3-flash", "builtin", false, []string{"low", "high", "max"}},
+		{"glm-5.3-flashx", "glm-5.3-flashx", "builtin", false, []string{"low", "high", "max"}},
+		{"glm-5.2", "glm-5.2", "builtin", false, []string{"none", "high", "max"}},
+		{"gemini 图像模型不支持思考", "gemini-2.5-flash-image", "builtin", true, []string{}},
+		{"gpt-4o 非推理", "gpt-4o", "builtin", true, []string{}},
+		{"gpt-4.1-mini 非推理", "gpt-4.1-mini", "builtin", true, []string{}},
+		{"gpt-5.4", "gpt-5.4", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.4-mini", "gpt-5.4-mini", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.4-nano", "gpt-5.4-nano", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.5", "gpt-5.5", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.4-pro", "gpt-5.4-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
+		{"gpt-5.5-pro", "gpt-5.5-pro", "builtin", false, []string{"medium", "high", "xhigh"}},
+		{"gpt-5.2-codex", "gpt-5.2-codex", "builtin", false, []string{"low", "medium", "high", "xhigh"}},
+		{"gpt-5.3-codex", "gpt-5.3-codex", "builtin", false, []string{"low", "medium", "high", "xhigh"}},
+		{"gpt-5.6", "gpt-5.6", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-5.6-sol", "gpt-5.6-sol", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-5.6-terra", "gpt-5.6-terra", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-5.6-luna", "gpt-5.6-luna", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-sol", "gpt-6-sol", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-luna", "gpt-6-luna", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6.1-terra", "gpt-6.1-terra", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-astra", "gpt-6-astra", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6.1-sol", "gpt-6.1-sol", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"deepseek-v4-flash", "deepseek-v4-flash", "builtin", false, []string{"none", "low", "high", "max"}},
+		{"2025 年及以前发布 gpt-5 未确认", "gpt-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5.1 未确认", "gpt-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5-pro 未确认", "gpt-5-pro", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5.2 未确认", "gpt-5.2", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gpt-5.2-pro 未确认", "gpt-5.2-pro", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-sonnet-4-5 未确认", "claude-sonnet-4-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-opus-4-5 未确认", "claude-opus-4-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-haiku-4-5 未确认", "claude-haiku-4-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-opus-4-1 未确认", "claude-opus-4-1", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-sonnet-4 未确认", "claude-sonnet-4", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 claude-3-7-sonnet 未确认", "claude-3-7-sonnet", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-2.5-pro 未确认", "gemini-2.5-pro", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-2.5-flash 未确认", "gemini-2.5-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-3-pro-preview 未确认", "gemini-3-pro-preview", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-3-flash-preview 未确认", "gemini-3-flash-preview", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 gemini-flash-latest 未确认", "gemini-flash-latest", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 glm-5 未确认", "glm-5", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"2025 年及以前发布 glm-5.1 未确认", "glm-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"o3 文档未写明档位，未确认", "o3", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"o4-mini 文档未写明档位，未确认", "o4-mini", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"gpt-5-mini 文档未写明档位，未确认", "gpt-5-mini", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"gpt-5.6-cyber 文档未写明档位，未确认", "gpt-5.6-cyber", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"deepseek-flash 文档未写明档位，未确认", "deepseek-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"日期快照后缀 gpt-5.6-sol-2026-07-09 同 gpt-5.6-sol", "gpt-5.6-sol-2026-07-09", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"日期快照后缀 gpt-5-2025-08-07 同 gpt-5，未确认", "gpt-5-2025-08-07", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"日期快照后缀 gpt-5.4-2026-03-05 同 gpt-5.4", "gpt-5.4-2026-03-05", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"大小写不敏感 GPT-5.5 同 gpt-5.5", "GPT-5.5", "builtin", false, []string{"none", "low", "medium", "high", "xhigh"}},
+		{"前缀不误匹配 gpt-5-pro-2025-10-06 同 gpt-5-pro，未确认", "gpt-5-pro-2025-10-06", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"gpt-4o-mini-tts 不是 Gemini 家族，未确认", "gpt-4o-mini-tts", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"qwen3-tts-flash 不是 Gemini 家族，未确认", "qwen3-tts-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+		{"qwen3-livetranslate-flash 不是 Gemini 家族，未确认", "qwen3-livetranslate-flash", "unconfirmed", false, []string{"low", "medium", "high"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := smartroute.BuiltinThinkingCapability(tt.model)
+			assert.Equal(t, tt.source, got.Source)
+			assert.Equal(t, tt.noThinking, got.NoThinking)
+			if tt.efforts != nil {
+				assert.Equal(t, tt.efforts, got.Efforts)
+			}
+		})
+	}
+}
+
+func TestEffectiveThinkingCapability(t *testing.T) {
+	t.Run("无覆盖时等同内置", func(t *testing.T) {
+		useThinkingOverrides(t, `{}`)
+		assert.Equal(t, smartroute.BuiltinThinkingCapability("gpt-5"), smartroute.EffectiveThinkingCapability("gpt-5"))
+	})
+
+	t.Run("覆盖未收录模型", func(t *testing.T) {
+		useThinkingOverrides(t, `{"glm-5.1":{"no_thinking":false,"efforts":["low","high"]}}`)
+		got := smartroute.EffectiveThinkingCapability("glm-5.1")
+		assert.Equal(t, "override", got.Source)
+		assert.False(t, got.NoThinking)
+		assert.Equal(t, []string{"low", "high"}, got.Efforts)
+	})
+
+	t.Run("覆盖优先于内置", func(t *testing.T) {
+		useThinkingOverrides(t, `{"gpt-4.1":{"no_thinking":false,"efforts":["medium"]}}`)
+		got := smartroute.EffectiveThinkingCapability("gpt-4.1")
+		assert.Equal(t, "override", got.Source)
+		assert.False(t, got.NoThinking)
+		assert.Equal(t, []string{"medium"}, got.Efforts)
+	})
+
+	t.Run("覆盖为不支持思考", func(t *testing.T) {
+		useThinkingOverrides(t, `{"gpt-5":{"no_thinking":true,"efforts":[]}}`)
+		got := smartroute.EffectiveThinkingCapability("gpt-5")
+		assert.Equal(t, "override", got.Source)
+		assert.True(t, got.NoThinking)
+	})
+
+	t.Run("内置查询不受覆盖影响", func(t *testing.T) {
+		useThinkingOverrides(t, `{"gpt-5.4":{"no_thinking":true,"efforts":[]}}`)
+		assert.Equal(t, "builtin", smartroute.BuiltinThinkingCapability("gpt-5.4").Source)
+	})
+}
+
+func TestClampEffortToCapability(t *testing.T) {
+	capability := func(efforts ...string) smartroute.ThinkingCapability {
+		return smartroute.ThinkingCapability{Source: "builtin", Efforts: efforts}
+	}
+	tests := []struct {
+		name       string
+		effort     string
+		capability smartroute.ThinkingCapability
+		want       string
+		changed    bool
+	}{
+		{"支持的档位原样返回", "low", capability("low", "high"), "low", false},
+		{"medium 与 low、high 一样近，取更高", "medium", capability("low", "high"), "high", true},
+		{"xhigh 超出上限收敛到 high", "xhigh", capability("low", "medium", "high"), "high", true},
+		{"高于上限的 max 收敛到最高档", "max", capability("low", "high", "xhigh"), "xhigh", true},
+		{"minimal 低于下限收敛到 low", "minimal", capability("low", "medium", "high"), "low", true},
+		{"请求 none 但不支持，取最近一档", "none", capability("minimal", "low", "high"), "minimal", true},
+		{"请求 none 且支持", "none", capability("none", "low"), "none", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := smartroute.ClampEffortToCapability(tt.effort, tt.capability)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.changed, changed)
+		})
+	}
+}
+
+func TestClampEffortToCapability_NoThinkingYieldsEmpty(t *testing.T) {
+	for _, effort := range []string{"none", "low", "high", "max"} {
+		got, _ := smartroute.ClampEffortToCapability(effort, smartroute.ThinkingCapability{Source: "builtin", NoThinking: true})
+		assert.Empty(t, got, effort)
+	}
+}
+
+func TestInspectRequest_Anthropic(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantUserTurn   bool
+		wantFirst      string
+		wantLatest     string
+		wantAttachment bool
+	}{
+		{"string content", `{"messages":[{"role":"user","content":"hello"}]}`, true, "hello", "hello", false},
+		{"text blocks are joined", `{"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]}`, true, "ab", "ab", false},
+		{"tool result only is a continuation", `{"messages":[{"role":"user","content":"first"},{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"secret result"}]}]}`, false, "first", "first", false},
+		{"tool result with text is a user turn without the result text", `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"secret result"},{"type":"text","text":"thanks, now do more"}]}]}`, true, "thanks, now do more", "thanks, now do more", false},
+		{"image is an attachment", `{"messages":[{"role":"user","content":[{"type":"text","text":"look"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}]}`, true, "look", "look", true},
+		{"document is an attachment", `{"messages":[{"role":"user","content":[{"type":"text","text":"read"},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"AA=="}}]}]}`, true, "read", "read", true},
+		{"system and thinking blocks are not user text", `{"system":"be nice","messages":[{"role":"user","content":"q1"},{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"s"},{"type":"text","text":"a1"}]},{"role":"user","content":"q2"}]}`, true, "q1", "q2", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in, err := smartroute.InspectRequest("anthropic", []byte(tt.body))
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantUserTurn, in.IsUserTurn)
+			require.NotEmpty(t, in.UserMessages)
+			assert.Equal(t, tt.wantFirst, in.UserMessages[0])
+			assert.Equal(t, tt.wantLatest, in.UserMessages[len(in.UserMessages)-1])
+			assert.Equal(t, tt.wantAttachment, in.Features.HasAttachment)
+			assert.NotContains(t, strings.Join(in.UserMessages, "|"), "secret result")
+			assert.NotContains(t, strings.Join(in.UserMessages, "|"), "be nice")
+			assert.NotContains(t, strings.Join(in.UserMessages, "|"), "hmm")
+		})
+	}
+}
+
+func TestAnthropicScorerInputAndSessionKey(t *testing.T) {
+	body := []byte(`{"system":"be nice","messages":[{"role":"user","content":"q1"},{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"s"},{"type":"text","text":"a1"}]},{"role":"user","content":"q2"}]}`)
+	in, err := smartroute.InspectRequest("anthropic", body)
+	require.NoError(t, err)
+
+	assert.Equal(t, smartroute.ScorerInput{Latest: "q2", History: []string{"q1"}}, smartroute.BuildScorerInput(in, 3))
+
+	later, err := smartroute.InspectRequest("anthropic", []byte(`{"messages":[{"role":"user","content":"q1"},{"role":"assistant","content":"a1"},{"role":"user","content":"q9"}]}`))
+	require.NoError(t, err)
+	key := smartroute.SessionKey(7, in)
+	require.NotEmpty(t, key)
+	assert.Equal(t, key, smartroute.SessionKey(7, later))
+	assert.NotEqual(t, key, smartroute.SessionKey(8, in))
+}
+
+const keyFormatRejected = "{{model}} has only {{channel_types}} channels in group {{group}}, which cannot accept the {{format}} format"
+
+func addFormatTestChannel(t *testing.T, id, channelType int, group, modelName string) {
+	t.Helper()
+	priority := int64(0)
+	weight := uint(100)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: id, Type: channelType, Key: fmt.Sprintf("key-%d", id),
+		Status: common.ChannelStatusEnabled, Name: fmt.Sprintf("channel-%d", id),
+		Weight: &weight, Models: modelName, Group: group, Priority: &priority,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: group, Model: modelName, ChannelId: id,
+		Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	model.InitChannelCache()
+}
+
+func formatRejectionRoute(endpoint string) operation_setting.SmartRoute {
+	route := validRoute()
+	route.Endpoints = []string{endpoint}
+	setTier(&route, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) {
+		tier.Model, tier.Groups = "gpt-5.5", []string{"api"}
+	})
+	setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) {
+		tier.Model, tier.Groups = "gpt-5.5", []string{"subscription", "api"}
+	})
+	setTier(&route, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
+		tier.Model, tier.Groups = "gpt-5.5", []string{"api"}
+	})
+	route.Scorer = operation_setting.SmartRouteScorer{Model: "m-chat", Groups: []string{"api"}, TimeoutMs: 2000}
+	route.Advisor.Model, route.Advisor.Groups = "gpt-5.5", []string{"api"}
+	return route
+}
+
+func setupFormatRejectionTest(t *testing.T) {
+	t.Helper()
+	setupValidateRouteTest(t)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(
+		`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"gpt-5.5":0.01,"claude-x":0.01}`))
+	addFormatTestChannel(t, 11, constant.ChannelTypeCodex, "subscription", "gpt-5.5")
+	addFormatTestChannel(t, 12, constant.ChannelTypeOpenAI, "api", "gpt-5.5")
+}
+
+func formatRejectionErrors(errs []smartroute.FieldError) []smartroute.FieldError {
+	var found []smartroute.FieldError
+	for _, fieldErr := range errs {
+		if fieldErr.Message != nil && fieldErr.Message.Key == keyFormatRejected {
+			found = append(found, fieldErr)
+		}
+	}
+	return found
+}
+
+func TestValidateRoute_TierGroupOnlyRejectingChannels(t *testing.T) {
+	tests := []struct {
+		name       string
+		endpoint   string
+		wantFormat string
+	}{
+		{"responses accepted by codex", "openai-response", ""},
+		{"anthropic rejected by codex", "anthropic", "Anthropic"},
+		{"chat completions rejected by codex", "openai", "Chat Completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFormatRejectionTest(t)
+
+			found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute(tt.endpoint)))
+
+			if tt.wantFormat == "" {
+				assert.Empty(t, found)
+				return
+			}
+			require.Len(t, found, 1)
+			assert.Equal(t, "tiers.normal.groups", found[0].Field)
+			assert.Equal(t, "gpt-5.5", found[0].Message.Params["model"])
+			assert.Equal(t, "subscription", found[0].Message.Params["group"])
+			assert.Equal(t, tt.wantFormat, found[0].Message.Params["format"])
+			assert.Contains(t, fmt.Sprint(found[0].Message.Params["channel_types"]), constant.ChannelTypeNames[constant.ChannelTypeCodex])
+		})
+	}
+}
+
+func TestValidateRoute_GroupWithAcceptingChannelIsSavable(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 13, constant.ChannelTypeOpenAI, "subscription", "gpt-5.5")
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute("anthropic")))
+
+	assert.Empty(t, found)
+}
+
+func TestValidateRoute_AdvisorOnlyRejectingChannels(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 14, constant.ChannelTypeClaudeSubscription, "claude-sub", "claude-x")
+	route := formatRejectionRoute("openai-response")
+	route.Advisor.Model, route.Advisor.Groups = "claude-x", []string{"claude-sub"}
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(route))
+
+	require.Len(t, found, 1)
+	assert.Equal(t, "advisor.groups", found[0].Field)
+	assert.Equal(t, "claude-x", found[0].Message.Params["model"])
+	assert.Equal(t, "claude-sub", found[0].Message.Params["group"])
+	assert.Equal(t, "Responses", found[0].Message.Params["format"])
+	assert.Contains(t, fmt.Sprint(found[0].Message.Params["channel_types"]), constant.ChannelTypeNames[constant.ChannelTypeClaudeSubscription])
+}
+
+func TestValidateRoute_ScorerIsNotCheckedForFormat(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 15, constant.ChannelTypeCodex, "scorer-group", "scorer-m")
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(
+		`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"gpt-5.5":0.01,"scorer-m":0.01}`))
+	route := formatRejectionRoute("anthropic")
+	route.Scorer.Model, route.Scorer.Groups = "scorer-m", []string{"scorer-group"}
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(route))
+
+	for _, fieldErr := range found {
+		assert.NotContains(t, fieldErr.Field, "scorer")
+	}
+}
+
+func TestValidateRoute_ChatToResponsesPolicyCountsAsAccepting(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		policy   model_setting.ChatCompletionsToResponsesPolicy
+		wantErr  bool
+	}{
+		{"anthropic with policy hit", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^gpt-5"}}, false},
+		{"chat with policy hit", "openai", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^gpt-5"}}, false},
+		{"anthropic without policy", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{}, true},
+		{"chat without policy", "openai", model_setting.ChatCompletionsToResponsesPolicy{}, true},
+		{"anthropic with model pattern miss", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^claude"}}, true},
+		{"anthropic with other channel type", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeOpenAI}, ModelPatterns: []string{"^gpt-5"}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFormatRejectionTest(t)
+			settings := model_setting.GetGlobalSettings()
+			original := settings.ChatCompletionsToResponsesPolicy
+			settings.ChatCompletionsToResponsesPolicy = tt.policy
+			t.Cleanup(func() { settings.ChatCompletionsToResponsesPolicy = original })
+
+			found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute(tt.endpoint)))
+
+			if tt.wantErr {
+				require.Len(t, found, 1)
+				assert.Equal(t, "tiers.normal.groups", found[0].Field)
+				return
+			}
+			assert.Empty(t, found)
+		})
+	}
+}
+
+func TestValidateRoute_RejectingChannelTypesJoinedWithComma(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 16, constant.ChannelTypeXai, "subscription", "gpt-5.5")
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute("anthropic")))
+
+	require.Len(t, found, 1)
+	codex, xai := constant.ChannelTypeNames[constant.ChannelTypeCodex], constant.ChannelTypeNames[constant.ChannelTypeXai]
+	assert.Contains(t, []any{codex + ", " + xai, xai + ", " + codex}, found[0].Message.Params["channel_types"])
+}
+
+func TestValidateRoute_DisabledChannelsAreNotCounted(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 17, constant.ChannelTypeOpenAI, "subscription", "gpt-5.5")
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 17).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", 17).Update("enabled", false).Error)
+	model.InitChannelCache()
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute("anthropic")))
+
+	require.Len(t, found, 1)
+	assert.Equal(t, "tiers.normal.groups", found[0].Field)
+}
+
+func setChatToResponsesPolicy(t *testing.T, policy model_setting.ChatCompletionsToResponsesPolicy, globalPassThrough bool) {
+	t.Helper()
+	settings := model_setting.GetGlobalSettings()
+	originalPolicy, originalPassThrough := settings.ChatCompletionsToResponsesPolicy, settings.PassThroughRequestEnabled
+	settings.ChatCompletionsToResponsesPolicy, settings.PassThroughRequestEnabled = policy, globalPassThrough
+	t.Cleanup(func() {
+		settings.ChatCompletionsToResponsesPolicy, settings.PassThroughRequestEnabled = originalPolicy, originalPassThrough
+	})
+}
+
+func normalTierGroupErrors(errs []smartroute.FieldError) []smartroute.FieldError {
+	var found []smartroute.FieldError
+	for _, fieldErr := range errs {
+		if fieldErr.Field == "tiers.normal.groups" {
+			found = append(found, fieldErr)
+		}
+	}
+	return found
+}
+
+func TestValidateRoute_PolicyConvertsToFormatChannelRejects(t *testing.T) {
+	allChannels := model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, AllChannels: true, ModelPatterns: []string{".*"}}
+	tests := []struct {
+		name         string
+		endpoint     string
+		policy       model_setting.ChatCompletionsToResponsesPolicy
+		extraChannel bool
+		wantErr      bool
+	}{
+		{"chat converted to responses that minimax rejects", "openai", allChannels, false, true},
+		{"anthropic converted to responses that minimax rejects", "anthropic", allChannels, false, true},
+		{"chat without policy is accepted by minimax", "openai", model_setting.ChatCompletionsToResponsesPolicy{}, false, false},
+		{"anthropic without policy is accepted by minimax", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{}, false, false},
+		{"chat is savable when another channel is not hit by the policy", "openai",
+			model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeMiniMax}, ModelPatterns: []string{".*"}}, true, false},
+		{"anthropic is savable when another channel is not hit by the policy", "anthropic",
+			model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeMiniMax}, ModelPatterns: []string{".*"}}, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFormatRejectionTest(t)
+			addFormatTestChannel(t, 30, constant.ChannelTypeMiniMax, "mm", "gpt-5.5")
+			if tt.extraChannel {
+				addFormatTestChannel(t, 31, constant.ChannelTypeOpenAI, "mm", "gpt-5.5")
+			}
+			setChatToResponsesPolicy(t, tt.policy, false)
+			route := formatRejectionRoute(tt.endpoint)
+			setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) { tier.Groups = []string{"mm"} })
+
+			found := normalTierGroupErrors(smartroute.ValidateRoute(route))
+
+			if tt.wantErr {
+				assert.NotEmpty(t, found)
+				return
+			}
+			assert.Empty(t, found)
+		})
+	}
+}
+
+func TestValidateRoute_PassThroughSkipsChatToResponsesPolicy(t *testing.T) {
+	codexPolicy := model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^gpt-5"}}
+	tests := []struct {
+		name               string
+		globalPassThrough  bool
+		channelPassThrough bool
+		wantErr            bool
+	}{
+		{"policy applies without pass-through", false, false, false},
+		{"global pass-through bypasses the policy", true, false, true},
+		{"channel pass-through bypasses the policy", false, true, true},
+	}
+	for _, tt := range tests {
+		for _, endpoint := range []string{"openai", "anthropic"} {
+			t.Run(tt.name+"/"+endpoint, func(t *testing.T) {
+				setupFormatRejectionTest(t)
+				if tt.channelPassThrough {
+					require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 11).
+						Update("setting", `{"pass_through_body_enabled":true}`).Error)
+					model.InitChannelCache()
+				}
+				setChatToResponsesPolicy(t, codexPolicy, tt.globalPassThrough)
+				route := formatRejectionRoute(endpoint)
+
+				found := normalTierGroupErrors(smartroute.ValidateRoute(route))
+
+				if tt.wantErr {
+					require.Len(t, found, 1)
+					return
+				}
+				assert.Empty(t, found)
+			})
+		}
+	}
 }

@@ -34,6 +34,18 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(fmt.Errorf("failed to copy request to ClaudeRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
+	if shouldStripSmartRouteReasoning(c, info.ChannelId) {
+		lastTurnHadThinking := claudeTurnLostThinking(request)
+		recordStrippedReasoning(c, stripClaudeThinkingBlocks(request))
+		if lastTurnHadThinking {
+			if err := disableClaudeThinking(request); err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+		}
+	} else {
+		recordStrippedReasoning(c, 0)
+	}
+
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
@@ -92,6 +104,27 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		requestBody = common.NewReplayableBodyReader(storage)
+		stripped := 0
+		if shouldStripSmartRouteReasoning(c, info.ChannelId) {
+			raw, err := storage.Bytes()
+			if err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			cleaned, count, err := stripClaudeThinkingBlocksInBody(raw)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			if count > 0 {
+				body, closer, err := relaycommon.NewOutboundJSONBody(cleaned)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				defer closer.Close()
+				requestBody = body
+				stripped = count
+			}
+		}
+		recordStrippedReasoning(c, stripped)
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
 		if err != nil {
