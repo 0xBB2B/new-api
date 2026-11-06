@@ -37,7 +37,7 @@ date: 2026-11-05
   - 会话识别：用「密钥 + 第一条用户消息的内容」算出的指纹，和不带 prompt_cache_key 的 Chat Completions 请求相同。
   - 请求体里的模型名换成选中档位的真实模型名；思考力度按「档位思考力度」的规则写进请求。
   - 每次发往上游之前（包括重试换渠道之后），这次用的渠道和会话里记的上一次渠道不同 → 去掉历史 assistant 消息里的 `thinking`、`redacted_thinking` 块；渠道相同时原样发送。日志记下清理了几段，写法和 Responses 相同。
-- C6：配置弹窗点「保存」时，对三档和顾问逐个检查：在它的每个分组里，这个模型的可用渠道如果全都是明确拒收某个所勾接口格式的渠道类型 → 不能保存，在这一档的分组那一行写红字「<模型> 在分组 <分组> 里只有 <渠道类型> 渠道，接收不了 <接口> 格式」。「明确拒收」以渠道适配器代码里写死返回「不支持」为准（例如 Codex 渠道拒收 Chat Completions 和 Anthropic，Claude 订阅渠道拒收 Responses）。打分模型不做这项检查。
+- C6：配置弹窗点「保存」时，对三档和顾问逐个检查：在它的每个分组里，这个模型的可用渠道如果全都是明确拒收某个所勾接口格式的渠道类型 → 不能保存，在这一档的分组那一行写红字「<模型> 在分组 <分组> 里只有 <渠道类型> 渠道，接收不了 <接口> 格式」。「明确拒收」以渠道适配器代码里写死返回「不支持」或收到就出错为准（例如 Codex 渠道拒收 Chat Completions 和 Anthropic，Claude 订阅渠道拒收 Responses，百度、智谱等渠道收到 Anthropic 格式就出错）。检查按请求时真正走的规则逐个渠道判断：Chat Completions 和 Anthropic 格式的请求，如果命中「Chat 转 Responses」策略、又没开透传，会先转成 Responses 再发给渠道，这时看渠道收不收 Responses；其他情况看渠道收不收原格式。分组里有一个渠道能收就能保存。打分模型不做这项检查。
 - C7：一期 C7「三档和顾问的模型接口不一致」这项保存检查去掉，由 C6 代替。
 - C8：模型列表接口（`/v1/models`）和后台模型列表里，虚拟模型的「支持的接口」写所勾的接口。
 
@@ -47,7 +47,7 @@ date: 2026-11-05
 - [ ] C3：auto-gpt 勾 Responses 和 Anthropic → 两种格式都能路由；用 Chat Completions 请求 → 400，信息「虚拟模型 auto-gpt 只支持这些接口：Responses, Anthropic」，没有打分记录和消费记录。
 - [ ] C4：auto-gpt 勾 Anthropic、普通档 gpt-5.5 走 OpenAI 渠道，用 Anthropic 格式请求 → 上游收到 OpenAI 格式请求，扣费等于用 Anthropic 格式直接请求 gpt-5.5 的扣费。
 - [ ] C5：Anthropic 格式下：用户新消息有打分记录、工具结果续跑没有；发给打分模型的内容里没有 system 和工具结果；同一段对话的两次请求被认成同一会话；上游请求的模型名是真实模型名；换了渠道时历史里的 thinking 块被去掉、日志写明清理了几段，渠道没换时原样发送。
-- [ ] C6：普通档 gpt-5.5 在 subscription 里只有 Codex 渠道，勾 Anthropic 保存 → 出现用例里的红字；在 subscription 里再加一个 OpenAI 类型的 gpt-5.5 渠道 → 能保存。
+- [ ] C6：普通档 gpt-5.5 在 subscription 里只有 Codex 渠道，勾 Anthropic 保存 → 出现用例里的红字；在 subscription 里再加一个 OpenAI 类型的 gpt-5.5 渠道 → 能保存。开启「Chat 转 Responses」策略并命中这个 Codex 渠道 → 勾 Chat 或 Anthropic 也能保存；分组里只有 MiniMax 渠道、策略命中它 → 勾 Chat 保存被拦下；开了透传 → 策略不算数。
 - [ ] C7：三档分别用只支持 Responses 的模型和只支持 Chat 的模型，接口勾两项，渠道都能接收 → 能保存，不再报「接口不一致」。
 - [ ] C8：auto-gpt 勾 Responses 和 Anthropic → `/v1/models` 里 auto-gpt 的支持接口是这两项。
 

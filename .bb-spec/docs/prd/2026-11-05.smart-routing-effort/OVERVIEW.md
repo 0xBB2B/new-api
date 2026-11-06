@@ -71,6 +71,7 @@ features: [smart-routing, usage-logs]
 - **Anthropic 格式换了渠道就去掉历史里的思考块**：沿用一期「渠道变了就清理加密思考内容」的思路。Anthropic 格式的思考块带签名，换到别的账号或别家模型后原样发过去可能被上游拒绝。这一条是推测，没有验证；实施时用 Claude 订阅渠道和 OpenAI 渠道之间来回换档实测，确认清理后上游不报错。
 - **这期不做 Gemini 格式**：只有 7 种渠道能接收 Gemini 格式（OpenAI、Gemini、Vertex、Claude、NewAPI、高级自定义、智谱 4V），Codex 订阅、Claude 订阅、DeepSeek、AWS 等都直接拒收；Gemini 的模型名写在网址里，改动最大。用户 2026-11-05 决定不做。
 - **保存时只拦渠道适配器明确拒收的格式**：依据是适配器代码里写死的「不支持」（例如 `relay/channel/codex/adaptor.go:24-29` 拒收 Claude 和 Gemini 格式，Codex 也拒收 Chat Completions），不会像元数据那样误判。用户 2026-11-05 选的。
+- **保存检查算上「Chat 转 Responses」策略，收到就出错的渠道也算拒收**：用户 2026-11-06 决定。保存检查必须和请求时真正走的规则一致，否则会拦下能用的配置（策略把 Chat 请求转成 Responses 发给 Codex），或放行必定失败的配置（策略把请求转给不收 Responses 的 MiniMax）。百度、智谱等渠道的适配器收到 Anthropic 格式会直接出错，和写死「不支持」效果一样。
 - **Codex 订阅渠道不收 Anthropic 格式，这期接受**：问题在 Codex 渠道本身不支持这种格式，不在智能路由。给 Claude Code 用的虚拟模型，档位选 Claude 订阅或 API 渠道。让 Codex 渠道接收 Anthropic 格式以后作为单独需求再做。
 - **配置弹窗：左栏竖排「打分 · 档位 · 顾问」，档位里再分三档**：用户先后看了「顶部 Tab」「左列表 + 右详情」「折叠摘要」「上中下三块」「两层切换」等布局，最后定为左栏竖排加三档切换。理由是注意力有限，一次只看一组设置；打分和顾问不该和三个档位连在一起。
 - **默认档放在「档位」里**：默认档在打分失败或超时、打分把握不足、工具续跑没有会话、选中的档位没有渠道这 4 种情况下都会用到（`service/smartroute/rules.go:125-126,176,189-190`，`middleware/smart_route.go:149-150`），它是三个档位的兜底，不属于打分。
