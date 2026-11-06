@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ChevronDown } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { useForm, useWatch, type FieldPath } from 'react-hook-form'
@@ -30,34 +30,41 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { ComboboxInput } from '@/components/ui/combobox-input'
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { getEnabledModels } from '@/features/channels/api'
-import { AutoGroupOrderEditor } from '@/features/keys/components/auto-group-order-editor'
-import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { getGroups } from '@/features/users/api'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { cn } from '@/lib/utils'
 
-import { validateSmartRoute } from './api'
-import { routeEndpoints, SMART_TIER_IDS } from './lib'
+import { getBuiltinThinkingCapabilities, validateSmartRoute } from './api'
+import { effectiveCapability } from './capability'
+import {
+  errorFields,
+  firstErrorLocation,
+  tabOfField,
+  type SmartEditorTab,
+} from './error-location'
+import { FieldInfo } from './field-info'
+import { endpointShortNames, slotSummaries, SMART_TIER_IDS } from './lib'
+import { AdvisorPanel, ScorerPanel, TiersPanel } from './route-editor-panels'
 import {
   createRouteFormSchema,
   emptyRouteFormValues,
@@ -65,28 +72,25 @@ import {
   routeToFormValues,
   type RouteFormValues,
 } from './route-form'
-import type { SmartRoute, SmartTierId } from './types'
+import type {
+  SmartEndpoint,
+  SmartRoute,
+  SmartTierId,
+  ThinkingCapabilityOverride,
+} from './types'
 
 const ROUTE_FORM_ID = 'smart-route-form'
+const ENDPOINTS: SmartEndpoint[] = ['openai-response', 'openai', 'anthropic']
 const ADVANCED_FIELDS = [
   'downgrade_max_history_tokens',
   'confidence_threshold',
   'simple_max_message_chars',
 ]
-const KEEP_EFFORT = 'keep'
+const TAB_TRIGGER_CLASS =
+  'h-auto min-h-14 w-full flex-col items-start justify-center gap-1 border-input px-3 py-2 text-left after:hidden data-active:border-primary/30 data-active:bg-primary/10! data-active:text-primary'
 
-type ModelFieldName =
-  | `tiers.${SmartTierId}.model`
-  | 'scorer.model'
-  | 'advisor.model'
-type GroupsFieldName =
-  | `tiers.${SmartTierId}.groups`
-  | 'scorer.groups'
-  | 'advisor.groups'
-type NumberFieldName = Extract<
+type AdvancedFieldName = Extract<
   FieldPath<RouteFormValues>,
-  | 'scorer.timeout_ms'
-  | 'advisor.after_dissatisfied'
   | 'downgrade_max_history_tokens'
   | 'confidence_threshold'
   | 'simple_max_message_chars'
@@ -95,6 +99,7 @@ type NumberFieldName = Extract<
 type RouteEditorDialogProps = {
   route: SmartRoute | null
   otherNames: string[]
+  overrides: Record<string, ThinkingCapabilityOverride>
   onOpenChange: (open: boolean) => void
   onSave: (route: SmartRoute) => void
 }
@@ -102,7 +107,9 @@ type RouteEditorDialogProps = {
 export function RouteEditorDialog(props: RouteEditorDialogProps) {
   const { t } = useTranslation()
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const { models: pricingModels } = usePricingData()
+  const isPhone = useMediaQuery('(max-width: 767px)')
+  const [tab, setTab] = useState<SmartEditorTab>('scoring')
+  const [tier, setTier] = useState<SmartTierId>('simple')
   const modelsQuery = useQuery({
     queryKey: ['smart-routing', 'enabled-models'],
     queryFn: async () => requireServerSuccess(await getEnabledModels()),
@@ -126,11 +133,65 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
       ? routeToFormValues(props.route)
       : emptyRouteFormValues(),
   })
-  const values = useWatch({ control: form.control })
-  const endpoints = routeEndpoints(
-    formValuesToRoute(values as RouteFormValues),
-    pricingModels
-  )
+  const values = useWatch({ control: form.control }) as RouteFormValues
+  const route = formValuesToRoute(values)
+  const summaries = slotSummaries(route, t)
+
+  const askedModels = [
+    ...new Set(
+      SMART_TIER_IDS.map((id) => route.tiers[id].model).filter(Boolean)
+    ),
+  ].sort()
+  const builtinQuery = useQuery({
+    queryKey: ['smart-routing', 'builtin-capabilities', askedModels],
+    queryFn: () => getBuiltinThinkingCapabilities(askedModels),
+    enabled: askedModels.length > 0,
+    placeholderData: keepPreviousData,
+  })
+  const builtin = builtinQuery.data ?? {}
+  const capabilities = {
+    simple: effectiveCapability(
+      route.tiers.simple.model,
+      builtin,
+      props.overrides
+    ),
+    normal: effectiveCapability(
+      route.tiers.normal.model,
+      builtin,
+      props.overrides
+    ),
+    hard: effectiveCapability(route.tiers.hard.model, builtin, props.overrides),
+  }
+  const unconfirmed = {
+    simple: isUnconfirmed(route.tiers.simple.model),
+    normal: isUnconfirmed(route.tiers.normal.model),
+    hard: isUnconfirmed(route.tiers.hard.model),
+  }
+  const unavailable = {
+    simple: isUnavailable(route.tiers.simple.model),
+    normal: isUnavailable(route.tiers.normal.model),
+    hard: isUnavailable(route.tiers.hard.model),
+  }
+  function isUnavailable(model: string) {
+    return model !== '' && !(model in builtin) && !props.overrides[model]
+  }
+  function isUnconfirmed(model: string) {
+    return (
+      model !== '' &&
+      model in builtin &&
+      effectiveCapability(model, builtin, props.overrides).source ===
+        'unconfirmed'
+    )
+  }
+
+  const fields = errorFields(form.formState.errors)
+  const errorCount = (target: SmartEditorTab) =>
+    fields.filter((field) => tabOfField(field) === target).length
+  const tierErrorCounts = {
+    simple: fields.filter((f) => f.startsWith('tiers.simple.')).length,
+    normal: fields.filter((f) => f.startsWith('tiers.normal.')).length,
+    hard: fields.filter((f) => f.startsWith('tiers.hard.')).length,
+  }
 
   const closedRef = useRef(false)
   const close = (open: boolean) => {
@@ -138,21 +199,30 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     props.onOpenChange(open)
   }
 
+  const showErrors = (errorFieldNames: string[]) => {
+    const location = firstErrorLocation(errorFieldNames)
+    if (location) {
+      setTab(location.tab)
+      if (location.tier) setTier(location.tier)
+    }
+    if (errorFieldNames.some((field) => ADVANCED_FIELDS.includes(field))) {
+      setAdvancedOpen(true)
+    }
+  }
+
   const submit = async (formValues: RouteFormValues) => {
-    const route = formValuesToRoute(formValues)
-    if (props.otherNames.includes(route.name)) {
+    const next = formValuesToRoute(formValues)
+    if (props.otherNames.includes(next.name)) {
       form.setError('name', {
         type: 'server',
         message: t('A virtual model named {{name}} already exists', {
-          name: route.name,
+          name: next.name,
         }),
       })
       return
     }
     try {
-      const result = await validateSmartRoute({
-        route,
-      })
+      const result = await validateSmartRoute({ route: next })
       if (closedRef.current) return
       if (result.errors.length > 0) {
         for (const error of result.errors) {
@@ -161,129 +231,21 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
             message: t(error.message.key, error.message.params),
           })
         }
-        if (result.errors.some((e) => ADVANCED_FIELDS.includes(e.field))) {
-          setAdvancedOpen(true)
-        }
+        showErrors(result.errors.map((error) => error.field))
         return
       }
-      props.onSave(route)
+      props.onSave(next)
       close(false)
     } catch (error) {
       handleServerError(error)
     }
   }
 
-  const openAdvancedOnError = (errors: object) => {
-    if (ADVANCED_FIELDS.some((field) => field in errors)) setAdvancedOpen(true)
-  }
-
-  const modelField = (
-    name: ModelFieldName,
-    label: string,
-    ariaLabel: string = label
-  ) => (
-    <FormField
-      control={form.control}
-      name={name}
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>{label}</FormLabel>
-          <FormControl>
-            <ComboboxInput
-              options={modelOptions}
-              value={field.value}
-              onValueChange={field.onChange}
-              placeholder={t('Select a model')}
-              openOnFocus={false}
-              aria-label={ariaLabel}
-            />
-          </FormControl>
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-  )
-
-  const groupsField = (name: GroupsFieldName) => (
-    <FormField
-      control={form.control}
-      name={name}
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>{t('Group order')}</FormLabel>
-          <FormControl>
-            <AutoGroupOrderEditor
-              value={field.value}
-              mode='custom'
-              options={groupOptions}
-              globalOptions={[]}
-              maxCount={groupOptions.length}
-              hideInheritControls
-              addLabel={t('Add group')}
-              aria-label={t('Group order')}
-              onChange={({ groups }) => field.onChange(groups)}
-            />
-          </FormControl>
-          <FormDescription>
-            {t(
-              'Groups are tried in order. The next group is used when every channel in the current one fails.'
-            )}
-          </FormDescription>
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-  )
-
-  const numberField = (
-    name: NumberFieldName,
-    label: string,
-    hint?: string,
-    step?: string
-  ) => (
-    <FormField
-      control={form.control}
-      name={name}
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>{label}</FormLabel>
-          <FormControl>
-            <Input
-              type='number'
-              step={step}
-              name={field.name}
-              ref={field.ref}
-              onBlur={field.onBlur}
-              value={Number.isNaN(field.value) ? '' : field.value}
-              onChange={(e) =>
-                field.onChange(
-                  e.target.value === '' ? Number.NaN : Number(e.target.value)
-                )
-              }
-            />
-          </FormControl>
-          {hint ? <FormDescription>{hint}</FormDescription> : null}
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-  )
-
-  const tierTitles: Record<SmartTierId, string> = {
-    simple: t('Simple tier'),
-    normal: t('Normal tier'),
-    hard: t('Hard tier'),
-  }
-  const effortItems = [
-    { value: KEEP_EFFORT, label: t('Keep client value') },
-    { value: 'low', label: 'low' },
-    { value: 'medium', label: 'medium' },
-    { value: 'high', label: 'high' },
+  const tabs: { id: SmartEditorTab; title: string; summary: string }[] = [
+    { id: 'scoring', title: t('Scoring'), summary: summaries.scorer },
+    { id: 'tiers', title: t('Tiers'), summary: summaries.tiers },
+    { id: 'advisor', title: t('Advisor'), summary: summaries.advisor },
   ]
-  const tierItems = SMART_TIER_IDS.map((id) => ({
-    value: id,
-    label: tierTitles[id],
-  }))
 
   return (
     <Dialog
@@ -310,15 +272,17 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
         <form
           id={ROUTE_FORM_ID}
           noValidate
-          onSubmit={form.handleSubmit(submit, openAdvancedOnError)}
-          className='flex min-w-0 flex-col gap-6'
+          onSubmit={form.handleSubmit(submit, (errors) =>
+            showErrors(errorFields(errors))
+          )}
+          className='flex min-w-0 flex-col gap-5'
         >
-          <div className='grid gap-4 sm:grid-cols-2'>
+          <div className='grid items-start gap-3 sm:grid-cols-2'>
             <FormField
               control={form.control}
               name='name'
               render={({ field }) => (
-                <FormItem>
+                <FormItem className='gap-1.5'>
                   <FormLabel required>{t('Name')}</FormLabel>
                   <FormControl>
                     <Input placeholder={t('e.g. auto-gpt')} {...field} />
@@ -327,159 +291,134 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
                 </FormItem>
               )}
             />
-            <FormItem>
-              <FormLabel htmlFor='smart-route-endpoint'>
-                {t('Interface')}
-              </FormLabel>
-              <Input
-                id='smart-route-endpoint'
-                readOnly
-                value={endpoints.join(' / ')}
-                placeholder={t('Detected after you pick models')}
-              />
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'Detected from the selected models. All models of a virtual model must use the same endpoint'
-                )}
-              </p>
-            </FormItem>
-          </div>
-
-          <Separator />
-
-          <section className='flex flex-col gap-4'>
-            <div>
-              <h4 className='text-sm font-semibold'>{t('Tiers')}</h4>
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'Each new user message is scored and goes to one tier. The default tier is used when scoring fails, times out or is unsure.'
-                )}
-              </p>
-            </div>
-            {SMART_TIER_IDS.map((id) => (
-              <div key={id} className='flex flex-col gap-4'>
-                <div className='grid gap-4 sm:grid-cols-2'>
-                  {modelField(
-                    `tiers.${id}.model`,
-                    t('{{tier}} model', { tier: tierTitles[id] })
-                  )}
-                  <FormField
-                    control={form.control}
-                    name={`tiers.${id}.effort`}
-                    render={({ field, fieldState }) => (
-                      <FormItem>
-                        <FormLabel>{t('Reasoning effort')}</FormLabel>
-                        <Select
-                          items={effortItems}
-                          value={field.value || KEEP_EFFORT}
-                          onValueChange={(value) =>
-                            field.onChange(value === KEEP_EFFORT ? '' : value)
-                          }
-                        >
-                          <SelectTrigger
-                            className='w-full'
-                            aria-label={t('Reasoning effort')}
-                            aria-invalid={!!fieldState.error}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {effortItems.map((item) => (
-                              <SelectItem key={item.value} value={item.value}>
-                                {item.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {id === 'simple' && (
-                          <FormDescription>
-                            {t(
-                              'Keep client value keeps the effort sent by the client'
-                            )}
-                          </FormDescription>
-                        )}
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                {groupsField(`tiers.${id}.groups`)}
-              </div>
-            ))}
             <FormField
               control={form.control}
-              name='default_tier'
-              render={({ field, fieldState }) => (
-                <FormItem>
-                  <FormLabel>{t('Default tier')}</FormLabel>
-                  <Select
-                    items={tierItems}
+              name='endpoints'
+              render={({ field }) => (
+                <FormItem className='gap-1.5'>
+                  <div className='flex items-center gap-1'>
+                    <FormLabel>{t('Interface')}</FormLabel>
+                    <FieldInfo label={t('Interface')}>
+                      {t(
+                        'Clients can request this virtual model in any ticked format; other formats get a 400. The channel converts the format. Pick at least one'
+                      )}
+                    </FieldInfo>
+                  </div>
+                  <ToggleGroup
+                    multiple
+                    variant='outline'
+                    size='sm'
+                    aria-label={t('Interface')}
                     value={field.value}
-                    onValueChange={field.onChange}
+                    onValueChange={(next) =>
+                      field.onChange(
+                        ENDPOINTS.filter((endpoint) => next.includes(endpoint))
+                      )
+                    }
                   >
-                    <SelectTrigger
-                      className='w-full sm:w-60'
-                      aria-label={t('Default tier')}
-                      aria-invalid={!!fieldState.error}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tierItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    {ENDPOINTS.map((endpoint) => (
+                      <Tooltip key={endpoint}>
+                        <TooltipTrigger
+                          render={
+                            <ToggleGroupItem
+                              value={endpoint}
+                              className='aria-pressed:border-primary/30 aria-pressed:bg-primary/10 aria-pressed:text-primary text-muted-foreground'
+                            />
+                          }
+                        >
+                          {endpointShortNames([endpoint])}
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {endpointPath(endpoint, t)}
+                        </TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </ToggleGroup>
                   <FormMessage />
                 </FormItem>
               )}
             />
-          </section>
+          </div>
 
           <Separator />
 
-          <section className='flex flex-col gap-4'>
-            <div>
-              <h4 className='text-sm font-semibold'>{t('Scorer model')}</h4>
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'Called once for each new user message. It is billed at the scorer model price as a separate usage record.'
-                )}
-              </p>
+          <Tabs
+            orientation={isPhone ? 'horizontal' : 'vertical'}
+            value={tab}
+            onValueChange={(value) => setTab(value as SmartEditorTab)}
+            className='flex-col gap-4 md:flex-row md:gap-6'
+          >
+            <TabsList
+              variant='line'
+              aria-label={t('Virtual model settings')}
+              aria-orientation={isPhone ? 'horizontal' : 'vertical'}
+              className={
+                isPhone
+                  ? 'grid h-auto! w-full grid-cols-3 gap-2 p-0'
+                  : 'w-full gap-2 p-0 md:w-38 md:shrink-0'
+              }
+            >
+              {tabs.map((item) => (
+                <TabsTrigger
+                  key={item.id}
+                  value={item.id}
+                  className={TAB_TRIGGER_CLASS}
+                >
+                  <span className='flex items-center gap-1.5 text-sm font-medium'>
+                    {item.title}
+                    {errorCount(item.id) > 0 ? (
+                      <span
+                        aria-hidden='true'
+                        className='bg-destructive size-1.5 shrink-0 rounded-full'
+                      />
+                    ) : null}
+                  </span>
+                  <span
+                    className={cn(
+                      'max-w-full truncate text-xs font-normal',
+                      errorCount(item.id) > 0
+                        ? 'text-destructive'
+                        : 'text-muted-foreground'
+                    )}
+                  >
+                    {item.summary}
+                  </span>
+                  {errorCount(item.id) > 0 ? (
+                    <span className='text-destructive text-xs font-normal'>
+                      {t('{{count}} errors', { count: errorCount(item.id) })}
+                    </span>
+                  ) : null}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            <div className='min-w-0 flex-1'>
+              <TabsContent value='scoring'>
+                <ScorerPanel
+                  modelOptions={modelOptions}
+                  groupOptions={groupOptions}
+                />
+              </TabsContent>
+              <TabsContent value='tiers'>
+                <TiersPanel
+                  modelOptions={modelOptions}
+                  groupOptions={groupOptions}
+                  tier={tier}
+                  onTierChange={setTier}
+                  capabilities={capabilities}
+                  unconfirmed={unconfirmed}
+                  tierErrorCounts={tierErrorCounts}
+                  unavailable={unavailable}
+                  capabilityFailed={builtinQuery.isError}
+                />
+              </TabsContent>
+              <TabsContent value='advisor'>
+                <AdvisorPanel
+                  modelOptions={modelOptions}
+                  groupOptions={groupOptions}
+                />
+              </TabsContent>
             </div>
-            <div className='grid gap-4 sm:grid-cols-2'>
-              {modelField('scorer.model', t('Model'), t('Scorer model'))}
-              {numberField(
-                'scorer.timeout_ms',
-                t('Timeout (ms)'),
-                t('The default tier is used on timeout')
-              )}
-            </div>
-            {groupsField('scorer.groups')}
-          </section>
-
-          <Separator />
-
-          <section className='flex flex-col gap-4'>
-            <div>
-              <h4 className='text-sm font-semibold'>{t('Advisor')}</h4>
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'When a user is dissatisfied several messages in a row in one conversation, the advisor answers this turn.'
-                )}
-              </p>
-            </div>
-            <div className='grid gap-4 sm:grid-cols-2'>
-              {modelField('advisor.model', t('Model'), t('Advisor'))}
-              {numberField(
-                'advisor.after_dissatisfied',
-                t('Dissatisfied messages before the advisor answers')
-              )}
-            </div>
-            {groupsField('advisor.groups')}
-          </section>
+          </Tabs>
 
           <Separator />
 
@@ -496,33 +435,85 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
             </CollapsibleTrigger>
             <CollapsibleContent keepMounted className='pt-4'>
               <div className='grid gap-4 sm:grid-cols-3'>
-                {numberField(
-                  'downgrade_max_history_tokens',
-                  t('Downgrade history token limit'),
-                  t(
+                <AdvancedField
+                  name='downgrade_max_history_tokens'
+                  label={t('Downgrade history token limit')}
+                  hint={t(
                     'No downgrade once the history exceeds this length, to avoid re-reading the whole history at full price'
-                  )
-                )}
-                {numberField(
-                  'confidence_threshold',
-                  t('Confidence threshold'),
-                  t(
+                  )}
+                />
+                <AdvancedField
+                  name='confidence_threshold'
+                  label={t('Confidence threshold')}
+                  hint={t(
                     'The default tier is used when the scorer is less sure than this'
-                  ),
-                  '0.05'
-                )}
-                {numberField(
-                  'simple_max_message_chars',
-                  t('Simple message length limit (characters)'),
-                  t(
+                  )}
+                  step='0.05'
+                />
+                <AdvancedField
+                  name='simple_max_message_chars'
+                  label={t('Simple message length limit (characters)')}
+                  hint={t(
                     'A latest message longer than this is not treated as simple'
-                  )
-                )}
+                  )}
+                />
               </div>
             </CollapsibleContent>
           </Collapsible>
         </form>
       </Form>
     </Dialog>
+  )
+}
+
+function endpointPath(
+  endpoint: SmartEndpoint,
+  t: ReturnType<typeof useTranslation>['t']
+) {
+  if (endpoint === 'openai-response') {
+    return t(
+      'OpenAI Responses (/v1/responses). Responses compact requests (/v1/responses/compact) follow it'
+    )
+  }
+  if (endpoint === 'openai') return 'OpenAI (/v1/chat/completions)'
+  return 'Anthropic (/v1/messages)'
+}
+
+type AdvancedFieldProps = {
+  name: AdvancedFieldName
+  label: string
+  hint: string
+  step?: string
+}
+
+function AdvancedField(props: AdvancedFieldProps) {
+  return (
+    <FormField
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <div className='flex items-center gap-1'>
+            <FormLabel>{props.label}</FormLabel>
+            <FieldInfo label={props.label}>{props.hint}</FieldInfo>
+          </div>
+          <FormControl>
+            <Input
+              type='number'
+              step={props.step}
+              name={field.name}
+              ref={field.ref}
+              onBlur={field.onBlur}
+              value={Number.isNaN(field.value) ? '' : field.value}
+              onChange={(e) =>
+                field.onChange(
+                  e.target.value === '' ? Number.NaN : Number(e.target.value)
+                )
+              }
+            />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
   )
 }

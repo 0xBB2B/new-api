@@ -34,7 +34,10 @@ import {
   SMART_ROUTES_OPTION_KEY,
 } from './smart-routing/lib'
 import { SmartRoutesCard } from './smart-routing/routes-card'
+import type { ThinkingCapabilityOverride } from './smart-routing/types'
 import { useSavePolicy } from './use-save-policy'
+
+const NO_OVERRIDES: Record<string, ThinkingCapabilityOverride> = {}
 
 export function SmartRoutingSection() {
   const { t } = useTranslation()
@@ -87,6 +90,7 @@ export function SmartRoutingSection() {
       />
       <SmartRoutesCard
         value={value}
+        overrides={NO_OVERRIDES}
         onChange={(next) => {
           setDraft(next)
         }}

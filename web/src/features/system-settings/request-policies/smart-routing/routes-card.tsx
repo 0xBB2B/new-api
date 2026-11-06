@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Braces, Edit, ListFilter, Plus, Route, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -42,21 +43,25 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 
+import { getBuiltinThinkingCapabilities } from './api'
+import { effectiveCapability, tierModelsOfRoutes } from './capability'
 import {
+  endpointShortNames,
   parseSmartRoutes,
-  routeEndpoints,
   serializeSmartRoutes,
   smartRoutesErrorMessage,
   SMART_TIER_IDS,
+  tierEffortSummary,
 } from './lib'
 import { RouteEditorDialog } from './route-editor-dialog'
-import type { SmartRoute } from './types'
+import { normalizeTier } from './route-form'
+import type { SmartRoute, ThinkingCapabilityOverride } from './types'
 
 type SmartRoutesCardProps = {
   value: string
   onChange: (value: string) => void
+  overrides: Record<string, ThinkingCapabilityOverride>
 }
 
 export function SmartRoutesCard(props: SmartRoutesCardProps) {
@@ -129,6 +134,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
           <TabsContent value='visual' className='min-w-0'>
             <SmartRoutesTable
               routes={routes}
+              overrides={props.overrides}
               onAdd={() => setEditorTarget({ route: null, index: -1 })}
               onEdit={(route) =>
                 setEditorTarget({ route, index: routes.indexOf(route) })
@@ -154,6 +160,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       {editorTarget !== null && (
         <RouteEditorDialog
           route={editorTarget.route}
+          overrides={props.overrides}
           otherNames={routes
             .filter((_, index) => index !== editorTarget.index)
             .map((item) => item.name)}
@@ -198,6 +205,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
 
 type SmartRoutesTableProps = {
   routes: SmartRoute[]
+  overrides: Record<string, ThinkingCapabilityOverride>
   onAdd: () => void
   onEdit: (route: SmartRoute) => void
   onDelete: (route: SmartRoute) => void
@@ -205,7 +213,13 @@ type SmartRoutesTableProps = {
 
 function SmartRoutesTable(props: SmartRoutesTableProps) {
   const { t } = useTranslation()
-  const { models } = usePricingData()
+  const tierModels = tierModelsOfRoutes(props.routes)
+  const builtinQuery = useQuery({
+    queryKey: ['smart-routing', 'builtin-capabilities', tierModels],
+    queryFn: () => getBuiltinThinkingCapabilities(tierModels),
+    enabled: tierModels.length > 0,
+  })
+  const builtin = builtinQuery.data ?? {}
   const tierTitles = {
     simple: t('Simple tier'),
     normal: t('Normal tier'),
@@ -248,28 +262,23 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
           id: 'name',
           header: t('Name'),
           className: 'w-[16%]',
-          cell: (route) => {
-            const endpoints = routeEndpoints(route, models)
-            return (
-              <div className='flex min-w-0 flex-col gap-1.5'>
-                <TruncatedCell tabIndex={0}>{route.name}</TruncatedCell>
-                {endpoints.length > 0 ? (
-                  <div
-                    className='text-muted-foreground min-w-0'
-                    data-table-text='secondary'
-                    aria-label={t('Endpoints')}
-                  >
-                    <TruncatedCell tabIndex={0}>
-                      {t('{{endpoint}} endpoint', {
-                        endpoint: endpoints.join(' / '),
-                        interpolation: { escapeValue: false },
-                      })}
-                    </TruncatedCell>
-                  </div>
-                ) : null}
+          cell: (route) => (
+            <div className='flex min-w-0 flex-col gap-1.5'>
+              <TruncatedCell tabIndex={0}>{route.name}</TruncatedCell>
+              <div
+                className='text-muted-foreground min-w-0'
+                data-table-text='secondary'
+                aria-label={t('Endpoints')}
+              >
+                <TruncatedCell tabIndex={0}>
+                  {t('{{endpoint}} endpoint', {
+                    endpoint: endpointShortNames(route.endpoints),
+                    interpolation: { escapeValue: false },
+                  })}
+                </TruncatedCell>
               </div>
-            )
-          },
+            </div>
+          ),
         },
         ...SMART_TIER_IDS.map((id) => ({
           id,
@@ -293,8 +302,16 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
               >
                 <TruncatedCell tabIndex={0}>
                   <code>
-                    {route.tiers[id].groups.join(' → ')} ·{' '}
-                    {route.tiers[id].effort || t('Keep client value')}
+                    {tierEffortSummary(
+                      normalizeTier(route.tiers[id]),
+                      effectiveCapability(
+                        route.tiers[id].model,
+                        builtin,
+                        props.overrides
+                      ),
+                      t
+                    )}{' '}
+                    · {route.tiers[id].groups.join(' → ')}
                   </code>
                 </TruncatedCell>
               </div>

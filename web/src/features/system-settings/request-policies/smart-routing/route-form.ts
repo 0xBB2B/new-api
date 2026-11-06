@@ -20,7 +20,7 @@ import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
 import { SMART_EFFORTS } from './capability'
-import type { SmartRoute } from './types'
+import type { SmartRoute, SmartRouteTier } from './types'
 
 export type RouteFormValues = SmartRoute
 
@@ -125,6 +125,12 @@ export function formValuesToRoute(values: RouteFormValues): SmartRoute {
   return { ...values, name: values.name.trim() }
 }
 
+export function normalizeTier(tier?: Partial<SmartRouteTier>): SmartRouteTier {
+  const full = { ...emptyRouteFormValues().tiers.simple, ...tier }
+  if (!full.effort_mode && full.effort) full.effort_mode = 'fixed'
+  return full
+}
+
 export function routeToFormValues(route: SmartRoute): RouteFormValues {
   const defaults = emptyRouteFormValues()
   return {
@@ -134,9 +140,9 @@ export function routeToFormValues(route: SmartRoute): RouteFormValues {
     downgrade_max_history_tokens: route.downgrade_max_history_tokens ?? 0,
     confidence_threshold: route.confidence_threshold ?? 0,
     tiers: {
-      simple: { ...defaults.tiers.simple, ...route.tiers?.simple },
-      normal: { ...defaults.tiers.normal, ...route.tiers?.normal },
-      hard: { ...defaults.tiers.hard, ...route.tiers?.hard },
+      simple: normalizeTier(route.tiers?.simple),
+      normal: normalizeTier(route.tiers?.normal),
+      hard: normalizeTier(route.tiers?.hard),
     },
     scorer: { ...defaults.scorer, ...route.scorer },
     advisor: { ...defaults.advisor, ...route.advisor },

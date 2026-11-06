@@ -64,6 +64,7 @@ function isCompleteRoute(route: unknown) {
   if (!isObject(route) || !isObject(route.tiers)) return false
   const tiers = route.tiers
   return (
+    Array.isArray(route.endpoints) &&
     SMART_TIER_IDS.every((id) => hasGroups(tiers[id])) &&
     hasGroups(route.scorer) &&
     hasGroups(route.advisor)
@@ -77,7 +78,7 @@ export function smartRoutesErrorMessage(
   if (error === 'not-array') return t('Smart routing JSON must be an array')
   if (error === 'incomplete') {
     return t(
-      'Each virtual model in the JSON must include tiers, scorer and advisor'
+      'Each virtual model in the JSON must include endpoints, tiers, scorer and advisor'
     )
   }
   return t('Invalid smart routing JSON')
