@@ -355,6 +355,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
           >
             <TabsList
               variant='line'
+              activateOnFocus
               aria-label={t('Virtual model settings')}
               aria-orientation={isPhone ? 'horizontal' : 'vertical'}
               className={

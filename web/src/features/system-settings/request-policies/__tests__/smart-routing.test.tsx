@@ -958,19 +958,34 @@ it('Advanced settings sits below the tab content and above the footer buttons', 
   ).toBeTruthy()
 })
 
-it('the arrow keys move focus between the left tabs', async () => {
+it('the arrow keys switch the left tabs', async () => {
   mockDialogApis({ errors: [], endpoints: [] })
   show()
-  await openEditDialog('auto-gpt')
+  const dialog = await openEditDialog('auto-gpt')
   const scoring = screen.getByRole('tab', { name: /^Scoring/ })
   await userEvent.click(scoring)
   expect(scoring).toHaveFocus()
   await userEvent.keyboard('{ArrowDown}')
   expect(screen.getByRole('tab', { name: /^Tiers/ })).toHaveFocus()
+  expectSelectedTab(/^Tiers/)
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Default tier' })
+  ).toBeVisible()
   await userEvent.keyboard('{ArrowDown}')
   expect(screen.getByRole('tab', { name: /^Advisor/ })).toHaveFocus()
+  expectSelectedTab(/^Advisor/)
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Advisor model' })
+  ).toBeVisible()
   await userEvent.keyboard('{ArrowUp}')
   expect(screen.getByRole('tab', { name: /^Tiers/ })).toHaveFocus()
+  expectSelectedTab(/^Tiers/)
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Default tier' })
+  ).toBeVisible()
+  expect(
+    within(dialog).queryByRole('combobox', { name: 'Advisor model' })
+  ).toBeNull()
 })
 
 it('interfaces can be pressed together and the saved route lists every pressed one', async () => {
