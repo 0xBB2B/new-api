@@ -2,12 +2,15 @@ package smartroute
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
@@ -28,6 +31,12 @@ var routeEndpointTypes = []string{
 	string(constant.EndpointTypeAnthropic),
 }
 
+var formatDisplayNames = map[string]string{
+	string(constant.EndpointTypeOpenAIResponse): "Responses",
+	string(constant.EndpointTypeOpenAI):         "Chat Completions",
+	string(constant.EndpointTypeAnthropic):      "Anthropic",
+}
+
 func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 	errs := []FieldError{}
 	add := func(field, key string, params ...map[string]any) {
@@ -41,7 +50,7 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 		add("name", "{{name}} is a real model name. A virtual model cannot use the name of a real model", map[string]any{"name": route.Name})
 	}
 
-	checkSlot := func(field, groupsField string, modelName string, groups []string) {
+	checkSlot := func(field, groupsField string, modelName string, groups []string, checkFormat bool) {
 		if modelName == "" {
 			add(field, "Select a model")
 		}
@@ -64,13 +73,64 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 		if !billing_setting.HasModelBillingConfig(modelName) {
 			add(field, "{{model}} has no price yet. Set it in Model Pricing first", map[string]any{"model": modelName})
 		}
+		if !checkFormat {
+			return
+		}
+		passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+		responses := string(constant.EndpointTypeOpenAIResponse)
+		type groupChannel struct {
+			model.GroupChannel
+			convertsToResponses bool
+		}
+		groupChannels := make(map[string][]groupChannel, len(groups))
+		for _, group := range groups {
+			for _, ch := range model.GroupModelChannels(group, modelName) {
+				converts := false
+				if !passThroughGlobal && service.ShouldChatCompletionsUseResponsesGlobal(ch.Id, ch.Type, modelName) {
+					channel, err := model.CacheGetChannel(ch.Id)
+					converts = err == nil && !channel.GetSetting().PassThroughBodyEnabled
+				}
+				groupChannels[group] = append(groupChannels[group], groupChannel{ch, converts})
+			}
+		}
+		for _, format := range route.Endpoints {
+			for _, group := range groups {
+				rejectedTypes := []string{}
+				accepted := false
+				for _, ch := range groupChannels[group] {
+					target := format
+					if format != responses && ch.convertsToResponses {
+						target = responses
+					}
+					if !model.ChannelTypeRejectsFormat(ch.Type, target) {
+						accepted = true
+						break
+					}
+					if name := constant.GetChannelTypeName(ch.Type); !slices.Contains(rejectedTypes, name) {
+						rejectedTypes = append(rejectedTypes, name)
+					}
+				}
+				if accepted {
+					continue
+				}
+				if len(rejectedTypes) == 0 {
+					add(groupsField, "{{model}} has no channel in group {{group}} that can accept the {{format}} format", map[string]any{
+						"model": modelName, "group": group, "format": formatDisplayNames[format],
+					})
+					continue
+				}
+				add(groupsField, "{{model}} has only {{channel_types}} channels in group {{group}}, which cannot accept the {{format}} format", map[string]any{
+					"model": modelName, "channel_types": strings.Join(rejectedTypes, ", "), "group": group, "format": formatDisplayNames[format],
+				})
+			}
+		}
 	}
 	for _, name := range tierOrder {
 		tier := route.Tiers[name]
-		checkSlot("tiers."+name+".model", "tiers."+name+".groups", tier.Model, tier.Groups)
+		checkSlot("tiers."+name+".model", "tiers."+name+".groups", tier.Model, tier.Groups, true)
 	}
-	checkSlot("scorer.model", "scorer.groups", route.Scorer.Model, route.Scorer.Groups)
-	checkSlot("advisor.model", "advisor.groups", route.Advisor.Model, route.Advisor.Groups)
+	checkSlot("scorer.model", "scorer.groups", route.Scorer.Model, route.Scorer.Groups, false)
+	checkSlot("advisor.model", "advisor.groups", route.Advisor.Model, route.Advisor.Groups, true)
 
 	outOfRange := func(field string, min, max any) {
 		add(field, "Enter a value between {{min}} and {{max}}", map[string]any{"min": min, "max": max})

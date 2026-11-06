@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -1193,6 +1194,7 @@ func TestValidateRoute_ScorerChannelTypes(t *testing.T) {
 			setTier(&route, name, func(t *operation_setting.SmartRouteTier) { t.Model = "m-resp" })
 		}
 		route.Advisor.Model = "m-resp"
+		route.Endpoints = []string{responsesEndpoint}
 
 		errs := smartroute.ValidateRoute(route)
 
@@ -1208,6 +1210,7 @@ func TestValidateRoute_ScorerMayUseDifferentEndpoint(t *testing.T) {
 	}
 	route.Advisor.Model = "m-resp"
 	route.Scorer.Model = "m-chat"
+	route.Endpoints = []string{responsesEndpoint}
 
 	assert.Empty(t, smartroute.ValidateRoute(route))
 }
@@ -1593,6 +1596,10 @@ func TestValidateRoute_Endpoints(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			setupValidateRouteTest(t)
 			route := validRoute()
+			for _, name := range []string{operation_setting.SmartTierSimple, operation_setting.SmartTierNormal, operation_setting.SmartTierHard} {
+				setTier(&route, name, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
+			}
+			route.Advisor.Model = "m-chat"
 			route.Endpoints = tt.endpoints
 
 			errs := smartroute.ValidateRoute(route)
@@ -1613,6 +1620,7 @@ func TestValidateRoute_Endpoints(t *testing.T) {
 
 func TestValidateRoute_TierModelsMayUseDifferentEndpoints(t *testing.T) {
 	setupValidateRouteTest(t)
+	addFormatTestChannel(t, 20, constant.ChannelTypeOpenAI, "api", "m-resp")
 	route := validRoute()
 	setTier(&route, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-resp" })
 	setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) { tier.Model = "m-chat" })
@@ -1876,4 +1884,282 @@ func TestAnthropicScorerInputAndSessionKey(t *testing.T) {
 	require.NotEmpty(t, key)
 	assert.Equal(t, key, smartroute.SessionKey(7, later))
 	assert.NotEqual(t, key, smartroute.SessionKey(8, in))
+}
+
+const keyFormatRejected = "{{model}} has only {{channel_types}} channels in group {{group}}, which cannot accept the {{format}} format"
+
+func addFormatTestChannel(t *testing.T, id, channelType int, group, modelName string) {
+	t.Helper()
+	priority := int64(0)
+	weight := uint(100)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: id, Type: channelType, Key: fmt.Sprintf("key-%d", id),
+		Status: common.ChannelStatusEnabled, Name: fmt.Sprintf("channel-%d", id),
+		Weight: &weight, Models: modelName, Group: group, Priority: &priority,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: group, Model: modelName, ChannelId: id,
+		Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	model.InitChannelCache()
+}
+
+func formatRejectionRoute(endpoint string) operation_setting.SmartRoute {
+	route := validRoute()
+	route.Endpoints = []string{endpoint}
+	setTier(&route, operation_setting.SmartTierSimple, func(tier *operation_setting.SmartRouteTier) {
+		tier.Model, tier.Groups = "gpt-5.5", []string{"api"}
+	})
+	setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) {
+		tier.Model, tier.Groups = "gpt-5.5", []string{"subscription", "api"}
+	})
+	setTier(&route, operation_setting.SmartTierHard, func(tier *operation_setting.SmartRouteTier) {
+		tier.Model, tier.Groups = "gpt-5.5", []string{"api"}
+	})
+	route.Scorer = operation_setting.SmartRouteScorer{Model: "m-chat", Groups: []string{"api"}, TimeoutMs: 2000}
+	route.Advisor.Model, route.Advisor.Groups = "gpt-5.5", []string{"api"}
+	return route
+}
+
+func setupFormatRejectionTest(t *testing.T) {
+	t.Helper()
+	setupValidateRouteTest(t)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(
+		`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"gpt-5.5":0.01,"claude-x":0.01}`))
+	addFormatTestChannel(t, 11, constant.ChannelTypeCodex, "subscription", "gpt-5.5")
+	addFormatTestChannel(t, 12, constant.ChannelTypeOpenAI, "api", "gpt-5.5")
+}
+
+func formatRejectionErrors(errs []smartroute.FieldError) []smartroute.FieldError {
+	var found []smartroute.FieldError
+	for _, fieldErr := range errs {
+		if fieldErr.Message != nil && fieldErr.Message.Key == keyFormatRejected {
+			found = append(found, fieldErr)
+		}
+	}
+	return found
+}
+
+func TestValidateRoute_TierGroupOnlyRejectingChannels(t *testing.T) {
+	tests := []struct {
+		name       string
+		endpoint   string
+		wantFormat string
+	}{
+		{"responses accepted by codex", "openai-response", ""},
+		{"anthropic rejected by codex", "anthropic", "Anthropic"},
+		{"chat completions rejected by codex", "openai", "Chat Completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFormatRejectionTest(t)
+
+			found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute(tt.endpoint)))
+
+			if tt.wantFormat == "" {
+				assert.Empty(t, found)
+				return
+			}
+			require.Len(t, found, 1)
+			assert.Equal(t, "tiers.normal.groups", found[0].Field)
+			assert.Equal(t, "gpt-5.5", found[0].Message.Params["model"])
+			assert.Equal(t, "subscription", found[0].Message.Params["group"])
+			assert.Equal(t, tt.wantFormat, found[0].Message.Params["format"])
+			assert.Contains(t, fmt.Sprint(found[0].Message.Params["channel_types"]), constant.ChannelTypeNames[constant.ChannelTypeCodex])
+		})
+	}
+}
+
+func TestValidateRoute_GroupWithAcceptingChannelIsSavable(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 13, constant.ChannelTypeOpenAI, "subscription", "gpt-5.5")
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute("anthropic")))
+
+	assert.Empty(t, found)
+}
+
+func TestValidateRoute_AdvisorOnlyRejectingChannels(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 14, constant.ChannelTypeClaudeSubscription, "claude-sub", "claude-x")
+	route := formatRejectionRoute("openai-response")
+	route.Advisor.Model, route.Advisor.Groups = "claude-x", []string{"claude-sub"}
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(route))
+
+	require.Len(t, found, 1)
+	assert.Equal(t, "advisor.groups", found[0].Field)
+	assert.Equal(t, "claude-x", found[0].Message.Params["model"])
+	assert.Equal(t, "claude-sub", found[0].Message.Params["group"])
+	assert.Equal(t, "Responses", found[0].Message.Params["format"])
+	assert.Contains(t, fmt.Sprint(found[0].Message.Params["channel_types"]), constant.ChannelTypeNames[constant.ChannelTypeClaudeSubscription])
+}
+
+func TestValidateRoute_ScorerIsNotCheckedForFormat(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 15, constant.ChannelTypeCodex, "scorer-group", "scorer-m")
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(
+		`{"m-both":0.01,"m-chat":0.01,"m-resp":0.01,"gpt-5.5":0.01,"scorer-m":0.01}`))
+	route := formatRejectionRoute("anthropic")
+	route.Scorer.Model, route.Scorer.Groups = "scorer-m", []string{"scorer-group"}
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(route))
+
+	for _, fieldErr := range found {
+		assert.NotContains(t, fieldErr.Field, "scorer")
+	}
+}
+
+func TestValidateRoute_ChatToResponsesPolicyCountsAsAccepting(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		policy   model_setting.ChatCompletionsToResponsesPolicy
+		wantErr  bool
+	}{
+		{"anthropic with policy hit", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^gpt-5"}}, false},
+		{"chat with policy hit", "openai", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^gpt-5"}}, false},
+		{"anthropic without policy", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{}, true},
+		{"chat without policy", "openai", model_setting.ChatCompletionsToResponsesPolicy{}, true},
+		{"anthropic with model pattern miss", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^claude"}}, true},
+		{"anthropic with other channel type", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeOpenAI}, ModelPatterns: []string{"^gpt-5"}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFormatRejectionTest(t)
+			settings := model_setting.GetGlobalSettings()
+			original := settings.ChatCompletionsToResponsesPolicy
+			settings.ChatCompletionsToResponsesPolicy = tt.policy
+			t.Cleanup(func() { settings.ChatCompletionsToResponsesPolicy = original })
+
+			found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute(tt.endpoint)))
+
+			if tt.wantErr {
+				require.Len(t, found, 1)
+				assert.Equal(t, "tiers.normal.groups", found[0].Field)
+				return
+			}
+			assert.Empty(t, found)
+		})
+	}
+}
+
+func TestValidateRoute_RejectingChannelTypesJoinedWithComma(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 16, constant.ChannelTypeXai, "subscription", "gpt-5.5")
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute("anthropic")))
+
+	require.Len(t, found, 1)
+	codex, xai := constant.ChannelTypeNames[constant.ChannelTypeCodex], constant.ChannelTypeNames[constant.ChannelTypeXai]
+	assert.Contains(t, []any{codex + ", " + xai, xai + ", " + codex}, found[0].Message.Params["channel_types"])
+}
+
+func TestValidateRoute_DisabledChannelsAreNotCounted(t *testing.T) {
+	setupFormatRejectionTest(t)
+	addFormatTestChannel(t, 17, constant.ChannelTypeOpenAI, "subscription", "gpt-5.5")
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 17).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", 17).Update("enabled", false).Error)
+	model.InitChannelCache()
+
+	found := formatRejectionErrors(smartroute.ValidateRoute(formatRejectionRoute("anthropic")))
+
+	require.Len(t, found, 1)
+	assert.Equal(t, "tiers.normal.groups", found[0].Field)
+}
+
+func setChatToResponsesPolicy(t *testing.T, policy model_setting.ChatCompletionsToResponsesPolicy, globalPassThrough bool) {
+	t.Helper()
+	settings := model_setting.GetGlobalSettings()
+	originalPolicy, originalPassThrough := settings.ChatCompletionsToResponsesPolicy, settings.PassThroughRequestEnabled
+	settings.ChatCompletionsToResponsesPolicy, settings.PassThroughRequestEnabled = policy, globalPassThrough
+	t.Cleanup(func() {
+		settings.ChatCompletionsToResponsesPolicy, settings.PassThroughRequestEnabled = originalPolicy, originalPassThrough
+	})
+}
+
+func normalTierGroupErrors(errs []smartroute.FieldError) []smartroute.FieldError {
+	var found []smartroute.FieldError
+	for _, fieldErr := range errs {
+		if fieldErr.Field == "tiers.normal.groups" {
+			found = append(found, fieldErr)
+		}
+	}
+	return found
+}
+
+func TestValidateRoute_PolicyConvertsToFormatChannelRejects(t *testing.T) {
+	allChannels := model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, AllChannels: true, ModelPatterns: []string{".*"}}
+	tests := []struct {
+		name         string
+		endpoint     string
+		policy       model_setting.ChatCompletionsToResponsesPolicy
+		extraChannel bool
+		wantErr      bool
+	}{
+		{"chat converted to responses that minimax rejects", "openai", allChannels, false, true},
+		{"anthropic converted to responses that minimax rejects", "anthropic", allChannels, false, true},
+		{"chat without policy is accepted by minimax", "openai", model_setting.ChatCompletionsToResponsesPolicy{}, false, false},
+		{"anthropic without policy is accepted by minimax", "anthropic", model_setting.ChatCompletionsToResponsesPolicy{}, false, false},
+		{"chat is savable when another channel is not hit by the policy", "openai",
+			model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeMiniMax}, ModelPatterns: []string{".*"}}, true, false},
+		{"anthropic is savable when another channel is not hit by the policy", "anthropic",
+			model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeMiniMax}, ModelPatterns: []string{".*"}}, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFormatRejectionTest(t)
+			addFormatTestChannel(t, 30, constant.ChannelTypeMiniMax, "mm", "gpt-5.5")
+			if tt.extraChannel {
+				addFormatTestChannel(t, 31, constant.ChannelTypeOpenAI, "mm", "gpt-5.5")
+			}
+			setChatToResponsesPolicy(t, tt.policy, false)
+			route := formatRejectionRoute(tt.endpoint)
+			setTier(&route, operation_setting.SmartTierNormal, func(tier *operation_setting.SmartRouteTier) { tier.Groups = []string{"mm"} })
+
+			found := normalTierGroupErrors(smartroute.ValidateRoute(route))
+
+			if tt.wantErr {
+				assert.NotEmpty(t, found)
+				return
+			}
+			assert.Empty(t, found)
+		})
+	}
+}
+
+func TestValidateRoute_PassThroughSkipsChatToResponsesPolicy(t *testing.T) {
+	codexPolicy := model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, ChannelTypes: []int{constant.ChannelTypeCodex}, ModelPatterns: []string{"^gpt-5"}}
+	tests := []struct {
+		name               string
+		globalPassThrough  bool
+		channelPassThrough bool
+		wantErr            bool
+	}{
+		{"policy applies without pass-through", false, false, false},
+		{"global pass-through bypasses the policy", true, false, true},
+		{"channel pass-through bypasses the policy", false, true, true},
+	}
+	for _, tt := range tests {
+		for _, endpoint := range []string{"openai", "anthropic"} {
+			t.Run(tt.name+"/"+endpoint, func(t *testing.T) {
+				setupFormatRejectionTest(t)
+				if tt.channelPassThrough {
+					require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 11).
+						Update("setting", `{"pass_through_body_enabled":true}`).Error)
+					model.InitChannelCache()
+				}
+				setChatToResponsesPolicy(t, codexPolicy, tt.globalPassThrough)
+				route := formatRejectionRoute(endpoint)
+
+				found := normalTierGroupErrors(smartroute.ValidateRoute(route))
+
+				if tt.wantErr {
+					require.Len(t, found, 1)
+					return
+				}
+				assert.Empty(t, found)
+			})
+		}
+	}
 }

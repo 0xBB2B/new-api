@@ -144,3 +144,30 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		return true
 	}
 }
+
+var formatRejectingChannelTypes = map[string][]int{
+	string(constant.EndpointTypeAnthropic): {
+		constant.ChannelTypeCodex, constant.ChannelTypeCoze, constant.ChannelTypeJimeng,
+		constant.ChannelTypeReplicate, constant.ChannelTypeSubmodel, constant.ChannelTypeXai,
+		constant.ChannelTypePaLM, constant.ChannelTypeBaidu, constant.ChannelTypeZhipu,
+		constant.ChannelTypeXunfei, constant.ChannelTypeCohere, constant.ChannelTypeDify,
+		constant.ChannelTypeJina, constant.ChannelCloudflare, constant.ChannelTypeMistral,
+		constant.ChannelTypeMokaAI,
+	},
+	string(constant.EndpointTypeOpenAI): {constant.ChannelTypeCodex, constant.ChannelTypeReplicate, constant.ChannelTypeMokaAI},
+	string(constant.EndpointTypeOpenAIResponse): {
+		constant.ChannelTypeAws, constant.ChannelTypeBaidu, constant.ChannelTypeBaiduV2,
+		constant.ChannelTypeClaudeSubscription, constant.ChannelTypeCohere, constant.ChannelTypeCoze,
+		constant.ChannelTypeDify, constant.ChannelTypeJimeng, constant.ChannelTypeJina,
+		constant.ChannelTypeMiniMax, constant.ChannelTypeMistral, constant.ChannelTypeMokaAI,
+		constant.ChannelTypePaLM, constant.ChannelTypeReplicate, constant.ChannelTypeSiliconFlow,
+		constant.ChannelTypeSubmodel, constant.ChannelTypeVertexAi, constant.ChannelTypeXunfei,
+		constant.ChannelTypeZhipu,
+	},
+}
+
+// ChannelTypeRejectsFormat reports whether the channel type's adaptor
+// explicitly returns an error for the request format.
+func ChannelTypeRejectsFormat(channelType int, format string) bool {
+	return slices.Contains(formatRejectingChannelTypes[format], channelType)
+}
