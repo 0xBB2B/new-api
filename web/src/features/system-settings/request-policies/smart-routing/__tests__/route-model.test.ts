@@ -424,10 +424,41 @@ describe('effortOverflow', () => {
     ).toEqual({ overflow: true, actual: 'high' })
   })
 
-  it('reports overflow when follow min is out of range and settles on the max', () => {
+  it('reports the shifted minimum when only the follow min is out of range', () => {
     expect(
       effortOverflow(
         tier({ effort_mode: 'follow', effort_min: 'none', effort_max: 'high' }),
+        cap(['low', 'medium', 'high'])
+      )
+    ).toEqual({ overflow: true, actual: 'low' })
+  })
+
+  it('reports the shifted minimum when the model only supports medium to xhigh and the tier is low to high', () => {
+    expect(
+      effortOverflow(
+        tier({ effort_mode: 'follow', effort_min: 'low', effort_max: 'high' }),
+        cap(['medium', 'high', 'xhigh'])
+      )
+    ).toEqual({ overflow: true, actual: 'medium' })
+  })
+
+  it('reports the shifted maximum when only the follow max is out of range', () => {
+    expect(
+      effortOverflow(
+        tier({
+          effort_mode: 'follow',
+          effort_min: 'low',
+          effort_max: 'xhigh',
+        }),
+        cap(['low', 'medium', 'high'])
+      )
+    ).toEqual({ overflow: true, actual: 'high' })
+  })
+
+  it('settles on the shifted maximum when both follow ends are out of range', () => {
+    expect(
+      effortOverflow(
+        tier({ effort_mode: 'follow', effort_min: 'none', effort_max: 'max' }),
         cap(['low', 'medium', 'high'])
       )
     ).toEqual({ overflow: true, actual: 'high' })

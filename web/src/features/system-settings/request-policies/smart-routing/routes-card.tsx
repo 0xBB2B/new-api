@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
 import { Braces, Edit, ListFilter, Plus, Route, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -44,8 +43,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { getBuiltinThinkingCapabilities } from './api'
-import { effectiveCapability, tierModelsOfRoutes } from './capability'
+import type { BuiltinThinkingCapabilities } from './api'
+import { effectiveCapability, effortOverflow } from './capability'
 import {
   endpointShortNames,
   parseSmartRoutes,
@@ -62,6 +61,7 @@ type SmartRoutesCardProps = {
   value: string
   onChange: (value: string) => void
   overrides: Record<string, ThinkingCapabilityOverride>
+  builtin: BuiltinThinkingCapabilities | undefined
 }
 
 export function SmartRoutesCard(props: SmartRoutesCardProps) {
@@ -135,6 +135,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
             <SmartRoutesTable
               routes={routes}
               overrides={props.overrides}
+              builtin={props.builtin}
               onAdd={() => setEditorTarget({ route: null, index: -1 })}
               onEdit={(route) =>
                 setEditorTarget({ route, index: routes.indexOf(route) })
@@ -161,6 +162,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
         <RouteEditorDialog
           route={editorTarget.route}
           overrides={props.overrides}
+          builtin={props.builtin}
           otherNames={routes
             .filter((_, index) => index !== editorTarget.index)
             .map((item) => item.name)}
@@ -206,6 +208,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
 type SmartRoutesTableProps = {
   routes: SmartRoute[]
   overrides: Record<string, ThinkingCapabilityOverride>
+  builtin: BuiltinThinkingCapabilities | undefined
   onAdd: () => void
   onEdit: (route: SmartRoute) => void
   onDelete: (route: SmartRoute) => void
@@ -213,13 +216,7 @@ type SmartRoutesTableProps = {
 
 function SmartRoutesTable(props: SmartRoutesTableProps) {
   const { t } = useTranslation()
-  const tierModels = tierModelsOfRoutes(props.routes)
-  const builtinQuery = useQuery({
-    queryKey: ['smart-routing', 'builtin-capabilities', tierModels],
-    queryFn: () => getBuiltinThinkingCapabilities(tierModels),
-    enabled: tierModels.length > 0,
-  })
-  const builtin = builtinQuery.data ?? {}
+  const builtin = props.builtin ?? {}
   const tierTitles = {
     simple: t('Simple tier'),
     normal: t('Normal tier'),
@@ -283,40 +280,56 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
         ...SMART_TIER_IDS.map((id) => ({
           id,
           header: tierTitles[id],
-          cell: (route: SmartRoute) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <div className='flex min-w-0 items-center gap-2'>
-                <TruncatedCell tabIndex={0}>
-                  {route.tiers[id].model}
-                </TruncatedCell>
-                {route.default_tier === id ? (
-                  <Badge variant='outline' className='shrink-0'>
-                    {t('Default')}
-                  </Badge>
+          cell: (route: SmartRoute) => {
+            const tier = normalizeTier(route.tiers[id])
+            const known = tier.model in builtin || !!props.overrides[tier.model]
+            const capability = effectiveCapability(
+              tier.model,
+              builtin,
+              props.overrides
+            )
+            const overflow = known
+              ? effortOverflow(tier, capability)
+              : { overflow: false, actual: '' }
+            const overflowText = t(
+              'Exceeds the model capability, sent as {{effort}}',
+              { effort: overflow.actual }
+            )
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
+                <div className='flex min-w-0 items-center gap-2'>
+                  <TruncatedCell tabIndex={0}>{tier.model}</TruncatedCell>
+                  {route.default_tier === id ? (
+                    <Badge variant='outline' className='shrink-0'>
+                      {t('Default')}
+                    </Badge>
+                  ) : null}
+                </div>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                  aria-label={t('Groups')}
+                >
+                  <TruncatedCell tabIndex={0}>
+                    <code>
+                      <span className={overflow.overflow ? 'text-warning' : ''}>
+                        {tierEffortSummary(tier, capability, t)}
+                      </span>{' '}
+                      · {tier.groups.join(' → ')}
+                    </code>
+                  </TruncatedCell>
+                </div>
+                {overflow.overflow ? (
+                  <div
+                    className='text-warning min-w-0'
+                    data-table-text='secondary'
+                  >
+                    <TruncatedCell tabIndex={0}>{overflowText}</TruncatedCell>
+                  </div>
                 ) : null}
               </div>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-                aria-label={t('Groups')}
-              >
-                <TruncatedCell tabIndex={0}>
-                  <code>
-                    {tierEffortSummary(
-                      normalizeTier(route.tiers[id]),
-                      effectiveCapability(
-                        route.tiers[id].model,
-                        builtin,
-                        props.overrides
-                      ),
-                      t
-                    )}{' '}
-                    · {route.tiers[id].groups.join(' → ')}
-                  </code>
-                </TruncatedCell>
-              </div>
-            </div>
-          ),
+            )
+          },
         })),
         {
           id: 'scorer',

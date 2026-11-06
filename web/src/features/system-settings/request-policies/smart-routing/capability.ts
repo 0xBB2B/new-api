@@ -99,24 +99,19 @@ export function effortOverflow(
   capability: EffectiveCapability
 ): { overflow: boolean; actual: SmartEffort | '' } {
   let stored: (SmartEffort | '')[] = []
-  let highest: SmartEffort | '' = ''
-  if (tier.effort_mode === 'fixed') {
-    stored = [tier.effort]
-    highest = tier.effort
-  }
-  if (tier.effort_mode === 'follow') {
-    stored = [tier.effort_min, tier.effort_max]
-    highest = tier.effort_max
-  }
+  if (tier.effort_mode === 'fixed') stored = [tier.effort]
+  if (tier.effort_mode === 'follow') stored = [tier.effort_min, tier.effort_max]
+  const highest = stored.at(-1) ?? ''
   if (!highest || capability.noThinking) {
     return { overflow: false, actual: highest }
   }
-  return {
-    overflow: stored.some(
-      (value) => value && !capability.efforts.includes(value)
-    ),
-    actual: clampEffort(highest, capability).value,
-  }
+  const outOfRange = stored.filter(
+    (value): value is SmartEffort =>
+      value !== '' && !capability.efforts.includes(value)
+  )
+  if (outOfRange.length === 0) return { overflow: false, actual: highest }
+  const reported = outOfRange.at(-1) as SmartEffort
+  return { overflow: true, actual: clampEffort(reported, capability).value }
 }
 
 export function tierModelsOfRoutes(routes: SmartRoute[]) {

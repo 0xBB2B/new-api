@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { ChevronDown } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { useForm, useWatch, type FieldPath } from 'react-hook-form'
@@ -54,7 +54,11 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import { getBuiltinThinkingCapabilities, validateSmartRoute } from './api'
+import {
+  getBuiltinThinkingCapabilities,
+  validateSmartRoute,
+  type BuiltinThinkingCapabilities,
+} from './api'
 import { effectiveCapability } from './capability'
 import {
   errorFields,
@@ -100,6 +104,7 @@ type RouteEditorDialogProps = {
   route: SmartRoute | null
   otherNames: string[]
   overrides: Record<string, ThinkingCapabilityOverride>
+  builtin: BuiltinThinkingCapabilities | undefined
   onOpenChange: (open: boolean) => void
   onSave: (route: SmartRoute) => void
 }
@@ -146,7 +151,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     queryKey: ['smart-routing', 'builtin-capabilities', askedModels],
     queryFn: () => getBuiltinThinkingCapabilities(askedModels),
     enabled: askedModels.length > 0,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous) => previous ?? props.builtin,
   })
   const builtin = builtinQuery.data ?? {}
   const capabilities = {
