@@ -59,12 +59,12 @@ PRD 05-config-page 验收 C4：显示空状态标题「还没有虚拟模型」�
     },
     {
       "action": "assertText",
-      "selector": "main",
+      "selector": "main >> nth=0",
       "text": "添加一个虚拟模型，比如 auto-gpt。用户在客户端里把模型名填成它就能用。"
     },
     {
       "action": "assertText",
-      "selector": "main",
+      "selector": "main >> nth=0",
       "text": "每个虚拟模型配好三档模型、打分模型和顾问。用户在客户端里把模型名填成虚拟模型名就能用。"
     },
     {

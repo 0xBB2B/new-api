@@ -7,7 +7,7 @@ category: usage-logs-routing
 ## 简介
 普通用户 alice 登录，打开使用日志核对自己那条 auto-gpt 请求的小字和详情，从详情点进打分记录；再打开一条直接请求真实模型的日志；最后确认侧边栏没有系统设置入口、直接访问智能路由页被拒绝。
 ## 测试目的
-PRD 05-config-page 验收 C1（没有请求策略权限的账号看不到「智能路由」）；PRD 06-usage-log-routing 验收 C6（普通用户看到的路由信息与管理员相同、不含对话文字）、C7（没有经过智能路由的日志没有「智能路由」块）。
+PRD 05-config-page 验收 C1（没有请求策略权限的账号看不到「智能路由」）；PRD 06-usage-log-routing 验收 C6（普通用户看到的路由信息与管理员相同、不含对话文字）、C7（没有经过智能路由的日志没有「智能路由」块）；二期 PRD 06 验收 C5 前半：alice 看到的「思考力度」一行和管理员相同（都是「medium（不覆盖，客户端传入）」，管理员一侧由 effort-eight-kinds 核对）。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -67,7 +67,7 @@ PRD 05-config-page 验收 C1（没有请求策略权限的账号看不到「智�
     },
     {
       "action": "evaluate",
-      "script": "() => { const dialogs = [...document.querySelectorAll('[role=dialog]')]; const dlg = dialogs[dialogs.length - 1]; if (!dlg) throw new Error('没有打开详情弹窗'); const lines = dlg.innerText.split('\\n').map((s) => s.trim()).filter(Boolean); const start = lines.indexOf('智能路由'); const end = lines.indexOf('Token 明细'); if (start < 0) throw new Error('详情里没有「智能路由」块'); const got = lines.slice(start + 1, end < 0 ? undefined : end); const want = [\"虚拟模型\", \"auto-gpt\", \"档位\", \"普通档\", \"选档原因\", \"未命中特殊规则\", \"打分标签\", \"任务类型：改写或整理 · 要想多深：低 · 工作量：一步 · 出错代价：低 · 工作类型：其他 · 把握：0.82 · 用户反馈：满意\", \"打分记录\", \"查看这次打分\"]; if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('智能路由块不一致。实际：' + got.join(' | ') + '；期望：' + want.join(' | ')); return 'ok'; }",
+      "script": "() => { const dialogs = [...document.querySelectorAll('[role=dialog]')]; const dlg = dialogs[dialogs.length - 1]; if (!dlg) throw new Error('没有打开详情弹窗'); const lines = dlg.innerText.split('\\n').map((s) => s.trim()).filter(Boolean); const start = lines.indexOf('智能路由'); const end = lines.indexOf('Token 明细'); if (start < 0) throw new Error('详情里没有「智能路由」块'); const got = lines.slice(start + 1, end < 0 ? undefined : end); const want = [\"虚拟模型\", \"auto-gpt\", \"档位\", \"普通档\", \"思考力度\", \"medium（不覆盖，客户端传入）\", \"选档原因\", \"未命中特殊规则\", \"打分标签\", \"任务类型：改写或整理 · 要想多深：低 · 工作量：一步 · 出错代价：低 · 工作类型：其他 · 把握：0.82 · 用户反馈：满意\", \"打分记录\", \"查看这次打分\"]; if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('智能路由块不一致。实际：' + got.join(' | ') + '；期望：' + want.join(' | ')); return 'ok'; }",
       "expect": "ok"
     },
     {
@@ -157,6 +157,6 @@ PRD 05-config-page 验收 C1（没有请求策略权限的账号看不到「智�
 ```
 ## 如何验收
 - [ ] alice 只看到自己的记录：「auto-gpt · 普通档」灰字和「路由打分 · auto-gpt」
-- [ ] 详情「智能路由」块各行与管理员看到的写法一致，只有标签和原因，没有对话文字；打分记录的属于请求是「req_alice01（普通档 · gpt-5.5）」
+- [ ] 详情「智能路由」块各行与管理员看到的写法一致（含「思考力度 medium（不覆盖，客户端传入）」），只有标签和原因，没有对话文字；打分记录的属于请求是「req_alice01（普通档 · gpt-5.5）」
 - [ ] req_plain01 的详情有「Token 明细」「计费详情」，没有「智能路由」块
 - [ ] 侧边栏没有系统设置和「智能路由」入口，直接访问智能路由页跳到 403「禁止访问」

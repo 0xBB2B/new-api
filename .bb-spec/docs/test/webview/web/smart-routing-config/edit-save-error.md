@@ -1,13 +1,13 @@
 ---
 name: edit-save-error
-description: 困难档换成在 api 分组没有渠道的模型，保存时字段下出现红字、弹窗不关；改回原模型后保存成功
+description: 困难档换成在 api 分组没有渠道的模型，保存时字段下出现红字、自动跳到出错的档位、Tab 带红点；改回原模型后保存成功
 category: smart-routing-config
 ---
 # 编辑时保存出错
 ## 简介
-编辑 auto-gpt，把困难档模型换成只在 subscription 分组有渠道的 gpt-5.6-terra（分组顺序仍是 subscription → api），点弹窗里的「保存」；看到报错后改回 gpt-5.6-sol 再保存。
+编辑 auto-gpt，在「档位 → 困难」把模型换成只在 subscription 分组有渠道的 gpt-5.6-terra（分组顺序仍是 subscription → api），切回「打分」Tab 后点弹窗里的「保存」；看到报错后改回 gpt-5.6-sol 再保存。
 ## 测试目的
-PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可用渠道时，弹窗不关，困难档模型下面红字写「gpt-5.6-terra 在分组 api 里没有可用渠道」；改正后保存，弹窗关闭、表格更新。同时检查出错的模型框仍显示模型名、下拉没有自动展开。
+一期 PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可用渠道时，弹窗不关，困难档模型下面红字写「gpt-5.6-terra 在分组 api 里没有可用渠道」；改正后保存，弹窗关闭、表格更新。同时检查出错的模型框仍显示模型名、下拉没有自动展开。出错的样子按二期 PRD 04 C11 核对：自动切到「档位 → 困难」，「档位」和「困难」都带红点和「1 个错误」。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -44,7 +44,7 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
     },
     {
       "action": "evaluate",
-      "script": "async () => { const loginRes = await fetch('/api/user/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: 'root', password: 'Test123456!'})}); if (!loginRes.ok) throw new Error('管理员登录失败 HTTP ' + loginRes.status); const login = await loginRes.json(); if (!login.success) throw new Error('管理员登录失败：' + login.message); const res = await (await fetch('/api/option/request_policy', {method: 'PATCH', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + login.data.access_token, 'New-Api-User': String(login.data.user.id)}, body: JSON.stringify({options: {'smart_routing_setting.routes': \"[{\\\"name\\\":\\\"auto-gpt\\\",\\\"tiers\\\":{\\\"simple\\\":{\\\"model\\\":\\\"gpt-5.4-mini\\\",\\\"groups\\\":[\\\"api\\\"],\\\"effort\\\":\\\"low\\\"},\\\"normal\\\":{\\\"model\\\":\\\"gpt-5.5\\\",\\\"groups\\\":[\\\"subscription\\\",\\\"api\\\"],\\\"effort\\\":\\\"medium\\\"},\\\"hard\\\":{\\\"model\\\":\\\"gpt-5.6-sol\\\",\\\"groups\\\":[\\\"subscription\\\",\\\"api\\\"],\\\"effort\\\":\\\"high\\\"}},\\\"default_tier\\\":\\\"normal\\\",\\\"scorer\\\":{\\\"model\\\":\\\"gpt-5.6-luna\\\",\\\"groups\\\":[\\\"subscription\\\",\\\"api\\\"],\\\"timeout_ms\\\":2000},\\\"advisor\\\":{\\\"model\\\":\\\"gpt-5.6-sol\\\",\\\"groups\\\":[\\\"subscription\\\",\\\"api\\\"],\\\"after_dissatisfied\\\":2},\\\"downgrade_max_history_tokens\\\":20000,\\\"confidence_threshold\\\":0.6,\\\"simple_max_message_chars\\\":2000}]\"}})})).json(); if (!res.success) throw new Error('写入智能路由配置失败：' + res.message); return 'ok'; }",
+      "script": "async () => { const loginRes = await fetch('/api/user/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: 'root', password: 'Test123456!'})}); if (!loginRes.ok) throw new Error('管理员登录失败 HTTP ' + loginRes.status); const login = await loginRes.json(); if (!login.success) throw new Error('管理员登录失败：' + login.message); const headers = {'Content-Type': 'application/json', Authorization: 'Bearer ' + login.data.access_token, 'New-Api-User': String(login.data.user.id)}; const call = async (method, path, body) => { const res = await fetch(path, {method, headers, body: body === undefined ? undefined : JSON.stringify(body)}); const data = await res.json(); if (!data.success) throw new Error(method + ' ' + path + ' 失败：' + JSON.stringify(data.message)); return data; }; await call('PATCH', '/api/option/request_policy', {options: {'smart_routing_setting.routes': JSON.stringify([{\"name\": \"auto-gpt\", \"endpoints\": [\"openai-response\"], \"tiers\": {\"simple\": {\"model\": \"gpt-5.4-mini\", \"groups\": [\"api\"], \"effort_mode\": \"fixed\", \"effort\": \"low\", \"effort_min\": \"\", \"effort_max\": \"\"}, \"normal\": {\"model\": \"gpt-5.5\", \"groups\": [\"subscription\", \"api\"], \"effort_mode\": \"fixed\", \"effort\": \"medium\", \"effort_min\": \"\", \"effort_max\": \"\"}, \"hard\": {\"model\": \"gpt-5.6-sol\", \"groups\": [\"subscription\", \"api\"], \"effort_mode\": \"fixed\", \"effort\": \"high\", \"effort_min\": \"\", \"effort_max\": \"\"}}, \"default_tier\": \"normal\", \"scorer\": {\"model\": \"gpt-5.6-luna\", \"groups\": [\"subscription\", \"api\"], \"timeout_ms\": 2000}, \"advisor\": {\"model\": \"gpt-5.6-sol\", \"groups\": [\"subscription\", \"api\"], \"after_dissatisfied\": 2}, \"downgrade_max_history_tokens\": 20000, \"confidence_threshold\": 0.6, \"simple_max_message_chars\": 2000}]), 'smart_routing_setting.thinking_capabilities': JSON.stringify({})}}); return 'ok'; }",
       "expect": "ok"
     }
   ],
@@ -67,6 +67,14 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
     },
     {
       "action": "click",
+      "selector": "role=dialog >> role=tab[name=/^档位/]"
+    },
+    {
+      "action": "click",
+      "selector": "role=dialog >> role=tab[name=/^困难/]"
+    },
+    {
+      "action": "click",
       "selector": "role=dialog >> role=combobox[name=\"困难档模型\"s]"
     },
     {
@@ -80,6 +88,10 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
     },
     {
       "action": "click",
+      "selector": "role=dialog >> role=tab[name=/^打分/]"
+    },
+    {
+      "action": "click",
       "selector": "role=dialog >> role=button[name=\"保存\"s]"
     },
     {
@@ -88,7 +100,7 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
     },
     {
       "action": "evaluate",
-      "script": "() => { const dlg = document.querySelector('[role=dialog]'); if (!dlg) throw new Error('弹窗关闭了'); const box = dlg.querySelector('[role=combobox][aria-label=\"困难档模型\"]'); const msg = [...dlg.querySelectorAll('p')].find((p) => p.textContent.trim() === 'gpt-5.6-terra 在分组 api 里没有可用渠道'); if (!msg) throw new Error('没有红字提示'); if (!msg.classList.contains('text-destructive')) throw new Error('提示不是红字：' + msg.className); const block = msg.closest('[data-slot=form-item]') || msg.parentElement; if (!block.contains(box)) throw new Error('红字不在困难档模型字段下面'); if (box.value !== 'gpt-5.6-terra') throw new Error('困难档模型框显示：' + box.value); if (box.getAttribute('aria-expanded') === 'true') throw new Error('出错后模型下拉自动展开了'); return 'ok'; }",
+      "script": "() => { const dlg = document.querySelector('[role=dialog]'); if (!dlg) throw new Error('弹窗关闭了'); const tabs = [...dlg.querySelectorAll('[role=tab]')]; const tabOf = (prefix) => tabs.find((t) => t.textContent.trim().startsWith(prefix)); const problems = []; if (tabOf('档位').getAttribute('aria-selected') !== 'true') problems.push('没有自动切到「档位」'); if (tabOf('困难').getAttribute('aria-selected') !== 'true') problems.push('没有自动切到「困难」'); for (const name of ['档位', '困难']) { const t = tabOf(name); if (!t.querySelector('.bg-destructive') || !t.textContent.includes('1 个错误')) problems.push('「' + name + '」没有红点或「1 个错误」'); } for (const name of ['打分', '顾问', '简单', '普通']) { if (tabOf(name).textContent.includes('个错误')) problems.push('「' + name + '」不应带错误数'); } const box = dlg.querySelector('[role=combobox][aria-label=\"困难档模型\"]'); const msg = [...dlg.querySelectorAll('p')].find((p) => p.textContent.trim() === 'gpt-5.6-terra 在分组 api 里没有可用渠道'); if (!msg) problems.push('没有红字提示'); else { if (!msg.classList.contains('text-destructive')) problems.push('提示不是红字：' + msg.className); const block = msg.closest('[data-slot=form-item]') || msg.parentElement; if (!block.contains(box)) problems.push('红字不在困难档模型字段下面'); } if (box.value !== 'gpt-5.6-terra') problems.push('困难档模型框显示：' + box.value); if (box.getAttribute('aria-expanded') === 'true') problems.push('出错后模型下拉自动展开了'); if (problems.length) throw new Error(problems.join('；')); return 'ok'; }",
       "expect": "ok"
     },
     {
@@ -130,13 +142,14 @@ PRD 05-config-page 验收 C7 和边界用例：模型在所配分组里没有可
   "teardown": [
     {
       "action": "evaluate",
-      "script": "async () => { const loginRes = await fetch('/api/user/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: 'root', password: 'Test123456!'})}); if (!loginRes.ok) throw new Error('管理员登录失败 HTTP ' + loginRes.status); const login = await loginRes.json(); if (!login.success) throw new Error('管理员登录失败：' + login.message); const res = await (await fetch('/api/option/request_policy', {method: 'PATCH', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + login.data.access_token, 'New-Api-User': String(login.data.user.id)}, body: JSON.stringify({options: {'smart_routing_setting.routes': \"[]\"}})})).json(); if (!res.success) throw new Error('写入智能路由配置失败：' + res.message); return 'ok'; }",
+      "script": "async () => { const loginRes = await fetch('/api/user/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: 'root', password: 'Test123456!'})}); if (!loginRes.ok) throw new Error('管理员登录失败 HTTP ' + loginRes.status); const login = await loginRes.json(); if (!login.success) throw new Error('管理员登录失败：' + login.message); const headers = {'Content-Type': 'application/json', Authorization: 'Bearer ' + login.data.access_token, 'New-Api-User': String(login.data.user.id)}; const call = async (method, path, body) => { const res = await fetch(path, {method, headers, body: body === undefined ? undefined : JSON.stringify(body)}); const data = await res.json(); if (!data.success) throw new Error(method + ' ' + path + ' 失败：' + JSON.stringify(data.message)); return data; }; await call('PATCH', '/api/option/request_policy', {options: {'smart_routing_setting.routes': JSON.stringify([]), 'smart_routing_setting.thinking_capabilities': JSON.stringify({})}}); return 'ok'; }",
       "expect": "ok"
     }
   ]
 }
 ```
 ## 如何验收
-- [ ] 保存后弹窗不关，困难档模型下面红字「gpt-5.6-terra 在分组 api 里没有可用渠道」
+- [ ] 保存后弹窗不关，自动切到「档位 → 困难」，困难档模型下面红字「gpt-5.6-terra 在分组 api 里没有可用渠道」
+- [ ] 左栏「档位」和档位里的「困难」带红点和「1 个错误」，其他 Tab 没有错误数
 - [ ] 出错的模型框仍显示 gpt-5.6-terra，下拉没有自动展开
 - [ ] 改回 gpt-5.6-sol 再保存，弹窗关闭

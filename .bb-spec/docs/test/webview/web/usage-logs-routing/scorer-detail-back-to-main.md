@@ -79,7 +79,7 @@ PRD 06-usage-log-routing 验收 C5：打分记录详情显示类型「路由打�
     },
     {
       "action": "evaluate",
-      "script": "() => { const dialogs = [...document.querySelectorAll('[role=dialog]')]; const dlg = dialogs[dialogs.length - 1]; if (!dlg) throw new Error('没有打开详情弹窗'); const lines = dlg.innerText.split('\\n').map((s) => s.trim()).filter(Boolean); const start = lines.indexOf('智能路由'); const end = lines.indexOf('Token 明细'); if (start < 0) throw new Error('详情里没有「智能路由」块'); const got = lines.slice(start + 1, end < 0 ? undefined : end); const want = [\"虚拟模型\", \"auto-gpt\", \"档位\", \"困难档\", \"选档原因\", \"出错代价=高\", \"打分标签\", \"任务类型：分析或排查 · 要想多深：中 · 工作量：几步 · 出错代价：高 · 工作类型：财务 · 把握：0.86 · 用户反馈：中性\", \"思考内容\", \"上一轮用的渠道不同，已清理 2 段\", \"打分记录\", \"查看这次打分\"]; if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('智能路由块不一致。实际：' + got.join(' | ') + '；期望：' + want.join(' | ')); return 'ok'; }",
+      "script": "() => { const dialogs = [...document.querySelectorAll('[role=dialog]')]; const dlg = dialogs[dialogs.length - 1]; if (!dlg) throw new Error('没有打开详情弹窗'); const lines = dlg.innerText.split('\\n').map((s) => s.trim()).filter(Boolean); const start = lines.indexOf('智能路由'); const end = lines.indexOf('Token 明细'); if (start < 0) throw new Error('详情里没有「智能路由」块'); const got = lines.slice(start + 1, end < 0 ? undefined : end); const want = [\"虚拟模型\", \"auto-gpt\", \"档位\", \"困难档\", \"思考力度\", \"medium（跟随打分）\", \"选档原因\", \"出错代价=高\", \"打分标签\", \"任务类型：分析或排查 · 要想多深：中 · 工作量：几步 · 出错代价：高 · 工作类型：财务 · 把握：0.86 · 用户反馈：中性\", \"思考内容\", \"上一轮用的渠道不同，已清理 2 段\", \"打分记录\", \"查看这次打分\"]; if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('智能路由块不一致。实际：' + got.join(' | ') + '；期望：' + want.join(' | ')); return 'ok'; }",
       "expect": "ok"
     },
     {
@@ -97,4 +97,5 @@ PRD 06-usage-log-routing 验收 C5：打分记录详情显示类型「路由打�
 ```
 ## 如何验收
 - [ ] 打分记录详情的「智能路由」块：类型 路由打分、虚拟模型 auto-gpt、属于请求「req_8f2c41（困难档 · gpt-5.6-sol）」
-- [ ] 点「属于请求」后显示主请求 req_8f2c41 的详情（输入 Token 38,120、选档原因 出错代价=高）
+- [ ] 点「属于请求」后显示主请求 req_8f2c41 的详情（输入 Token 38,120、思考力度 medium（跟随打分）、选档原因 出错代价=高）
+- [ ] 打分记录详情里没有「思考力度」一行
