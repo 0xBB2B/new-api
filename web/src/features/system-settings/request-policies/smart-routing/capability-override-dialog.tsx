@@ -65,6 +65,7 @@ export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
   return (
     <Dialog
       open
+      contentClassName='sm:max-w-md'
       onOpenChange={props.onOpenChange}
       title={t('Override thinking capability of {{model}}', {
         model: props.model,
@@ -88,7 +89,8 @@ export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
       }
     >
       <div className='flex flex-col gap-4'>
-        <label className='flex items-center gap-2 text-sm font-medium'>
+        <label className='flex items-center justify-between gap-2 text-sm font-medium'>
+          {t('No thinking')}
           <Switch
             checked={noThinking}
             onCheckedChange={(checked) => {
@@ -96,7 +98,6 @@ export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
               setNoThinking(checked)
             }}
           />
-          {t('No thinking')}
         </label>
         <Separator />
         <h4 id={headingId} className='text-sm font-medium'>
@@ -105,7 +106,7 @@ export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
         <div
           role='group'
           aria-labelledby={headingId}
-          className='flex flex-wrap gap-x-5 gap-y-3'
+          className='grid grid-cols-4 gap-3'
         >
           {SMART_EFFORTS.map((effort) => (
             <label key={effort} className='flex items-center gap-2 text-sm'>

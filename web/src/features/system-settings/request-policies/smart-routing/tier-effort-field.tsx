@@ -183,7 +183,7 @@ export function TierEffortField(props: TierEffortFieldProps) {
                 field.value === 'fixed' &&
                 effortSelect(`${base}.effort`, t('Reasoning effort'))}
               {!props.unavailable && field.value === 'follow' && (
-                <span className='inline-flex items-center gap-1.5'>
+                <span className='inline-flex min-w-0 flex-wrap items-center gap-1.5'>
                   {effortSelect(`${base}.effort_min`, t('Minimum effort'))}
                   <span aria-hidden='true'>～</span>
                   {effortSelect(`${base}.effort_max`, t('Maximum effort'))}

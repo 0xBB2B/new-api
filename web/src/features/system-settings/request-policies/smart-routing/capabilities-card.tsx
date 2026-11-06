@@ -101,7 +101,7 @@ export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
         <StaticDataTable
           className='overflow-x-auto rounded-none border-0'
           tableProps={{ withContainer: false, 'aria-label': title }}
-          tableClassName='min-w-[800px] table-fixed'
+          tableClassName='min-w-[800px] table-fixed [&_th]:px-4 [&_th]:text-muted-foreground [&_td]:px-4'
           headerRowClassName='bg-muted/35 hover:bg-muted/35'
           data={models}
           columns={[

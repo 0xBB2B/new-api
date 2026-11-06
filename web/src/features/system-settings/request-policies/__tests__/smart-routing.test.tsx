@@ -6,6 +6,7 @@ import {
   RouterContextProvider,
 } from '@tanstack/react-router'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -2131,4 +2132,66 @@ it('the override dialog groups the seven level checkboxes under Supported effort
   for (const box of within(group).getAllByRole('checkbox')) {
     expect(box).toHaveAttribute('aria-disabled', 'true')
   }
+})
+
+function lineMatcher(text: RegExp) {
+  return (_content: string, element: Element | null) =>
+    !!element &&
+    text.test(element.textContent ?? '') &&
+    ![...element.children].some((child) => text.test(child.textContent ?? ''))
+}
+
+function tooltipLines(text: RegExp) {
+  return screen
+    .queryAllByText(lineMatcher(text))
+    .filter((element) => !element.closest('tr, [role="row"]'))
+}
+
+it.each([
+  ['name', /^Responses \/ Anthropic endpoint$/],
+  ['advisor', /^After 2 dissatisfied messages$/],
+  ['simple tier', /^Not overridden · api$/],
+  ['normal tier', /^Fixed medium · subscription → api$/],
+  ['hard tier', /^Follow scoring medium～xhigh · subscription → api$/],
+  ['scorer', /^api · Timeout 2000 ms$/],
+])(
+  'hovering the second line of the %s cell shows the full text in a tooltip',
+  async (_cell, text) => {
+    setCapabilityOptions()
+    show()
+    const row = await screen.findByRole('row', { name: /auto-gpt/ })
+    const line = within(row).getAllByText(lineMatcher(text))[0]
+    await userEvent.hover(line)
+    await waitFor(() => expect(tooltipLines(text)).not.toHaveLength(0))
+  }
+)
+
+it('focusing the second line of a tier cell shows the full text in a tooltip', async () => {
+  setCapabilityOptions()
+  show()
+  const text = /^Follow scoring medium～xhigh · subscription → api$/
+  const row = await screen.findByRole('row', { name: /auto-gpt/ })
+  const line = within(row).getAllByText(lineMatcher(text))[0]
+  const focusable = line.closest<HTMLElement>('[tabindex]')
+  expect(focusable).not.toBeNull()
+  act(() => focusable?.focus())
+  await waitFor(() => expect(tooltipLines(text)).not.toHaveLength(0))
+})
+
+it('the override dialog puts the No thinking text before its switch', async () => {
+  setCapabilityOptions()
+  show()
+  const dialog = await openOverrideDialog('gpt-5.6-sol')
+  const toggle = within(dialog).getByRole('switch', { name: 'No thinking' })
+  const walker = document.createTreeWalker(dialog, NodeFilter.SHOW_TEXT)
+  let text: Node | null = null
+  while (!text && walker.nextNode()) {
+    if (walker.currentNode.textContent?.trim() === 'No thinking') {
+      text = walker.currentNode
+    }
+  }
+  if (!text) throw new Error('No thinking text node not found')
+  expect(
+    text.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
 })

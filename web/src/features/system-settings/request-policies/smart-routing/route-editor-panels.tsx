@@ -363,10 +363,10 @@ type TierTabProps = {
 
 function TierTab(props: TierTabProps) {
   const { t } = useTranslation()
-  const trigger = <TabsTrigger value={props.id} className='px-3' />
+  const trigger = <TabsTrigger value={props.id} className='min-w-0 px-3' />
   const content = (
     <>
-      {props.name}
+      <span className='shrink-0'>{props.name}</span>
       {props.errorCount > 0 ? (
         <span
           aria-hidden='true'
@@ -374,13 +374,17 @@ function TierTab(props: TierTabProps) {
         />
       ) : null}
       {props.model ? (
-        <span className='text-muted-foreground hidden min-w-0 truncate text-xs font-normal sm:block'>
+        <span className='text-muted-foreground hidden min-w-6 truncate text-xs font-normal sm:block'>
           {`· ${props.model}`}
         </span>
       ) : null}
-      {props.isDefault ? <Badge variant='outline'>{t('Default')}</Badge> : null}
+      {props.isDefault ? (
+        <Badge variant='outline' className='shrink-0'>
+          {t('Default')}
+        </Badge>
+      ) : null}
       {props.errorCount > 0 ? (
-        <span className='text-destructive text-xs font-normal'>
+        <span className='text-destructive shrink-0 text-xs font-normal'>
           {t('{{count}} errors', { count: props.errorCount })}
         </span>
       ) : null}
@@ -388,7 +392,7 @@ function TierTab(props: TierTabProps) {
   )
   if (!props.summary) {
     return (
-      <TabsTrigger value={props.id} className='px-3'>
+      <TabsTrigger value={props.id} className='min-w-0 px-3'>
         {content}
       </TabsTrigger>
     )

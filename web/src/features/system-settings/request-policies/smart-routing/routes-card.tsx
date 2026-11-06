@@ -259,23 +259,26 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
           id: 'name',
           header: t('Name'),
           className: 'w-[16%]',
-          cell: (route) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <TruncatedCell tabIndex={0}>{route.name}</TruncatedCell>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-                aria-label={t('Endpoints')}
-              >
-                <TruncatedCell tabIndex={0}>
-                  {t('{{endpoint}} endpoint', {
-                    endpoint: endpointShortNames(route.endpoints),
-                    interpolation: { escapeValue: false },
-                  })}
-                </TruncatedCell>
+          cell: (route) => {
+            const endpointText = t('{{endpoint}} endpoint', {
+              endpoint: endpointShortNames(route.endpoints),
+              interpolation: { escapeValue: false },
+            })
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
+                <TruncatedCell tabIndex={0}>{route.name}</TruncatedCell>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                  aria-label={t('Endpoints')}
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={endpointText}>
+                    <code>{endpointText}</code>
+                  </TruncatedCell>
+                </div>
               </div>
-            </div>
-          ),
+            )
+          },
         },
         ...SMART_TIER_IDS.map((id) => ({
           id,
@@ -295,6 +298,8 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
               'Exceeds the model capability, sent as {{effort}}',
               { effort: overflow.actual }
             )
+            const summary = tierEffortSummary(tier, capability, t)
+            const lineText = `${summary} · ${tier.groups.join(' → ')}`
             return (
               <div className='flex min-w-0 flex-col gap-1.5'>
                 <div className='flex min-w-0 items-center gap-2'>
@@ -310,10 +315,10 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
                   data-table-text='secondary'
                   aria-label={t('Groups')}
                 >
-                  <TruncatedCell tabIndex={0}>
+                  <TruncatedCell tabIndex={0} tooltipContent={lineText}>
                     <code>
                       <span className={overflow.overflow ? 'text-warning' : ''}>
-                        {tierEffortSummary(tier, capability, t)}
+                        {summary}
                       </span>{' '}
                       · {tier.groups.join(' → ')}
                     </code>
@@ -334,42 +339,47 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
         {
           id: 'scorer',
           header: t('Scorer model'),
-          cell: (route) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <TruncatedCell tabIndex={0}>{route.scorer.model}</TruncatedCell>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-                aria-label={t('Groups')}
-              >
-                <TruncatedCell tabIndex={0}>
-                  <code>
-                    {route.scorer.groups.join(' → ')} ·{' '}
-                    {t('Timeout {{ms}} ms', { ms: route.scorer.timeout_ms })}
-                  </code>
-                </TruncatedCell>
+          cell: (route) => {
+            const scorerText = `${route.scorer.groups.join(' → ')} · ${t('Timeout {{ms}} ms', { ms: route.scorer.timeout_ms })}`
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
+                <TruncatedCell tabIndex={0}>{route.scorer.model}</TruncatedCell>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                  aria-label={t('Groups')}
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={scorerText}>
+                    <code>{scorerText}</code>
+                  </TruncatedCell>
+                </div>
               </div>
-            </div>
-          ),
+            )
+          },
         },
         {
           id: 'advisor',
           header: t('Advisor'),
-          cell: (route) => (
-            <div className='flex min-w-0 flex-col gap-1.5'>
-              <TruncatedCell tabIndex={0}>{route.advisor.model}</TruncatedCell>
-              <div
-                className='text-muted-foreground min-w-0'
-                data-table-text='secondary'
-              >
+          cell: (route) => {
+            const advisorText = t('After {{count}} dissatisfied messages', {
+              count: route.advisor.after_dissatisfied,
+            })
+            return (
+              <div className='flex min-w-0 flex-col gap-1.5'>
                 <TruncatedCell tabIndex={0}>
-                  {t('After {{count}} dissatisfied messages', {
-                    count: route.advisor.after_dissatisfied,
-                  })}
+                  {route.advisor.model}
                 </TruncatedCell>
+                <div
+                  className='text-muted-foreground min-w-0'
+                  data-table-text='secondary'
+                >
+                  <TruncatedCell tabIndex={0} tooltipContent={advisorText}>
+                    <code>{advisorText}</code>
+                  </TruncatedCell>
+                </div>
               </div>
-            </div>
-          ),
+            )
+          },
         },
         {
           id: 'actions',
