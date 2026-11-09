@@ -1,13 +1,13 @@
 ---
 name: playground-chat-only
-description: 演练场模型下拉只列勾了 Chat 的虚拟模型；给 auto-gpt 勾上 Chat 并保存更改后刷新，演练场出现 auto-gpt
+description: 演练场模型下拉只列勾了 Chat 的虚拟模型；给 auto-gpt 勾上 Chat 并在弹窗里保存（出现「保存成功」）后，演练场出现 auto-gpt
 category: virtual-model-pickers
 ---
 # 演练场里的虚拟模型
 ## 简介
-配好 auto-gpt（Responses、Anthropic）和 auto-chat（Chat），打开演练场的模型下拉；再到智能路由页给 auto-gpt 勾上 Chat、保存更改，回到演练场重新打开下拉。
+配好 auto-gpt（Responses、Anthropic）和 auto-chat（Chat），打开演练场的模型下拉；再到智能路由页给 auto-gpt 勾上 Chat，在弹窗里点「保存」（立即提交，出现「保存成功」），回到演练场重新打开下拉。
 ## 测试目的
-二期 PRD 05 验收 C4：演练场模型下拉里有 auto-chat，没有 auto-gpt；把 auto-gpt 也勾上 Chat 并保存更改 → 刷新后演练场出现 auto-gpt。验证路径 3 里「选它发一条消息正常回答」要真实上游，不在本用例里。
+二期 PRD 05 验收 C4：演练场模型下拉里有 auto-chat，没有 auto-gpt；把 auto-gpt 也勾上 Chat 并保存 → 刷新后演练场出现 auto-gpt。弹窗保存立即提交按立即保存 PRD 2026-11-09.smart-routing-instant-save 01 C2。验证路径 3 里「选它发一条消息正常回答」要真实上游，不在本用例里。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -112,10 +112,6 @@ category: virtual-model-pickers
       "expect": "ok"
     },
     {
-      "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
-    },
-    {
       "action": "waitFor",
       "text": "保存成功"
     },
@@ -164,5 +160,5 @@ category: virtual-model-pickers
 ```
 ## 如何验收
 - [ ] 演练场模型下拉里有 auto-chat，没有 auto-gpt
-- [ ] 给 auto-gpt 勾上 Chat 并保存更改后，演练场模型下拉里出现 auto-gpt
+- [ ] 给 auto-gpt 勾上 Chat 并在弹窗里保存、出现「保存成功」后，演练场模型下拉里出现 auto-gpt
 - [ ] 有真实模型时，虚拟模型排在真实模型后面

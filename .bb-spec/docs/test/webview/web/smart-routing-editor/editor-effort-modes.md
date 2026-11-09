@@ -5,9 +5,9 @@ category: smart-routing-editor
 ---
 # 思考力度的三种方式
 ## 简介
-编辑 auto-gpt，在简单档（gpt-5.4-mini）依次点「固定」「跟随打分」，看同一行后面的小下拉；把最低设成 high、最高设成 low 后保存，看报错；改成 high～xhigh 后保存成功。最后切到 JSON 视图，写一个七档以外的力度值保存，再用接口依次保存七档里的每个值。
+编辑 auto-gpt，在简单档（gpt-5.4-mini）依次点「固定」「跟随打分」，看同一行后面的小下拉；把最低设成 high、最高设成 low 后保存，看报错；改成 high～xhigh 后保存，立即提交并出现「保存成功」。最后切到 JSON 视图，写一个七档以外的力度值，点编辑框下方的「保存」，再用接口依次保存七档里的每个值。
 ## 测试目的
-二期 PRD 04 验收 C6（「固定」「跟随打分」切换时后面的小下拉跟着变成一个或两个）；PRD 01 验收 C4 的「最低高于最高时保存报错」和 C1 的「后台接受七档里任一值，七档以外的值保存时报错」。上游实际收到的力度不在网页上验证。
+二期 PRD 04 验收 C6（「固定」「跟随打分」切换时后面的小下拉跟着变成一个或两个）；PRD 01 验收 C4 的「最低高于最高时保存报错」和 C1 的「后台接受七档里任一值，七档以外的值保存时报错」。保存方式按立即保存 PRD 2026-11-09.smart-routing-instant-save 01 C2（弹窗保存立即提交）、02 C3（JSON 框下方的「保存」检查不通过就弹出原因）。上游实际收到的力度不在网页上验证。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -169,6 +169,10 @@ category: smart-routing-editor
       "expect": "ok"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "evaluate",
       "script": "() => { const row = [...document.querySelectorAll('tbody tr')].find((r) => { const td = r.querySelector('td'); return td && td.innerText.trim().split('\\n')[0].trim() === \"auto-gpt\"; }); if (!row) throw new Error('表格里没有 ' + \"auto-gpt\"); const got = row.querySelectorAll('td')[1].innerText.replace(/\\s+/g, ' ').trim(); if (got !== \"gpt-5.4-mini 跟随打分 high～xhigh · api\") throw new Error(\"auto-gpt\" + ' 第 2 列是：' + got + '；期望：' + \"gpt-5.4-mini 跟随打分 high～xhigh · api\"); return 'ok'; }",
       "expect": "ok"
@@ -188,7 +192,7 @@ category: smart-routing-editor
     },
     {
       "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
+      "selector": "role=button[name=\"保存\"s]"
     },
     {
       "action": "waitFor",
@@ -216,5 +220,5 @@ category: smart-routing-editor
 ## 如何验收
 - [ ] 不覆盖时没有力度下拉；点「固定」后同一行出现一个「思考力度」下拉，选项是 gpt-5.4-mini 支持的 none / low / medium / high / xhigh；点「跟随打分」后变成「最低 ～ 最高」两个下拉
 - [ ] 最低 high、最高 low 时保存，弹窗不关，思考力度这一行下面红字「最低力度不能高于最高力度」，「简单」带「1 个错误」
-- [ ] 改成 high～xhigh 后保存成功，表格简单档第二行是「跟随打分 high～xhigh · api」
-- [ ] JSON 视图里写 effort "ultra" 保存，提示「请选择有效的思考力度」；用接口依次保存 none、minimal、low、medium、high、xhigh、max 都成功
+- [ ] 改成 high～xhigh 后保存，弹窗关闭并出现「保存成功」，表格简单档第二行是「跟随打分 high～xhigh · api」
+- [ ] JSON 视图里写 effort "ultra" 后点编辑框下方的「保存」，提示「请选择有效的思考力度」；用接口依次保存 none、minimal、low、medium、high、xhigh、max 都成功

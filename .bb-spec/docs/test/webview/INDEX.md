@@ -17,22 +17,22 @@ env:
 
 ## web（http://localhost:5173）
 
-### smart-routing-config（智能路由配置页，一期 PRD 05；升级迁移，二期 PRD 01 / 03）
+### smart-routing-config（智能路由配置页，一期 PRD 05；升级迁移，二期 PRD 01 / 03；立即保存，PRD 2026-11-09.smart-routing-instant-save）
 
 | 用例 id | 说明 | last-run 状态 |
 | --- | --- | --- |
 | [legacy-config-migrated](web/smart-routing-config/legacy-config-migrated.md) | 用一期格式的旧配置启动后，配置页显示困难档「固定 high」、接口只勾 Responses（必须在 seed 后第一个跑） | ✅ 通过（2026-11-06） |
-| [menu-entry](web/smart-routing-config/menu-entry.md) | 管理员在请求策略菜单里看到「智能路由」，位于「渠道健康」之后，点进去打开智能路由页 | ✅ 通过（2026-11-06） |
+| [menu-entry](web/smart-routing-config/menu-entry.md) | 管理员在请求策略菜单里看到「智能路由」，位于「渠道健康」之后，点进去打开智能路由页，页面没有「保存更改」按钮 | 未运行（2026-11-09 按立即保存改写） |
 | [empty-state](web/smart-routing-config/empty-state.md) | 没有虚拟模型时显示空状态的标题、说明和按钮，点按钮打开添加弹窗 | ✅ 通过（2026-11-06） |
 | [add-dialog-defaults](web/smart-routing-config/add-dialog-defaults.md) | 添加弹窗里接口、三档思考力度（不覆盖）、默认档、超时、连续不满意次数和高级设置三个数字都是默认值 | ✅ 通过（2026-11-06） |
-| [add-and-save](web/smart-routing-config/add-and-save.md) | 在添加弹窗的三个 Tab 里配好 auto-gpt，弹窗保存后点「保存更改」，表格出现这一行且刷新后仍在 | ✅ 通过（2026-11-06） |
-| [save-without-changes](web/smart-routing-config/save-without-changes.md) | 已有 auto-gpt、没做任何修改时点「保存更改」，提示没有需要保存的更改 | ✅ 通过（2026-11-06） |
-| [unsaved-refresh](web/smart-routing-config/unsaved-refresh.md) | 编辑 auto-gpt（顾问 Tab）并在弹窗里保存，但不点「保存更改」直接刷新，改动不生效 | ✅ 通过（2026-11-06） |
+| [add-and-save](web/smart-routing-config/add-and-save.md) | 在添加弹窗的三个 Tab 里配好 auto-gpt，弹窗保存后立即提交、出现「保存成功」，表格出现这一行且刷新后仍在 | 未运行（2026-11-09 按立即保存改写） |
+| [instant-save-refresh](web/smart-routing-config/instant-save-refresh.md) | 编辑 auto-gpt 的「顾问」Tab，把连续不满意次数从 2 改成 3，弹窗保存后出现「保存成功」，刷新后顾问列是「连续 3 次不满意」 | 未运行（2026-11-09 按立即保存改写） |
 | [edit-save-error](web/smart-routing-config/edit-save-error.md) | 困难档换成在 api 分组没有渠道的模型，保存时字段下出现红字、自动跳到「档位 → 困难」、Tab 带红点；改回原模型后保存成功 | ✅ 通过（2026-11-06） |
-| [json-view-error](web/smart-routing-config/json-view-error.md) | 在 JSON 视图里把困难档模型改成在 api 分组没有渠道的模型，点「保存更改」报同样的错误 | ✅ 通过（2026-11-06） |
+| [json-view-error](web/smart-routing-config/json-view-error.md) | 在 JSON 视图里把困难档模型改成在 api 分组没有渠道的模型，点 JSON 框下方的「保存」报同样的错误，刷新后配置没变 | 未运行（2026-11-09 按立即保存改写） |
+| [json-save-and-discard](web/smart-routing-config/json-save-and-discard.md) | JSON 框下方的「保存」在内容没变（含只点「格式化 JSON」）时是灰的，改了才能点；有改动时点「可视化」先弹「放弃未保存的修改？」，点「取消」留在 JSON；保存后出现「保存成功」、按钮变灰，切回可视化不弹框，刷新后不变 | 未运行（2026-11-09 按立即保存改写） |
 | [model-dropdown-and-groups](web/smart-routing-config/model-dropdown-and-groups.md) | 模型下拉里没有所有分组都没渠道的模型；分组小标签能添加、用 Alt+←/→ 调整顺序、删除 | ✅ 通过（2026-11-06） |
-| [delete-with-confirm](web/smart-routing-config/delete-with-confirm.md) | 从「…」菜单删除 auto-gpt，先弹确认框，确认后这一行消失，保存更改后刷新仍为空 | ✅ 通过（2026-11-06） |
-| [i18n-labels](web/smart-routing-config/i18n-labels.md) | 切到 English 和日本語，智能路由页和添加弹窗（档位 Tab、高级设置）的文字都有翻译 | ✅ 通过（2026-11-06） |
+| [delete-with-confirm](web/smart-routing-config/delete-with-confirm.md) | 从「…」菜单删除 auto-gpt，确认框写「确认后立即生效。」，确认后出现「保存成功」、这一行消失，刷新后仍为空 | 未运行（2026-11-09 按立即保存改写） |
+| [i18n-labels](web/smart-routing-config/i18n-labels.md) | 切到 English 和日本語，智能路由页和添加弹窗（档位 Tab、高级设置）的文字都有翻译 | 未运行（2026-11-09 按立即保存改写） |
 
 ### smart-routing-editor（配置弹窗改版，二期 PRD 04）
 
@@ -42,12 +42,12 @@ env:
 | [editor-tabs-keyboard-and-mobile](web/smart-routing-editor/editor-tabs-keyboard-and-mobile.md) | 左栏读作标签页，方向键移动焦点、回车切换；400px 宽（iframe 模拟）时左栏变成顶部横排 | ✅ 通过（2026-11-06） |
 | [editor-info-tooltips](web/smart-routing-editor/editor-info-tooltips.md) | 弹窗里不直接显示说明文字，悬停每个 ⓘ 显示对应说明；打分、顾问 Tab 各只有三行 | ✅ 通过（2026-11-06） |
 | [editor-tiers-switch](web/smart-routing-editor/editor-tiers-switch.md) | 三档切换显示档名加模型名，默认档带「默认」标签，改默认档后标签跟着移动 | ✅ 通过（2026-11-06） |
-| [editor-effort-modes](web/smart-routing-editor/editor-effort-modes.md) | 思考力度不覆盖 / 固定 / 跟随打分时后面的小下拉是零个 / 一个 / 两个；最低高于最高报错；七档以外的值保存报错（二期 PRD 01 C1、C4） | ✅ 通过（2026-11-06） |
+| [editor-effort-modes](web/smart-routing-editor/editor-effort-modes.md) | 思考力度不覆盖 / 固定 / 跟随打分时后面的小下拉是零个 / 一个 / 两个；最低高于最高报错；改对后弹窗保存出现「保存成功」；JSON 框下方「保存」七档以外的值报错（二期 PRD 01 C1、C4） | 未运行（2026-11-09 按立即保存改写） |
 | [editor-group-tags](web/smart-routing-editor/editor-group-tags.md) | 分组小标签：一个时拖不动，拖动和 Alt+←/→ 调整顺序，满 5 个「＋」变灰，出错时描红 | ✅ 通过（2026-11-06） |
 | [key-drawer-group-order](web/smart-routing-editor/key-drawer-group-order.md) | 密钥抽屉里的自动分组顺序仍是原来的样子：上移、下移、拖动把手 | ✅ 通过（2026-11-06） |
 | [editor-save-errors](web/smart-routing-editor/editor-save-errors.md) | 打分模型没价格 + 普通档渠道拒收所勾格式：自动切到「打分」，红点和「1 个错误」在打分、档位、普通上；名称重名只在名称下写红字 | ✅ 通过（2026-11-06） |
 | [editor-no-scroll-1100](web/smart-routing-editor/editor-no-scroll-1100.md) | 1100px 高（iframe 模拟）时 9 种状态的弹窗都不出现滚动条 | ✅ 通过（2026-11-06） |
-| [routes-table-summary](web/smart-routing-editor/routes-table-summary.md) | 表格名称下写所勾接口的简称，档位第二行写力度摘要和分组顺序（不覆盖 / 固定 / 跟随打分 / 不支持思考），末尾省略 | ✅ 通过（2026-11-06） |
+| [routes-table-summary](web/smart-routing-editor/routes-table-summary.md) | 表格名称下写所勾接口的简称，档位第二行写力度摘要和分组顺序（不覆盖 / 固定 / 跟随打分 / 不支持思考），末尾省略；弹窗保存出现「保存成功」，刷新后不变 | 未运行（2026-11-09 按立即保存改写） |
 | [editor-i18n-seven-languages](web/smart-routing-editor/editor-i18n-seven-languages.md) | 六种非简体中文界面语言下，智能路由页、编辑弹窗各 Tab 和覆盖弹窗的新增文字都有翻译（二期 PRD 02 C11、PRD 04 C14） | ✅ 通过（2026-11-06） |
 
 ### smart-routing-capability（模型思考能力，二期 PRD 02）
@@ -55,8 +55,8 @@ env:
 | 用例 id | 说明 | last-run 状态 |
 | --- | --- | --- |
 | [capability-table-sources](web/smart-routing-capability/capability-table-sources.md) | 能力卡片只列档位用到的模型、同一模型一行；来源、档位小标签、操作按规则显示；今年发布的 Claude / Gemini / DeepSeek 内置档位和代码一致，2025 年发布的模型显示「未确认」 | 未运行（口径变更） |
-| [capability-override-flow](web/smart-routing-capability/capability-override-flow.md) | 覆盖 gpt-5.6-sol 去掉 xhigh、max 后「已覆盖」，表格标黄「超出模型能力，实际按 high 发送」；保存更改后生效；恢复内置后标黄消失 | ✅ 通过（2026-11-06） |
-| [capability-override-glm-and-unsaved](web/smart-routing-capability/capability-override-glm-and-unsaved.md) | 覆盖弹窗一档不勾报错；glm-5.1 覆盖成 low、high 后力度下拉只有这两档；不保存更改就刷新，覆盖丢失 | ✅ 通过（2026-11-06） |
+| [capability-override-flow](web/smart-routing-capability/capability-override-flow.md) | 覆盖 gpt-5.6-sol 去掉 xhigh、max 后「已覆盖」，表格标黄「超出模型能力，实际按 high 发送」；覆盖保存、恢复内置都立即提交并出现「保存成功」；恢复内置后标黄消失 | 未运行（2026-11-09 按立即保存改写） |
+| [capability-override-glm](web/smart-routing-capability/capability-override-glm.md) | 覆盖弹窗一档不勾报错；glm-5.1 覆盖成 low、high 保存后出现「保存成功」，力度下拉只有这两档；刷新后仍是已覆盖 | 未运行（2026-11-09 按立即保存改写） |
 | [capability-empty-after-delete](web/smart-routing-capability/capability-empty-after-delete.md) | 删掉唯一的虚拟模型后，能力卡片显示「还没有虚拟模型用到的模型」 | ✅ 通过（2026-11-06） |
 | [capability-editor-states](web/smart-routing-capability/capability-editor-states.md) | 档位选 gpt-5.5 / glm-5.1 / gpt-4.1 时，分别只列支持的档位、带「能力未确认」、显示不支持思考的灰字 | ✅ 通过（2026-11-06） |
 
@@ -75,7 +75,7 @@ env:
 | --- | --- | --- |
 | [cc-switch-virtual-models](web/virtual-model-pickers/cc-switch-virtual-models.md) | 「填入 CC Switch」选 Claude、Codex 时模型下拉末尾有虚拟模型，选 Gemini 时没有 | ✅ 通过（2026-11-06） |
 | [key-model-limits-virtual](web/virtual-model-pickers/key-model-limits-virtual.md) | 密钥模型限制能勾虚拟模型并保存，编辑时显示为已选标签、能点 × 移除 | ✅ 通过（2026-11-06） |
-| [playground-chat-only](web/virtual-model-pickers/playground-chat-only.md) | 演练场只列勾了 Chat 的虚拟模型；给 auto-gpt 勾上 Chat 并保存更改后出现 | ✅ 通过（2026-11-06） |
+| [playground-chat-only](web/virtual-model-pickers/playground-chat-only.md) | 演练场只列勾了 Chat 的虚拟模型；给 auto-gpt 勾上 Chat 并在弹窗里保存（出现「保存成功」）后出现 | 未运行（2026-11-09 按立即保存改写） |
 | [virtual-models-not-elsewhere](web/virtual-model-pickers/virtual-models-not-elsewhere.md) | 价格页、模型定价、档位模型下拉、渠道模型配置里没有虚拟模型；首页示例用第一个真实模型 | ✅ 通过（2026-11-06） |
 
 ### usage-logs-routing（使用日志里的路由信息，一期 PRD 06；思考力度，二期 PRD 06）

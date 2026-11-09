@@ -1,13 +1,13 @@
 ---
 name: add-and-save
-description: 在添加弹窗的三个 Tab 里配好 auto-gpt，弹窗保存后点「保存更改」，表格出现这一行且刷新后仍在
+description: 在添加弹窗的三个 Tab 里配好 auto-gpt，弹窗保存后立即提交、出现「保存成功」，表格出现这一行且刷新后仍在
 category: smart-routing-config
 ---
-# 添加 auto-gpt 并保存更改
+# 添加 auto-gpt 并立即保存
 ## 简介
-从空配置开始，在添加弹窗的「打分」「档位」（简单、普通、困难）「顾问」三个 Tab 里依次配好模型和分组顺序，保存弹窗后再点页面右上角「保存更改」，最后刷新页面确认配置已生效。
+从空配置开始，在添加弹窗的「打分」「档位」（简单、普通、困难）「顾问」三个 Tab 里依次配好模型和分组顺序，点弹窗的「保存」后配置立即提交，看到「保存成功」后刷新页面，确认配置已生效。
 ## 测试目的
-一期 PRD 05-config-page 验收 C3（表格各列两行文字、默认档带「默认」标签）、C8（点了「保存更改」才生效），以及主路径用例：接口列显示 Responses。档位列第二行按二期 PRD 04 C13 的写法核对：「<力度摘要> · <分组顺序>」。
+一期 PRD 05-config-page 验收 C3（表格各列两行文字、默认档带「默认」标签）；二期之后的立即保存：PRD 2026-11-09.smart-routing-instant-save 01 C2（弹窗点「保存」立即提交，顶部提示「保存成功」）；以及主路径用例：接口列显示 Responses。档位列第二行按二期 PRD 04 C13 的写法核对：「<力度摘要> · <分组顺序>」。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -242,17 +242,13 @@ category: smart-routing-config
       "expect": "ok"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "evaluate",
       "script": "() => { const row = [...document.querySelectorAll('tbody tr')].find((r) => { const td = r.querySelector('td'); return td && td.innerText.trim().split('\\n')[0].trim() === \"auto-gpt\"; }); if (!row) throw new Error('表格里没有 ' + \"auto-gpt\"); const want = [\"auto-gpt Responses 接口\", \"gpt-5.4-mini 不覆盖 · api\", \"gpt-5.5 默认 不覆盖 · subscription → api\", \"gpt-5.6-sol 不覆盖 · subscription → api\", \"gpt-5.6-luna subscription → api · 超时 2000 毫秒\", \"gpt-5.6-sol 连续 2 次不满意\"]; const got = [...row.querySelectorAll('td')].slice(0, want.length).map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(\"auto-gpt\" + ' 这一行：' + got.join(' | ') + '；期望：' + want.join(' | ')); return 'ok'; }",
       "expect": "ok"
-    },
-    {
-      "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
-    },
-    {
-      "action": "waitFor",
-      "text": "保存成功"
     },
     {
       "action": "navigate",
@@ -283,5 +279,5 @@ category: smart-routing-config
 ```
 ## 如何验收
 - [ ] 弹窗里接口只选中 Responses
-- [ ] 弹窗保存后弹窗关闭，表格出现 auto-gpt 一行：名称下写「Responses 接口」，三档第二行是「不覆盖 · <分组顺序>」，「默认」标签只在普通档
-- [ ] 点「保存更改」提示「保存成功」，刷新后这一行仍在
+- [ ] 弹窗保存后弹窗关闭、出现「保存成功」，表格出现 auto-gpt 一行：名称下写「Responses 接口」，三档第二行是「不覆盖 · <分组顺序>」，「默认」标签只在普通档
+- [ ] 刷新后这一行仍在，各列文字不变

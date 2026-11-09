@@ -1,17 +1,17 @@
 ---
-name: capability-override-glm-and-unsaved
-description: 覆盖弹窗一档都不勾时报错；把 glm-5.1 覆盖成 low、high 后编辑弹窗里力度下拉只有 low、high；不点保存更改就刷新，覆盖丢失
+name: capability-override-glm
+description: 覆盖弹窗一档都不勾时报错；把 glm-5.1 覆盖成 low、high 后立即提交并出现「保存成功」，编辑弹窗里力度下拉只有 low、high，刷新后仍是已覆盖
 category: smart-routing-capability
 ---
-# 覆盖未确认的模型和不保存就刷新
+# 覆盖未确认的模型
 ## 简介
-点 glm-5.1（未确认）的「覆盖」，取消全部勾选后保存看报错；再只勾 low、high 保存。打开 auto-chat 的编辑弹窗，普通档（glm-5.1）选「固定」看力度下拉。最后不点「保存更改」直接刷新页面。
+点 glm-5.1（未确认）的「覆盖」，取消全部勾选后保存看报错；再只勾 low、high 保存（立即提交，出现「保存成功」）。打开 auto-chat 的编辑弹窗，普通档（glm-5.1）选「固定」看力度下拉，取消弹窗。最后刷新页面，看覆盖还在。
 ## 测试目的
-二期 PRD 02 验收 C3（把 glm-5.1 覆盖成支持 low / high → 来源「已覆盖」，配置弹窗里它的力度下拉只有 low、high）、C7（全部不勾就保存 → 出现「至少选择一个档位」，弹窗不关）、C8（覆盖后不点「保存更改」就刷新 → 改动丢失）。
+二期 PRD 02 验收 C3（把 glm-5.1 覆盖成支持 low / high → 来源「已覆盖」，配置弹窗里它的力度下拉只有 low、high）、C7（全部不勾就保存 → 出现「至少选择一个档位」，弹窗不关）；立即保存 PRD 2026-11-09.smart-routing-instant-save 01 C4（覆盖弹窗保存立即提交，提示「保存成功」）、C9（提交成功后刷新，看到的是刚保存的值）。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
-  "id": "capability-override-glm-and-unsaved",
+  "id": "capability-override-glm",
   "category": "smart-routing-capability",
   "target": "web",
   "setup": [
@@ -117,6 +117,10 @@ category: smart-routing-capability
       "expect": "ok"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "evaluate",
       "script": "() => { const card = document.querySelector('section[aria-label=\"模型思考能力\"]'); if (!card) throw new Error('没有「模型思考能力」卡片'); const rows = [...card.querySelectorAll('tbody tr')]; const cells = (r) => [...r.querySelectorAll('td')].map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); const rowOf = (model) => rows.find((r) => cells(r)[0] === model); const r = rowOf(\"glm-5.1\"); if (!r) throw new Error('能力表里没有 ' + \"glm-5.1\"); const got = cells(r); if (JSON.stringify(got) !== JSON.stringify([\"glm-5.1\", \"已覆盖\", \"low high\", \"修改 恢复内置\"])) throw new Error(\"glm-5.1\" + ' 这一行是：' + got.join(' | ')); return 'ok'; }",
       "expect": "ok"
@@ -177,16 +181,16 @@ category: smart-routing-capability
     },
     {
       "action": "waitFor",
-      "text": "未确认"
+      "text": "已覆盖"
     },
     {
       "action": "evaluate",
-      "script": "() => { const card = document.querySelector('section[aria-label=\"模型思考能力\"]'); if (!card) throw new Error('没有「模型思考能力」卡片'); const rows = [...card.querySelectorAll('tbody tr')]; const cells = (r) => [...r.querySelectorAll('td')].map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); const rowOf = (model) => rows.find((r) => cells(r)[0] === model); const r = rowOf(\"glm-5.1\"); if (!r) throw new Error('能力表里没有 ' + \"glm-5.1\"); const got = cells(r); if (JSON.stringify(got) !== JSON.stringify([\"glm-5.1\", \"未确认\", \"low medium high\", \"覆盖\"])) throw new Error(\"glm-5.1\" + ' 这一行是：' + got.join(' | ')); return 'ok'; }",
+      "script": "() => { const card = document.querySelector('section[aria-label=\"模型思考能力\"]'); if (!card) throw new Error('没有「模型思考能力」卡片'); const rows = [...card.querySelectorAll('tbody tr')]; const cells = (r) => [...r.querySelectorAll('td')].map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); const rowOf = (model) => rows.find((r) => cells(r)[0] === model); const r = rowOf(\"glm-5.1\"); if (!r) throw new Error('能力表里没有 ' + \"glm-5.1\"); const got = cells(r); if (JSON.stringify(got) !== JSON.stringify([\"glm-5.1\", \"已覆盖\", \"low high\", \"修改 恢复内置\"])) throw new Error(\"glm-5.1\" + ' 这一行是：' + got.join(' | ')); return 'ok'; }",
       "expect": "ok"
     },
     {
       "action": "screenshot",
-      "name": "override-unsaved-lost"
+      "name": "override-glm-after-reload"
     }
   ],
   "teardown": [
@@ -200,6 +204,6 @@ category: smart-routing-capability
 ```
 ## 如何验收
 - [ ] glm-5.1 的覆盖弹窗初值勾着 low medium high；全部取消后保存，弹窗不关，红字「至少选择一个档位」
-- [ ] 只勾 low、high 保存后，这一行来源「已覆盖」，档位 low high
+- [ ] 只勾 low、high 保存后出现「保存成功」，这一行来源「已覆盖」，档位 low high
 - [ ] auto-chat 普通档（glm-5.1）覆盖后不显示「能力未确认」，选「固定」后力度下拉只有 low、high
-- [ ] 不点「保存更改」刷新后，glm-5.1 回到「未确认」、low medium high、只有「覆盖」
+- [ ] 刷新后 glm-5.1 仍是「已覆盖」、low high，操作「修改」「恢复内置」
