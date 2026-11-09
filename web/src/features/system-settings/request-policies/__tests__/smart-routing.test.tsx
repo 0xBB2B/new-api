@@ -2830,3 +2830,277 @@ it('saving an old route without endpoints and no interface pressed shows the tra
   ).toBeNull()
   expect(post).not.toHaveBeenCalled()
 })
+
+const NOT_SET_EFFORT = 'Not set (model default)'
+
+function scoringPanel() {
+  return within(screen.getByRole('tabpanel'))
+}
+
+function scorerEffortSelect() {
+  return scoringPanel().getByRole('combobox', { name: 'Reasoning effort' })
+}
+
+async function pickScorerEffort(option: string) {
+  await userEvent.click(scorerEffortSelect())
+  await userEvent.click(await screen.findByRole('option', { name: option }))
+}
+
+function mockScorerCapability(capability: {
+  known: boolean
+  no_thinking: boolean
+  efforts: string[]
+}) {
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    const response = (await base(url, config)) as {
+      data: { data: Record<string, unknown> }
+    }
+    if (url === '/api/option/smart_routing/thinking_capabilities') {
+      const body = response.data
+      if ('gpt-scorer' in body.data) body.data['gpt-scorer'] = capability
+    }
+    return response
+  })
+}
+
+function sentScorer() {
+  return (
+    vi.mocked(api.post).mock.calls[0][1] as {
+      route: { scorer: { effort: string } }
+    }
+  ).route.scorer
+}
+
+it('the scorer reasoning effort lists Not set and every level the scorer model supports, in order', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  mockScorerCapability({
+    known: true,
+    no_thinking: false,
+    efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+  })
+  show()
+  await openEditDialog('auto-gpt')
+  await waitFor(() => expect(scorerEffortSelect()).toBeEnabled())
+  await userEvent.click(scorerEffortSelect())
+  expect(effortOptionNames()).toEqual([
+    NOT_SET_EFFORT,
+    'none',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  ])
+  expect(scoringPanel().queryByText('Capability not confirmed')).toBeNull()
+})
+
+it('the scorer reasoning effort row sits right below the scorer model', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  const model = screen.getByRole('combobox', { name: 'Scorer model' })
+  const effort = await scoringPanel().findByRole('combobox', {
+    name: 'Reasoning effort',
+  })
+  const timeout = scoringPanel().getByLabelText('Timeout (ms)')
+  expect(model.compareDocumentPosition(effort)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING
+  )
+  expect(effort.compareDocumentPosition(timeout)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING
+  )
+})
+
+it('an unconfirmed scorer model offers Not set, low, medium and high and shows the unconfirmed tag', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  expect(
+    await scoringPanel().findByText('Capability not confirmed')
+  ).toBeVisible()
+  await userEvent.click(scorerEffortSelect())
+  expect(effortOptionNames()).toEqual([NOT_SET_EFFORT, 'low', 'medium', 'high'])
+})
+
+it('switching the scorer to a model without thinking clears the chosen level and shows a grey notice', async () => {
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  await pickScorerEffort('low')
+  await pickModel('Scorer model', 'gpt-4.1')
+  expect(
+    await scoringPanel().findByText(
+      'This model does not support reasoning effort. No reasoning parameter is sent with the request'
+    )
+  ).toBeVisible()
+  expect(
+    scoringPanel().queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  expect(screen.getByRole('tab', { name: /^Scoring/ })).toHaveTextContent(
+    'gpt-4.1 · No thinking'
+  )
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentScorer().effort).toBe('')
+})
+
+it('a failing capability request disables the scorer reasoning effort and says so', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/smart_routing/thinking_capabilities') {
+      throw new Error('capabilities down')
+    }
+    return base(url, config)
+  })
+  show()
+  await openEditDialog('auto-gpt')
+  expect(
+    await scoringPanel().findByText('Thinking capability failed to load')
+  ).toBeVisible()
+  expect(scorerEffortSelect()).toBeDisabled()
+})
+
+it('a new virtual model without a scorer model has a disabled reasoning effort showing Not set', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Add virtual model' })
+  )
+  await screen.findByRole('dialog')
+  expect(scorerEffortSelect()).toBeDisabled()
+  expect(scorerEffortSelect()).toHaveTextContent(NOT_SET_EFFORT)
+})
+
+it('choosing none is submitted as scorer.effort and shown under the Scoring tab', async () => {
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  mockScorerCapability({
+    known: true,
+    no_thinking: false,
+    efforts: ['none', 'low', 'high'],
+  })
+  show()
+  await openEditDialog('auto-gpt')
+  await waitFor(() => expect(scorerEffortSelect()).toBeEnabled())
+  await pickScorerEffort('none')
+  expect(screen.getByRole('tab', { name: /^Scoring/ })).toHaveTextContent(
+    'gpt-scorer · none'
+  )
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentScorer().effort).toBe('none')
+})
+
+it('the Scoring tab summary says Model default when no level is chosen', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  expect(screen.getByRole('tab', { name: /^Scoring/ })).toHaveTextContent(
+    'gpt-scorer · Model default'
+  )
+})
+
+it('a stored virtual model without scorer.effort opens on Not set and is saved with an empty effort', async () => {
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  expect(scorerEffortSelect()).toHaveTextContent(NOT_SET_EFFORT)
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentScorer().effort).toBe('')
+})
+
+it('a server error on scorer.effort keeps the dialog on Scoring and shows it under the row', async () => {
+  mockDialogApis({
+    errors: [
+      {
+        field: 'scorer.effort',
+        message: { key: 'Select a valid reasoning effort' },
+      },
+    ],
+    endpoints: [],
+  })
+  show()
+  const dialog = await openEditDialog('auto-gpt')
+  await openTab(/^Advisor/)
+  await saveDialog()
+  expect(
+    await within(dialog).findByText('Select a valid reasoning effort')
+  ).toBeVisible()
+  expectSelectedTab(/^Scoring/)
+})
+
+it('the scorer reasoning effort help explains the empty choice, the closest-level rule and the timeout', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  await userEvent.hover(
+    scoringPanel().getByRole('button', { name: 'Reasoning effort help' })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getAllByText(
+        'Leave empty to send no reasoning parameter and let the model decide. A selected level the model does not support is switched to the closest level in the capability table before sending. Scorer output has no length limit; the timeout bounds how long it takes. The list only shows the levels this model supports'
+      ).length
+    ).toBeGreaterThan(0)
+  )
+})
+
+it('every locale has the scorer reasoning effort texts', () => {
+  const keys = [
+    NOT_SET_EFFORT,
+    'Model default',
+    'Leave empty to send no reasoning parameter and let the model decide. A selected level the model does not support is switched to the closest level in the capability table before sending. Scorer output has no length limit; the timeout bounds how long it takes. The list only shows the levels this model supports',
+  ]
+  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
+  for (const [name, locale] of Object.entries(locales)) {
+    const entries = locale.translation as Record<string, string>
+    for (const key of keys) {
+      expect(entries[key], `${name} ${key}`).toEqual(expect.any(String))
+    }
+  }
+})
+
+it('a stored scorer model without thinking opens with the grey notice and is saved with an empty effort', async () => {
+  setRoutes([
+    {
+      ...autoGpt,
+      scorer: { ...autoGpt.scorer, model: 'gpt-4.1', effort: 'low' },
+    },
+    autoChat,
+  ])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  expect(
+    await scoringPanel().findByText(
+      'This model does not support reasoning effort. No reasoning parameter is sent with the request'
+    )
+  ).toBeVisible()
+  expect(
+    scoringPanel().queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentScorer().effort).toBe('')
+})
+
+it('the unconfirmed tag on the scorer reasoning effort row explains itself on focus', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  const badge = await scoringPanel().findByText('Capability not confirmed')
+  const trigger = badge.closest<HTMLElement>('[tabindex]')
+  expect(trigger).not.toBeNull()
+  act(() => trigger?.focus())
+  expect(
+    (
+      await screen.findAllByText(
+        'This model is not in the built-in capability table. Add it under Model thinking capabilities'
+      )
+    ).length
+  ).toBeGreaterThan(0)
+})

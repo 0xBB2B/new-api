@@ -134,10 +134,21 @@ export function tierEffortSummary(
   })
 }
 
-export function slotSummaries(route: SmartRoute, t: TFunction) {
+export function slotSummaries(
+  route: SmartRoute,
+  t: TFunction,
+  scorerCapability: EffectiveCapability
+) {
   const tierCount = SMART_TIER_IDS.filter((id) => route.tiers[id].model).length
+  const { model, effort } = route.scorer
+  let scorer = t('Not set')
+  if (model) {
+    scorer = scorerCapability.noThinking
+      ? `${model} · ${t('No thinking')}`
+      : `${model} · ${effort || t('Model default')}`
+  }
   return {
-    scorer: route.scorer.model || t('Not set'),
+    scorer,
     tiers: t('{{count}}/3 set', { count: tierCount }),
     advisor: route.advisor.model || t('Not set'),
   }

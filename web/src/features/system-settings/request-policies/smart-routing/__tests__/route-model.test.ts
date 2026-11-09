@@ -55,7 +55,7 @@ function validValues(): SmartRoute {
       normal: tier(),
       hard: tier(),
     },
-    scorer: { model: 's', groups: ['api'], timeout_ms: 2000 },
+    scorer: { model: 's', groups: ['api'], timeout_ms: 2000, effort: '' },
     advisor: { model: 'a', groups: ['api'], after_dissatisfied: 2 },
   }
 }
@@ -63,7 +63,8 @@ function validValues(): SmartRoute {
 function route(
   models: Record<string, string>,
   scorer = '',
-  advisor = ''
+  advisor = '',
+  scorerEffort: SmartEffort | '' = ''
 ): SmartRoute {
   return {
     ...validValues(),
@@ -72,7 +73,12 @@ function route(
       normal: tier({ model: models.normal ?? '' }),
       hard: tier({ model: models.hard ?? '' }),
     },
-    scorer: { model: scorer, groups: [], timeout_ms: 2000 },
+    scorer: {
+      model: scorer,
+      groups: [],
+      timeout_ms: 2000,
+      effort: scorerEffort,
+    },
     advisor: { model: advisor, groups: [], after_dissatisfied: 2 },
   }
 }
@@ -298,7 +304,7 @@ describe('tierEffortSummary', () => {
 
 describe('slotSummaries', () => {
   it('reports unset slots for a new route', () => {
-    expect(slotSummaries(route({}), t)).toEqual({
+    expect(slotSummaries(route({}), t, cap(['low']))).toEqual({
       scorer: 'Not set',
       tiers: '0/3 set',
       advisor: 'Not set',
@@ -307,14 +313,45 @@ describe('slotSummaries', () => {
 
   it('counts tiers with a model', () => {
     expect(
-      slotSummaries(route({ simple: 'a', normal: 'b', hard: 'c' }), t).tiers
+      slotSummaries(
+        route({ simple: 'a', normal: 'b', hard: 'c' }),
+        t,
+        cap(['low'])
+      ).tiers
     ).toBe('3/3 set')
   })
 
-  it('shows scorer and advisor model names', () => {
-    const summary = slotSummaries(route({}, 'gpt-5.6-luna', 'gpt-5.6-sol'), t)
-    expect(summary.scorer).toBe('gpt-5.6-luna')
+  it('shows the advisor model name', () => {
+    const summary = slotSummaries(
+      route({}, 'gpt-5.6-luna', 'gpt-5.6-sol'),
+      t,
+      cap(['low'])
+    )
     expect(summary.advisor).toBe('gpt-5.6-sol')
+  })
+
+  it.each([
+    ['no scorer model', route({}), cap(['low']), 'Not set'],
+    [
+      'a scorer that cannot think',
+      route({}, 'gpt-4.1', '', 'low'),
+      cap([], true),
+      'gpt-4.1 · No thinking',
+    ],
+    [
+      'an empty effort',
+      route({}, 'gpt-5.6-luna'),
+      cap(['low', 'high']),
+      'gpt-5.6-luna · Model default',
+    ],
+    [
+      'a chosen effort',
+      route({}, 'gpt-5.6-luna', '', 'low'),
+      cap(['low', 'high']),
+      'gpt-5.6-luna · low',
+    ],
+  ])('scorer summary for %s', (_case, input, capability, expected) => {
+    expect(slotSummaries(input, t, capability).scorer).toBe(expected)
   })
 })
 

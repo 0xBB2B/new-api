@@ -4,8 +4,8 @@
 | 01 | 01-scorer-effort-setting | done | 2026-11-09 |
 | 02 | 02-scorer-request | done | 2026-11-09 |
 | 03 | 03-capability-scorer-models | done | 2026-11-09 |
-| 04 | 04-scorer-effort-field | in-progress | — |
+| 04 | 04-scorer-effort-field | done | 2026-11-09 |
 ## 当前
-并行组 1 已完成（03 审查补了一条内置查询含打分模型的回归用例，并修了测试文件格式）。并行组 2：02-scorer-request 已完成（审查发现原始返回可伪造日志行，已改为 %q 转义并补回归用例；另补了 Codex 换档、内置不思考模型、原文不进消费日志等用例）；04-scorer-effort-field（Review）。
+全部 4 步完成；04 审查后修了不支持思考那一行的标签组件、去掉重复判断、下拉宽度对齐原型，并补了两条用例。下一步：全量测试与收尾。
 ## 阻塞
 （无）

@@ -141,11 +141,13 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
   })
   const values = useWatch({ control: form.control }) as RouteFormValues
   const route = formValuesToRoute(values)
-  const summaries = slotSummaries(route, t)
 
   const askedModels = [
     ...new Set(
-      SMART_TIER_IDS.map((id) => route.tiers[id].model).filter(Boolean)
+      [
+        ...SMART_TIER_IDS.map((id) => route.tiers[id].model),
+        route.scorer.model,
+      ].filter(Boolean)
     ),
   ].sort()
   const builtinQuery = useQuery({
@@ -178,6 +180,13 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     normal: isUnavailable(route.tiers.normal.model),
     hard: isUnavailable(route.tiers.hard.model),
   }
+  const scorerCapability = effectiveCapability(
+    route.scorer.model,
+    builtin,
+    props.overrides
+  )
+  const summaries = slotSummaries(route, t, scorerCapability)
+  const scorerNoThinking = scorerCapability.noThinking
   const noThinkingKey = SMART_TIER_IDS.filter((id) => {
     const model = route.tiers[id].model
     const settled = model in builtin || !!props.overrides[model]
@@ -197,6 +206,11 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
       ])
     }
   }, [noThinkingKey, form])
+  useEffect(() => {
+    if (!scorerNoThinking) return
+    form.setValue('scorer.effort', '')
+    form.clearErrors('scorer.effort')
+  }, [scorerNoThinking, form])
   function isUnavailable(model: string) {
     return model !== '' && !(model in builtin) && !props.overrides[model]
   }
@@ -436,6 +450,10 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
                 <ScorerPanel
                   modelOptions={modelOptions}
                   groupOptions={groupOptions}
+                  capability={scorerCapability}
+                  unconfirmed={isUnconfirmed(route.scorer.model)}
+                  unavailable={isUnavailable(route.scorer.model)}
+                  failed={builtinQuery.isError}
                 />
               </TabsContent>
               <TabsContent value='tiers'>
