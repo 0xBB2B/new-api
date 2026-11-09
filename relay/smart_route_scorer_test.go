@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -253,9 +254,14 @@ func TestRunSmartRouteScorer_SendsFixedChatRequest(t *testing.T) {
 	_, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(5000, "api"), in)
 
 	require.NoError(t, err)
+	raw := <-f.bodies
+	var fields map[string]any
+	require.NoError(t, common.Unmarshal(raw, &fields))
+	assert.NotContains(t, fields, "max_tokens")
+	assert.NotContains(t, fields, "max_completion_tokens")
+	assert.NotContains(t, fields, "reasoning_effort")
 	var sent struct {
 		Model       string  `json:"model"`
-		MaxTokens   int     `json:"max_tokens"`
 		Temperature float64 `json:"temperature"`
 		Stream      bool    `json:"stream"`
 		Messages    []struct {
@@ -263,10 +269,9 @@ func TestRunSmartRouteScorer_SendsFixedChatRequest(t *testing.T) {
 			Content string `json:"content"`
 		} `json:"messages"`
 	}
-	require.NoError(t, common.Unmarshal(<-f.bodies, &sent))
+	require.NoError(t, common.Unmarshal(raw, &sent))
 	system, user := smartroute.BuildScorerMessages(smartroute.BuildScorerInput(in, 2), in.Features)
 	assert.Equal(t, "scorer-x", sent.Model)
-	assert.Equal(t, 300, sent.MaxTokens)
 	assert.Equal(t, 0.0, sent.Temperature)
 	assert.False(t, sent.Stream)
 	require.Len(t, sent.Messages, 2)
@@ -440,23 +445,21 @@ func TestRunSmartRouteScorer_CodexChannelGetsResponsesRequest(t *testing.T) {
 	assert.True(t, strings.HasSuffix(<-f.paths, "/responses"))
 
 	var sent struct {
-		Model           string `json:"model"`
-		MaxOutputTokens *int   `json:"max_output_tokens"`
-		Reasoning       struct {
-			Effort string `json:"effort"`
-		} `json:"reasoning"`
-		Stream       bool    `json:"stream"`
-		Messages     []any   `json:"messages"`
-		MaxTokens    *int    `json:"max_tokens"`
-		Input        any     `json:"input"`
-		Instructions string  `json:"instructions"`
-		Temperature  float64 `json:"temperature"`
+		Model           string  `json:"model"`
+		MaxOutputTokens *int    `json:"max_output_tokens"`
+		Reasoning       any     `json:"reasoning"`
+		Stream          bool    `json:"stream"`
+		Messages        []any   `json:"messages"`
+		MaxTokens       *int    `json:"max_tokens"`
+		Input           any     `json:"input"`
+		Instructions    string  `json:"instructions"`
+		Temperature     float64 `json:"temperature"`
 	}
 	require.NoError(t, common.Unmarshal(<-f.bodies, &sent))
 	system, user := smartroute.BuildScorerMessages(smartroute.BuildScorerInput(in, 2), in.Features)
 	assert.Equal(t, "scorer-x", sent.Model)
 	assert.Nil(t, sent.MaxOutputTokens)
-	assert.Equal(t, "low", sent.Reasoning.Effort)
+	assert.Nil(t, sent.Reasoning)
 	assert.Empty(t, sent.Messages)
 	assert.Nil(t, sent.MaxTokens)
 	assert.Contains(t, fmt.Sprint(sent.Input, sent.Instructions), user)
@@ -783,4 +786,217 @@ func TestRunSmartRouteScorer_IgnoresTheMainRequestFormatFilter(t *testing.T) {
 			assert.True(t, strings.HasSuffix(<-f.paths, tt.wantSuffix))
 		})
 	}
+}
+
+func setScorerCapabilities(t *testing.T, overrides string) {
+	t.Helper()
+	prev := operation_setting.ThinkingCapabilitiesToString()
+	operation_setting.LoadThinkingCapabilitiesFromJSONString(overrides)
+	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(prev) })
+}
+
+func captureServerWarnings(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	common.LogWriterMu.Lock()
+	prev := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &buf
+	common.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultErrorWriter = prev
+		common.LogWriterMu.Unlock()
+	})
+	return &buf
+}
+
+func TestRunSmartRouteScorer_EffortIsSnappedToModelCapability(t *testing.T) {
+	tests := []struct {
+		name         string
+		capabilities string
+		effort       string
+		want         any
+	}{
+		{"supported level is sent as is", `{"scorer-x":{"efforts":["none","low","high","max"]}}`, "none", "none"},
+		{"unsupported level snaps to the nearest lower one", `{"scorer-x":{"efforts":["none","low"]}}`, "high", "low"},
+		{"tie between two levels picks the higher", `{"scorer-x":{"efforts":["none","high"]}}`, "low", "high"},
+		{"model without thinking gets no parameter", `{"scorer-x":{"no_thinking":true}}`, "low", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			setScorerCapabilities(t, tt.capabilities)
+			route := scorerRoute(5000, "api")
+			route.Scorer.Effort = tt.effort
+
+			_, err := runSmartRouteScorer(scorerContext("api"), route, scorerInspection(t))
+
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, common.Unmarshal(<-f.bodies, &fields))
+			if tt.want == nil {
+				assert.NotContains(t, fields, "reasoning_effort")
+			} else {
+				assert.Equal(t, tt.want, fields["reasoning_effort"])
+			}
+			assert.NotContains(t, fields, "max_tokens")
+			assert.NotContains(t, fields, "max_completion_tokens")
+		})
+	}
+}
+
+func TestRunSmartRouteScorer_CodexChannelSendsConfiguredEffort(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	setScorerCapabilities(t, `{"scorer-x":{"efforts":["low","medium","high"]}}`)
+	addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "default", f.upstream.URL)
+	route := scorerRoute(5000, "default", "api")
+	route.Scorer.Effort = "low"
+
+	_, err := runSmartRouteScorer(scorerContext("auto"), route, scorerInspection(t))
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(<-f.paths, "/responses"))
+	var fields map[string]any
+	require.NoError(t, common.Unmarshal(<-f.bodies, &fields))
+	assert.Equal(t, map[string]any{"effort": "low"}, fields["reasoning"])
+	assert.NotContains(t, fields, "max_output_tokens")
+}
+
+func TestRunSmartRouteScorer_InvalidReplyWritesServerWarning(t *testing.T) {
+	head := strings.Repeat("甲", 500)
+	var parseProbe map[string]any
+	nonJSONErr := common.UnmarshalJsonStr("I think this is a planning task.", &parseProbe)
+	require.Error(t, nonJSONErr)
+	tests := []struct {
+		name         string
+		content      string
+		wantInLog    []string
+		wantNotInLog []string
+	}{
+		{"non-JSON text", "I think this is a planning task.", []string{"smart-a", "scorer-x", "I think this is a planning task.", nonJSONErr.Error()}, nil},
+		{"label outside the allowed options", `{"task_type":"nonsense","reasoning":"high","workload":"few_steps","risk":"low","domain":"code","confidence":0.9,"feedback":["neutral"]}`, []string{"smart-a", "scorer-x", "nonsense", "unknown label value"}, nil},
+		{"long reply is cut to 500 characters", head + strings.Repeat("乙", 1500), []string{head}, []string{"乙"}},
+		{"empty reply", "", []string{"smart-a", "scorer-x", "(empty)"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			f.content = tt.content
+			logs := captureServerWarnings(t)
+
+			outcome, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(5000, "api"), scorerInspection(t))
+
+			require.NoError(t, err)
+			assert.Equal(t, smartroute.FailureScorerInvalid, outcome.Failure)
+			assert.Contains(t, logs.String(), "returned unparsable output")
+			for _, want := range tt.wantInLog {
+				assert.Contains(t, logs.String(), want)
+			}
+			for _, unwanted := range tt.wantNotInLog {
+				assert.NotContains(t, logs.String(), unwanted)
+			}
+
+			require.NotNil(t, outcome.Settle)
+			outcome.Settle("normal", "gpt-x")
+			consumeLogs := scorerConsumeLogs(t, f.db)
+			require.Len(t, consumeLogs, 1)
+			if tt.content != "" {
+				assert.NotContains(t, fmt.Sprint(consumeLogs[0].Content, consumeLogs[0].Other), tt.content)
+			}
+		})
+	}
+}
+
+func TestRunSmartRouteScorer_NoUnparsableWarningUnlessReplyIsInvalid(t *testing.T) {
+	tests := []struct {
+		name      string
+		timeoutMs int
+		setup     func(f *scorerFixture)
+	}{
+		{"valid labels", 5000, func(f *scorerFixture) {}},
+		{"upstream 500", 5000, func(f *scorerFixture) { f.status = http.StatusInternalServerError }},
+		{"timeout", 100, func(f *scorerFixture) { f.delay = 500 * time.Millisecond }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			tt.setup(f)
+			logs := captureServerWarnings(t)
+
+			_, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(tt.timeoutMs, "api"), scorerInspection(t))
+
+			require.NoError(t, err)
+			assert.NotContains(t, logs.String(), "returned unparsable output")
+		})
+	}
+}
+
+func TestRunSmartRouteScorer_InvalidReplyCannotForgeLogLines(t *testing.T) {
+	const forged = "[ERR] 2026/11/09 - 12:00:00 | SYSTEM | fake line"
+	f := setupScorerFixture(t, scorerTestQuota)
+	f.content = "oops\n" + forged
+	logs := captureServerWarnings(t)
+
+	outcome, err := runSmartRouteScorer(scorerContext("api"), scorerRoute(5000, "api"), scorerInspection(t))
+
+	require.NoError(t, err)
+	assert.Equal(t, smartroute.FailureScorerInvalid, outcome.Failure)
+	assert.Contains(t, logs.String(), `oops\n`)
+	for line := range strings.SplitSeq(logs.String(), "\n") {
+		assert.False(t, strings.HasPrefix(line, forged), "forged log line: %q", line)
+	}
+}
+
+func TestRunSmartRouteScorer_CodexChannelSnapsEffortToCapability(t *testing.T) {
+	tests := []struct {
+		name          string
+		capabilities  string
+		effort        string
+		wantReasoning any
+	}{
+		{"unsupported level snaps down", `{"scorer-x":{"efforts":["none","low"]}}`, "high", map[string]any{"effort": "low"}},
+		{"model without thinking gets no reasoning field", `{"scorer-x":{"no_thinking":true}}`, "low", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupScorerFixture(t, scorerTestQuota)
+			setScorerCapabilities(t, tt.capabilities)
+			addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "default", f.upstream.URL)
+			route := scorerRoute(5000, "default", "api")
+			route.Scorer.Effort = tt.effort
+
+			_, err := runSmartRouteScorer(scorerContext("auto"), route, scorerInspection(t))
+
+			require.NoError(t, err)
+			assert.True(t, strings.HasSuffix(<-f.paths, "/responses"))
+			var fields map[string]any
+			require.NoError(t, common.Unmarshal(<-f.bodies, &fields))
+			if tt.wantReasoning == nil {
+				assert.NotContains(t, fields, "reasoning")
+			} else {
+				assert.Equal(t, tt.wantReasoning, fields["reasoning"])
+			}
+		})
+	}
+}
+
+func TestRunSmartRouteScorer_BuiltInNoThinkingModelGetsNoEffort(t *testing.T) {
+	f := setupScorerFixture(t, scorerTestQuota)
+	priority, weight := int64(0), uint(100)
+	require.NoError(t, f.db.Model(&model.Channel{}).Where("id = ?", 1).Update("models", "scorer-x,gpt-4o").Error)
+	require.NoError(t, f.db.Create(&model.Ability{Group: "api", Model: "gpt-4o", ChannelId: 1, Enabled: true, Priority: &priority, Weight: weight}).Error)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"scorer-x":0.01,"gpt-4o":0.01}`))
+	model.InitChannelCache()
+	setScorerCapabilities(t, `{}`)
+	route := scorerRoute(5000, "api")
+	route.Scorer.Model = "gpt-4o"
+	route.Scorer.Effort = "low"
+
+	_, err := runSmartRouteScorer(scorerContext("api"), route, scorerInspection(t))
+
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, common.Unmarshal(<-f.bodies, &fields))
+	assert.Equal(t, "gpt-4o", fields["model"])
+	assert.NotContains(t, fields, "reasoning_effort")
 }
