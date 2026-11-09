@@ -47,7 +47,6 @@ import type { BuiltinThinkingCapabilities } from './api'
 import { effectiveCapability, effortOverflow } from './capability'
 import {
   endpointShortNames,
-  hasMissingEndpoints,
   parseSmartRoutes,
   serializeSmartRoutes,
   smartRoutesErrorMessage,
@@ -60,7 +59,6 @@ import type { SmartRoute, ThinkingCapabilityOverride } from './types'
 
 type SmartRoutesCardProps = {
   value: string
-  onChange: (value: string) => void
   onSave: (routes: SmartRoute[]) => Promise<void>
   saving: boolean
   overrides: Record<string, ThinkingCapabilityOverride>
@@ -79,22 +77,44 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
     index: number
   } | null>(null)
   const [deletingPending, setDeletingPending] = useState(false)
+  const [draft, setDraft] = useState<string | null>(null)
+  const [baseline, setBaseline] = useState('')
+  const [discardOpen, setDiscardOpen] = useState(false)
   const { routes } = parseSmartRoutes(props.value)
+  const parsedDraft = draft === null ? null : parseSmartRoutes(draft)
+  const unchanged =
+    parsedDraft !== null &&
+    parsedDraft.error === null &&
+    serializeSmartRoutes(parsedDraft.routes) === baseline
 
   const changeMode = (next: string) => {
     if (next === 'json') {
-      props.onChange(serializeSmartRoutes(routes, 2))
+      setBaseline(serializeSmartRoutes(routes))
+      setDraft(serializeSmartRoutes(routes, 2))
       setMode('json')
       return
     }
-    const parsed = parseSmartRoutes(props.value)
-    const error =
-      parsed.error ?? (hasMissingEndpoints(parsed.routes) ? 'incomplete' : null)
-    if (error) {
-      toast.error(smartRoutesErrorMessage(t, error))
+    if (unchanged) {
+      setDraft(null)
+      setMode('visual')
       return
     }
-    setMode('visual')
+    setDiscardOpen(true)
+  }
+
+  const saveJson = async () => {
+    const parsed = parseSmartRoutes(draft ?? '')
+    if (parsed.error) {
+      toast.error(smartRoutesErrorMessage(t, parsed.error))
+      return
+    }
+    try {
+      await props.onSave(parsed.routes)
+      setBaseline(serializeSmartRoutes(parsed.routes))
+      setDraft(serializeSmartRoutes(parsed.routes, 2))
+    } catch {
+      // 错误提示已由保存请求统一弹出
+    }
   }
 
   return (
@@ -119,11 +139,19 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
         <Tabs value={mode} onValueChange={changeMode} className='gap-0'>
           <div className='flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-5'>
             <TabsList aria-label={t('Virtual model editor mode')}>
-              <TabsTrigger value='visual' className='px-3'>
+              <TabsTrigger
+                value='visual'
+                className='px-3'
+                disabled={props.saving}
+              >
                 <ListFilter aria-hidden='true' />
                 {t('Visual')}
               </TabsTrigger>
-              <TabsTrigger value='json' className='px-3'>
+              <TabsTrigger
+                value='json'
+                className='px-3'
+                disabled={props.saving}
+              >
                 <Braces aria-hidden='true' />
                 JSON
               </TabsTrigger>
@@ -156,10 +184,20 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
             <div className='p-4 sm:p-5'>
               <JsonCodeEditor
                 ariaLabel={t('Smart routing')}
-                value={props.value}
-                onChange={props.onChange}
+                value={draft ?? ''}
+                onChange={setDraft}
+                disabled={props.saving}
                 heightClassName='h-[360px] min-h-[360px] max-h-[360px]'
               />
+              <div className='mt-3 flex justify-end'>
+                <Button
+                  size='sm'
+                  disabled={unchanged || props.saving}
+                  onClick={saveJson}
+                >
+                  {props.saving ? t('Saving...') : t('Save')}
+                </Button>
+              </div>
             </div>
           </TabsContent>
         </Tabs>
@@ -185,6 +223,22 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
           }
         />
       )}
+
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        title={t('Discard unsaved changes?')}
+        desc={t(
+          'The changes in JSON have not been saved. Switching to visual will discard them.'
+        )}
+        confirmText={t('Discard changes')}
+        handleConfirm={() => {
+          setDiscardOpen(false)
+          setDraft(null)
+          setMode('visual')
+        }}
+        destructive
+      />
 
       {deleting !== null && (
         <ConfirmDialog

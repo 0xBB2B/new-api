@@ -2,11 +2,11 @@
 | 序号 | Plan | 状态 | 完成时间 |
 |---|---|---|---|
 | 01 | 01-instant-save-visual | done | 2026-11-09 |
-| 02 | 02-json-save | pending | — |
+| 02 | 02-json-save | done | 2026-11-09 |
 | 03 | 03-webview-cases | pending | — |
 
 ## 当前
-正在执行 `02-json-save.md`：Red。01 Review 发现提交中能关弹窗、恢复内置可并发保存，已自修并复查通过。用例 `deleting one of two same-named records keeps the other` 依赖 JSON 视图保存，留给 02 改写。
+正在执行 `03-webview-cases.md`。02 Review 发现 JSON 保存中仍可编辑、可切标签，已自修（保存中锁住编辑框和标签页）并复查通过。
 
 ## 阻塞
 （无）

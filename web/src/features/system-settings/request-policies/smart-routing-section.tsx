@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
@@ -45,13 +44,12 @@ import { useSavePolicy } from './use-save-policy'
 export function SmartRoutingSection() {
   const { t } = useTranslation()
   const mutation = useSavePolicy()
-  const [draft, setDraft] = useState<string | null>(null)
   const query = useQuery({
     queryKey: ['request-policy'],
     queryFn: getPolicyConfig,
     staleTime: Infinity,
   })
-  const value = draft ?? query.data?.options[SMART_ROUTES_OPTION_KEY] ?? ''
+  const value = query.data?.options[SMART_ROUTES_OPTION_KEY] ?? ''
   const { routes } = parseSmartRoutes(value)
   const overrides = parseThinkingCapabilities(
     query.data?.options[SMART_THINKING_CAPABILITIES_OPTION_KEY] ?? ''
@@ -76,7 +74,6 @@ export function SmartRoutingSection() {
     await mutation.mutateAsync({
       [SMART_ROUTES_OPTION_KEY]: serializeSmartRoutes(next),
     })
-    setDraft(null)
   }
 
   const saveCapabilities = async (
@@ -94,7 +91,6 @@ export function SmartRoutingSection() {
         value={value}
         overrides={overrides}
         builtin={builtinQuery.data}
-        onChange={setDraft}
         onSave={saveRoutes}
         saving={mutation.isPending}
       />

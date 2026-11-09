@@ -446,42 +446,228 @@ it.each(failureKinds)(
   }
 )
 
-it('a non-array JSON draft reports an error and stays in the JSON view', async () => {
-  show()
+async function openJsonEditor() {
   await userEvent.click(await screen.findByRole('tab', { name: 'JSON' }))
-  const editor = await screen.findByRole('textbox')
-  fireEvent.input(editor, { target: { value: '{"name":"x"}' } })
-  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
-  expect(await screen.findByText(/must be an array/i)).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'JSON' })).toHaveAttribute(
+  return screen.findByRole('textbox')
+}
+
+async function editJson(value: string) {
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value } })
+  return editor
+}
+
+function jsonSave() {
+  return screen.getByRole('button', { name: 'Save' })
+}
+
+function hardTierToGpt55(editor: HTMLElement, indent: number | string = 2) {
+  const routes = JSON.parse((editor as HTMLTextAreaElement).value) as {
+    tiers: { hard: { model: string } }
+  }[]
+  routes[0].tiers.hard.model = 'gpt-5.5'
+  return JSON.stringify(routes, null, indent)
+}
+
+function expectSelectedTabName(name: string) {
+  expect(screen.getByRole('tab', { name })).toHaveAttribute(
     'aria-selected',
     'true'
   )
-  expect(api.patch).not.toHaveBeenCalled()
-})
+}
 
 async function writeJson(value: string) {
-  await userEvent.click(await screen.findByRole('tab', { name: 'JSON' }))
-  const editor = await screen.findByRole('textbox')
-  fireEvent.input(editor, { target: { value } })
+  const editor = await editJson(value)
+  await userEvent.click(jsonSave())
+  await waitFor(() => expect(jsonSave()).toBeDisabled())
   await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
   return editor
 }
 
-it.each(['[{"name":"x"}]', '[null]'])(
-  'malformed JSON %s reports an error, stays in JSON view and keeps the text',
+it('the Save button exists and is disabled in the JSON view and is absent in the visual view', async () => {
+  show()
+  await virtualModelsTable()
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+  await openJsonEditor()
+  expect(jsonSave()).toBeDisabled()
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+})
+
+it('re-indenting or formatting the saved configuration keeps Save disabled', async () => {
+  show()
+  const editor = await openJsonEditor()
+  const saved = JSON.parse((editor as HTMLTextAreaElement).value)
+  fireEvent.input(editor, {
+    target: { value: JSON.stringify(saved, null, '\t') },
+  })
+  expect(jsonSave()).toBeDisabled()
+  fireEvent.input(editor, { target: { value: JSON.stringify(saved) } })
+  expect(jsonSave()).toBeDisabled()
+  await userEvent.click(screen.getByRole('button', { name: 'Format JSON' }))
+  expect(jsonSave()).toBeDisabled()
+})
+
+it('a broken JSON draft counts as changed and enables Save', async () => {
+  show()
+  await editJson('[{')
+  expect(jsonSave()).toBeEnabled()
+})
+
+it('saving a changed JSON draft sends only the routes and stays in the JSON view', async () => {
+  show()
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value: hardTierToGpt55(editor) } })
+  expect(jsonSave()).toBeEnabled()
+  await userEvent.click(jsonSave())
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(api.patch).mock.calls[0][0]).toBe(
+    '/api/option/request_policy'
+  )
+  expect(patchedKeys()).toEqual([ROUTES_KEY])
+  const sent = JSON.parse(
+    (
+      vi.mocked(api.patch).mock.calls[0][1] as {
+        options: Record<string, string>
+      }
+    ).options[ROUTES_KEY]
+  ) as { tiers: { hard: { model: string } } }[]
+  expect(sent[0].tiers.hard.model).toBe('gpt-5.5')
+  expect(await screen.findByText('Saved successfully')).toBeVisible()
+  expectSelectedTabName('JSON')
+  await waitFor(() => expect(jsonSave()).toBeDisabled())
+  expect(api.patch).toHaveBeenCalledTimes(1)
+})
+
+it.each([['{"name":"x"}'], ['[{"name":"x"}]'], ['[null]'], ['[{']])(
+  'saving the invalid JSON draft %s reports an error, calls nothing and keeps the text',
   async (value) => {
     show()
-    const editor = await writeJson(value)
+    const editor = await editJson(value)
+    await userEvent.click(jsonSave())
     expect(
-      await screen.findByText(/must be|must include|invalid/i)
+      await screen.findByText(/must be|must include|invalid|expected/i)
     ).toBeVisible()
-    expect(screen.getByRole('tab', { name: 'JSON' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(editor).toBeInTheDocument()
+    expect(api.patch).not.toHaveBeenCalled()
+    expectSelectedTabName('JSON')
     expect(editor).toHaveValue(value)
+  }
+)
+
+it('while the JSON save is pending Save, the editor and both tabs are disabled', async () => {
+  const finish = holdPatch()
+  show()
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value: hardTierToGpt55(editor) } })
+  await userEvent.click(jsonSave())
+  expect(
+    await screen.findByRole('button', { name: 'Saving...' })
+  ).toBeDisabled()
+  expect(editor).toBeDisabled()
+  expect(screen.getByRole('tab', { name: /Visual/ })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  expect(screen.getByRole('tab', { name: /JSON/ })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  finish()
+  await waitFor(() => expect(jsonSave()).toBeDisabled())
+  expect(screen.queryByRole('button', { name: 'Saving...' })).toBeNull()
+})
+
+it.each(failureKinds)(
+  'a %s JSON save shows one error, keeps the draft and can be retried',
+  async (kind) => {
+    show()
+    const editor = await openJsonEditor()
+    const draft = hardTierToGpt55(editor)
+    fireEvent.input(editor, { target: { value: draft } })
+    const restore = failPatch(kind)
+    await userEvent.click(jsonSave())
+    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
+    await waitFor(() => expect(jsonSave()).toBeEnabled())
+    expect(toastCount()).toBe(1)
+    if (kind === 'rejected') {
+      expect(await screen.findByText('Save rejected')).toBeVisible()
+    }
+    expect(editor).toHaveValue(draft)
+    expectSelectedTabName('JSON')
+
+    restore()
+    await userEvent.click(jsonSave())
+    expect(await screen.findByText('Saved successfully')).toBeVisible()
+    await waitFor(() => expect(jsonSave()).toBeDisabled())
+  }
+)
+
+it('switching to visual with unsaved JSON changes asks first and Cancel keeps the draft', async () => {
+  show()
+  const editor = await openJsonEditor()
+  const draft = hardTierToGpt55(editor)
+  fireEvent.input(editor, { target: { value: draft } })
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(await screen.findByText('Discard unsaved changes?')).toBeVisible()
+  expect(
+    screen.getByText(
+      'The changes in JSON have not been saved. Switching to visual will discard them.'
+    )
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Discard changes' })).toBeVisible()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
+  )
+  expectSelectedTabName('JSON')
+  expect(editor).toHaveValue(draft)
+  expect(api.patch).not.toHaveBeenCalled()
+})
+
+it('Discard changes returns to the visual view with the saved configuration and calls nothing', async () => {
+  show()
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value: hardTierToGpt55(editor) } })
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Discard changes' })
+  )
+  expectSelectedTabName('Visual')
+  const gpt = await screen.findByRole('row', { name: /auto-gpt/ })
+  expect(gpt).toHaveTextContent('gpt-max')
+  expect(gpt).not.toHaveTextContent('gpt-5.5')
+  expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
+  expect(api.patch).not.toHaveBeenCalled()
+})
+
+it('switching to visual without JSON changes does not ask', async () => {
+  show()
+  await openJsonEditor()
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
+  expectSelectedTabName('Visual')
+  expect(await virtualModelsTable()).toBeVisible()
+})
+
+it('Add virtual model is disabled in the JSON view', async () => {
+  show()
+  await openJsonEditor()
+  const buttons = screen.getAllByRole('button', { name: 'Add virtual model' })
+  expect(buttons.length).toBeGreaterThan(0)
+  for (const button of buttons) expect(button).toBeDisabled()
+})
+
+it.each(['[{"name":"x"}]', '[null]'])(
+  'malformed JSON %s asks before switching to visual and keeps the text on Cancel',
+  async (value) => {
+    show()
+    const editor = await editJson(value)
+    await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+    expect(await screen.findByText('Discard unsaved changes?')).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expectSelectedTabName('JSON')
+    expect(editor).toHaveValue(value)
+    expect(api.patch).not.toHaveBeenCalled()
   }
 )
 
@@ -502,9 +688,15 @@ it('deleting one of two same-named records keeps the other', async () => {
       name: 'Delete',
     })
   )
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  expect(savedRoutes().map((route) => route.name)).toEqual(['dup'])
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
+  const last = vi.mocked(api.patch).mock.calls[1][1] as {
+    options: Record<string, string>
+  }
+  expect(
+    (JSON.parse(last.options[ROUTES_KEY]) as { name: string }[]).map(
+      (route) => route.name
+    )
+  ).toEqual(['dup'])
 })
 
 it('each row has an actions group named after the virtual model', async () => {
@@ -1453,6 +1645,7 @@ it('a name changed in the JSON view can be changed back in the visual view', asy
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(post).toHaveBeenCalledTimes(2)
+  expect(api.patch).toHaveBeenCalledTimes(3)
   expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
 })
 
@@ -1669,16 +1862,16 @@ it('the table shows No thinking on the gpt-4.1 tier of auto-chat', async () => {
   await waitFor(() => expect(chat).toHaveTextContent('No thinking'))
 })
 
-it('a route pasted in the JSON view without endpoints keeps the JSON view and shows an incomplete notice', async () => {
+it('a route pasted in the JSON view without endpoints asks before switching to visual', async () => {
   show()
   const { endpoints: _drop, ...withoutEndpoints } = autoGpt
-  const editor = await writeJson(JSON.stringify([withoutEndpoints]))
-  expect(await screen.findByText(/must include/i)).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'JSON' })).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  expect(editor).toBeInTheDocument()
+  const draft = JSON.stringify([withoutEndpoints])
+  const editor = await editJson(draft)
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(await screen.findByText('Discard unsaved changes?')).toBeVisible()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expectSelectedTabName('JSON')
+  expect(editor).toHaveValue(draft)
   expect(screen.getByText('Virtual models')).toBeVisible()
 })
 
@@ -1744,6 +1937,19 @@ it('the Chinese text for a missing interface is the agreed sentence', () => {
     i18next.removeResourceBundle('zh', 'translation')
     if (original) i18next.addResourceBundle('zh', 'translation', original)
   }
+})
+
+it('the unsaved JSON changes sentence exists in all seven locales and zh matches the agreed text', () => {
+  const key =
+    'The changes in JSON have not been saved. Switching to visual will discard them.'
+  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
+  for (const [name, locale] of Object.entries(locales)) {
+    const entries = locale.translation as Record<string, string>
+    expect(entries[key], name).toEqual(expect.any(String))
+  }
+  expect((zh.translation as Record<string, string>)[key]).toBe(
+    'JSON 里的改动还没保存，切回可视化会丢掉这些改动。'
+  )
 })
 
 it('the error count key has every plural form in all seven locales, with no Cyrillic outside Russian', () => {
