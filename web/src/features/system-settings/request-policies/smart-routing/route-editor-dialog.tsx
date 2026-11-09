@@ -59,7 +59,7 @@ import {
   validateSmartRoute,
   type BuiltinThinkingCapabilities,
 } from './api'
-import { effectiveCapability } from './capability'
+import { capabilityModelsOfRoutes, effectiveCapability } from './capability'
 import {
   errorFields,
   firstErrorLocation,
@@ -142,14 +142,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
   const values = useWatch({ control: form.control }) as RouteFormValues
   const route = formValuesToRoute(values)
 
-  const askedModels = [
-    ...new Set(
-      [
-        ...SMART_TIER_IDS.map((id) => route.tiers[id].model),
-        route.scorer.model,
-      ].filter(Boolean)
-    ),
-  ].sort()
+  const askedModels = capabilityModelsOfRoutes([route]).sort()
   const builtinQuery = useQuery({
     queryKey: ['smart-routing', 'builtin-capabilities', askedModels],
     queryFn: () => getBuiltinThinkingCapabilities(askedModels),
