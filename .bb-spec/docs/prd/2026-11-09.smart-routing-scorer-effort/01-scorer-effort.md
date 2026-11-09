@@ -11,7 +11,7 @@ date: 2026-11-09
 
 **用例（主路径）**
 - 场景：auto-gpt 的打分模型是 deepseek-v4.1-flash，挂在 OpenAI 兼容渠道上；「模型思考能力」里已把它覆盖成支持 none、low、high、max。
-- 操作：管理员编辑 auto-gpt，在「打分」页签的「思考力度」下拉里选 none，保存，再点「保存更改」；员工随后发"帮我规划下季度的招聘方案"。
+- 操作：管理员编辑 auto-gpt，在「打分」页签的「思考力度」下拉里选 none，保存；员工随后发"帮我规划下季度的招聘方案"。
 - 预期：上游收到的打分请求里 `reasoning_effort` 是 `none`，没有 `max_tokens`；打分返回完整标签，主请求落到困难档，不标「打分失败」；左栏「打分」页签小字写「deepseek-v4.1-flash · none」。
 
 **用例（主路径）**
@@ -57,6 +57,6 @@ date: 2026-11-09
 - [ ] C11：切换七种界面语言 → 新增文字都有翻译。
 
 ## 验证路径
-1. 在「模型思考能力」里把 deepseek-v4.1-flash 覆盖成支持 none、low、high、max → 编辑 auto-gpt，「打分」页签思考力度选 none，保存并「保存更改」→ 页签小字写「deepseek-v4.1-flash · none」。
+1. 在「模型思考能力」里把 deepseek-v4.1-flash 覆盖成支持 none、low、high、max → 编辑 auto-gpt，「打分」页签思考力度选 none，保存 → 页签小字写「deepseek-v4.1-flash · none」。
 2. 员工发一条新消息 → 上游收到的打分请求有 `reasoning_effort: none`、没有 `max_tokens`；打分消费记录的输出 token 远小于 300；主请求不标「打分失败」。
 3. 把思考力度改回留空 → 上游收到的打分请求里没有思考参数。
