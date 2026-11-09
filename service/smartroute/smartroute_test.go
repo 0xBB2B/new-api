@@ -1052,6 +1052,10 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 		{"unknown reasoning effort", func(r *operation_setting.SmartRoute) {
 			setTier(r, operation_setting.SmartTierHard, func(t *operation_setting.SmartRouteTier) { t.EffortMode = "fixed"; t.Effort = "ultra" })
 		}, "", "tiers.hard.effort", "Select a valid reasoning effort", nil},
+		{"unknown scorer effort", func(r *operation_setting.SmartRoute) { r.Scorer.Effort = "ultra" }, "",
+			"scorer.effort", "Select a valid reasoning effort", nil},
+		{"scorer effort is case sensitive", func(r *operation_setting.SmartRoute) { r.Scorer.Effort = "LOW" }, "",
+			"scorer.effort", "Select a valid reasoning effort", nil},
 	}
 
 	for _, tt := range tests {
@@ -1072,6 +1076,29 @@ func TestValidateRoute_SingleFieldErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRoute_ScorerEffort(t *testing.T) {
+	for _, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
+		t.Run("accepts "+effort, func(t *testing.T) {
+			setupValidateRouteTest(t)
+			route := validRoute()
+			route.Scorer.Effort = effort
+
+			assert.Empty(t, smartroute.ValidateRoute(route))
+		})
+	}
+
+	t.Run("old config without effort is valid", func(t *testing.T) {
+		setupValidateRouteTest(t)
+		var route operation_setting.SmartRoute
+		require.NoError(t, common.UnmarshalJsonStr(`{"name":"smart-a","scorer":{"model":"m-chat","groups":["api"],"timeout_ms":2000}}`, &route))
+
+		assert.Equal(t, "", route.Scorer.Effort)
+		for _, e := range smartroute.ValidateRoute(route) {
+			assert.NotEqual(t, "scorer.effort", e.Field)
+		}
+	})
 }
 
 func TestValidateRoute_SavedRouteWithSameNameIsNotDuplicate(t *testing.T) {
