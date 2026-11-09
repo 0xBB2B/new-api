@@ -2896,6 +2896,34 @@ it('the scorer reasoning effort lists Not set and every level the scorer model s
   expect(scoringPanel().queryByText('Capability not confirmed')).toBeNull()
 })
 
+it('the scorer reasoning effort follows the administrator override of the scorer model', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  setRoutes([
+    {
+      ...autoGpt,
+      scorer: { ...autoGpt.scorer, model: 'deepseek-v4.1-flash' },
+    },
+  ])
+  currentOptions[CAPABILITIES_KEY] = JSON.stringify({
+    'deepseek-v4.1-flash': {
+      no_thinking: false,
+      efforts: ['none', 'low', 'high', 'max'],
+    },
+  })
+  show()
+  await openEditDialog('auto-gpt')
+  await waitFor(() => expect(scorerEffortSelect()).toBeEnabled())
+  await userEvent.click(scorerEffortSelect())
+  expect(effortOptionNames()).toEqual([
+    NOT_SET_EFFORT,
+    'none',
+    'low',
+    'high',
+    'max',
+  ])
+  expect(scoringPanel().queryByText('Capability not confirmed')).toBeNull()
+})
+
 it('the scorer reasoning effort row sits right below the scorer model', async () => {
   mockDialogApis({ errors: [], endpoints: [] })
   show()

@@ -32,7 +32,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -52,7 +51,12 @@ import type { EffectiveCapability } from './capability'
 import { FieldInfo } from './field-info'
 import { SMART_TIER_IDS, tierEffortSummary } from './lib'
 import type { RouteFormValues } from './route-form'
-import { FIELD_ROW_CLASS, TierEffortField } from './tier-effort-field'
+import {
+  EffortCapabilityStatus,
+  FIELD_ROW_CLASS,
+  NoThinkingEffortRow,
+  TierEffortField,
+} from './tier-effort-field'
 import type { SmartTierId } from './types'
 
 type ModelFieldName =
@@ -216,21 +220,7 @@ function ScorerEffortField(props: {
   )
 
   if (props.capability.noThinking) {
-    return (
-      <div className={`${FIELD_ROW_CLASS} text-muted-foreground`}>
-        <div className='flex min-h-8 items-center gap-1'>
-          <Label className='text-muted-foreground'>
-            {t('Reasoning effort')}
-          </Label>
-          {help}
-        </div>
-        <p className='flex min-h-8 items-center text-sm'>
-          {t(
-            'This model does not support reasoning effort. No reasoning parameter is sent with the request'
-          )}
-        </p>
-      </div>
-    )
+    return <NoThinkingEffortRow help={help} />
   }
 
   return (
@@ -267,31 +257,10 @@ function ScorerEffortField(props: {
                   ))}
                 </SelectContent>
               </Select>
-              {props.unavailable && props.failed ? (
-                <span className='text-destructive text-sm'>
-                  {t('Thinking capability failed to load')}
-                </span>
-              ) : null}
-              {props.unconfirmed ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Badge
-                        variant='warning'
-                        tabIndex={0}
-                        className='shrink-0'
-                      />
-                    }
-                  >
-                    {t('Capability not confirmed')}
-                  </TooltipTrigger>
-                  <TooltipContent role='tooltip' className='max-w-72'>
-                    {t(
-                      'This model is not in the built-in capability table. Add it under Model thinking capabilities'
-                    )}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
+              <EffortCapabilityStatus
+                failed={props.unavailable && props.failed}
+                unconfirmed={props.unconfirmed}
+              />
             </div>
             <FormMessage />
           </div>

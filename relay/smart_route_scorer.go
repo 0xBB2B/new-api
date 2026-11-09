@@ -186,9 +186,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	labels, err := smartroute.ParseScorerOutput(content, len(input.History)+1)
 	if err != nil {
 		raw := []rune(content)
-		if len(raw) > 500 {
-			raw = raw[:500]
-		}
+		raw = raw[:min(len(raw), 500)]
 		rawText := string(raw)
 		if rawText == "" {
 			rawText = "(empty)"
