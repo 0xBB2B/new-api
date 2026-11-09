@@ -26,6 +26,7 @@ type SmartRouteScorer struct {
 	Model     string   `json:"model"`
 	Groups    []string `json:"groups"`
 	TimeoutMs int      `json:"timeout_ms"`
+	Effort    string   `json:"effort"` // 空串表示不发思考参数，由模型自己决定
 }
 
 type SmartRouteAdvisor struct {

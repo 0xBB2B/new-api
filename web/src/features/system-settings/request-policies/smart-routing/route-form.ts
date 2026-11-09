@@ -81,6 +81,7 @@ export function createRouteFormSchema(t: TFunction) {
       model,
       groups,
       timeout_ms: integerRange(100, 30000),
+      effort,
     }),
     advisor: z.object({
       model,
@@ -113,7 +114,7 @@ export function emptyRouteFormValues(): RouteFormValues {
     endpoints: ['openai-response'],
     tiers: { simple: tier(), normal: tier(), hard: tier() },
     default_tier: 'normal',
-    scorer: { model: '', groups: [], timeout_ms: 2000 },
+    scorer: { model: '', groups: [], timeout_ms: 2000, effort: '' },
     advisor: { model: '', groups: [], after_dissatisfied: 2 },
     downgrade_max_history_tokens: 20000,
     confidence_threshold: 0.6,

@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 
 import type { BuiltinThinkingCapabilities } from './api'
-import { effectiveCapability, tierModelsOfRoutes } from './capability'
+import { effectiveCapability, capabilityModelsOfRoutes } from './capability'
 import { CapabilityOverrideDialog } from './capability-override-dialog'
 import type { SmartRoute, ThinkingCapabilityOverride } from './types'
 
@@ -49,7 +49,7 @@ type ThinkingCapabilitiesCardProps = {
 export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
   const { t } = useTranslation()
   const [editing, setEditing] = useState<string | null>(null)
-  const models = tierModelsOfRoutes(props.routes)
+  const models = capabilityModelsOfRoutes(props.routes)
   const title = t('Model thinking capabilities')
   const builtin = props.builtin ?? {}
 

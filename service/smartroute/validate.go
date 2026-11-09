@@ -135,6 +135,9 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 	if route.Scorer.TimeoutMs < 100 || route.Scorer.TimeoutMs > 30000 {
 		outOfRange("scorer.timeout_ms", 100, 30000)
 	}
+	if route.Scorer.Effort != "" && operation_setting.SmartEffortRank(route.Scorer.Effort) < 0 {
+		add("scorer.effort", "Select a valid reasoning effort")
+	}
 	if route.Advisor.AfterDissatisfied < 1 || route.Advisor.AfterDissatisfied > 10 {
 		outOfRange("advisor.after_dissatisfied", 1, 10)
 	}

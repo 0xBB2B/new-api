@@ -44,7 +44,12 @@ export type SmartRoute = {
   endpoints: SmartEndpoint[]
   tiers: Record<SmartTierId, SmartRouteTier>
   default_tier: SmartTierId
-  scorer: { model: string; groups: string[]; timeout_ms: number }
+  scorer: {
+    model: string
+    groups: string[]
+    timeout_ms: number
+    effort: SmartEffort | ''
+  }
   advisor: { model: string; groups: string[]; after_dissatisfied: number }
   downgrade_max_history_tokens: number
   confidence_threshold: number

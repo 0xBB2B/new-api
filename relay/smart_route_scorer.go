@@ -61,6 +61,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	if channel == nil {
 		return scorerFailed("no available channel for %s in groups %v", scorerModel, smartroute.ScorerGroups(parent, route))
 	}
+	effort, _ := smartroute.ClampEffortToCapability(route.Scorer.Effort, smartroute.EffectiveThinkingCapability(scorerModel))
 	var request dto.Request
 	var requestPath string
 	var relayFormat types.RelayFormat
@@ -74,21 +75,24 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 		if err != nil {
 			return scorerFailed("building the scorer request: %s", err.Error())
 		}
-		request = &dto.OpenAIResponsesRequest{
+		responsesRequest := &dto.OpenAIResponsesRequest{
 			Model:        scorerModel,
 			Instructions: instructions,
 			Input:        userInput,
-			Reasoning:    &dto.Reasoning{Effort: "low"},
 			Stream:       lo.ToPtr(false),
 		}
+		if effort != "" {
+			responsesRequest.Reasoning = &dto.Reasoning{Effort: effort}
+		}
+		request = responsesRequest
 		requestPath, relayFormat = scorerResponsesRequestPath, types.RelayFormatOpenAIResponses
 	} else {
 		request = &dto.GeneralOpenAIRequest{
-			Model:       scorerModel,
-			Messages:    []dto.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
-			MaxTokens:   lo.ToPtr(uint(300)),
-			Temperature: lo.ToPtr(0.0),
-			Stream:      lo.ToPtr(false),
+			Model:           scorerModel,
+			Messages:        []dto.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
+			ReasoningEffort: effort,
+			Temperature:     lo.ToPtr(0.0),
+			Stream:          lo.ToPtr(false),
 		}
 		requestPath, relayFormat = scorerRequestPath, types.RelayFormatOpenAI
 	}
@@ -181,6 +185,13 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 	}
 	labels, err := smartroute.ParseScorerOutput(content, len(input.History)+1)
 	if err != nil {
+		raw := []rune(content)
+		raw = raw[:min(len(raw), 500)]
+		rawText := string(raw)
+		if rawText == "" {
+			rawText = "(empty)"
+		}
+		logger.LogWarn(parent, common.LogText("smart routing scorer for %s returned unparsable output from %s: %s; raw: %q", route.Name, scorerModel, err.Error(), rawText))
 		outcome.Failure = smartroute.FailureScorerInvalid
 		return outcome, nil
 	}

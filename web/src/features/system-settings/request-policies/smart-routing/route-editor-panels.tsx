@@ -51,7 +51,12 @@ import type { EffectiveCapability } from './capability'
 import { FieldInfo } from './field-info'
 import { SMART_TIER_IDS, tierEffortSummary } from './lib'
 import type { RouteFormValues } from './route-form'
-import { FIELD_ROW_CLASS, TierEffortField } from './tier-effort-field'
+import {
+  EffortCapabilityStatus,
+  FIELD_ROW_CLASS,
+  NoThinkingEffortRow,
+  TierEffortField,
+} from './tier-effort-field'
 import type { SmartTierId } from './types'
 
 type ModelFieldName =
@@ -190,12 +195,94 @@ function NumberRow(props: {
   )
 }
 
+function ScorerEffortField(props: {
+  capability: EffectiveCapability
+  unconfirmed: boolean
+  unavailable: boolean
+  failed: boolean
+}) {
+  const { t } = useTranslation()
+  const form = useFormContext<RouteFormValues>()
+  const model = form.watch('scorer.model')
+  const items = [
+    { value: '', label: t('Not set (model default)') },
+    ...props.capability.efforts.map((effort) => ({
+      value: effort,
+      label: effort,
+    })),
+  ]
+  const help = (
+    <FieldInfo label={t('Reasoning effort')}>
+      {t(
+        'Leave empty to send no reasoning parameter and let the model decide. A selected level the model does not support is switched to the closest level in the capability table before sending. Scorer output has no length limit; the timeout bounds how long it takes. The list only shows the levels this model supports'
+      )}
+    </FieldInfo>
+  )
+
+  if (props.capability.noThinking) {
+    return <NoThinkingEffortRow help={help} />
+  }
+
+  return (
+    <FormField
+      control={form.control}
+      name='scorer.effort'
+      render={({ field, fieldState }) => (
+        <FormItem className={FIELD_ROW_CLASS}>
+          <div className='flex min-h-8 items-center gap-1'>
+            <FormLabel>{t('Reasoning effort')}</FormLabel>
+            {help}
+          </div>
+          <div className='min-w-0'>
+            <div className='flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2'>
+              <Select
+                items={items}
+                value={field.value}
+                onValueChange={field.onChange}
+                disabled={model === '' || props.unavailable}
+              >
+                <SelectTrigger
+                  size='sm'
+                  className='w-44'
+                  aria-label={t('Reasoning effort')}
+                  aria-invalid={!!fieldState.error}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {items.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <EffortCapabilityStatus
+                failed={props.unavailable && props.failed}
+                unconfirmed={props.unconfirmed}
+              />
+            </div>
+            <FormMessage />
+          </div>
+        </FormItem>
+      )}
+    />
+  )
+}
+
 type PanelOptions = {
   modelOptions: ComboboxInputOption[]
   groupOptions: ComboboxInputOption[]
 }
 
-export function ScorerPanel(props: PanelOptions) {
+type ScorerPanelProps = PanelOptions & {
+  capability: EffectiveCapability
+  unconfirmed: boolean
+  unavailable: boolean
+  failed: boolean
+}
+
+export function ScorerPanel(props: ScorerPanelProps) {
   const { t } = useTranslation()
   return (
     <div className='flex flex-col gap-3'>
@@ -206,6 +293,12 @@ export function ScorerPanel(props: PanelOptions) {
           'Called once for each new user message. It is billed at the scorer model price as a separate usage record.'
         )}
         options={props.modelOptions}
+      />
+      <ScorerEffortField
+        capability={props.capability}
+        unconfirmed={props.unconfirmed}
+        unavailable={props.unavailable}
+        failed={props.failed}
       />
       <NumberRow
         name='scorer.timeout_ms'

@@ -25,7 +25,7 @@ import { LoadingState } from '@/components/loading-state'
 import { getPolicyConfig } from './api'
 import { getBuiltinThinkingCapabilities } from './smart-routing/api'
 import { ThinkingCapabilitiesCard } from './smart-routing/capabilities-card'
-import { tierModelsOfRoutes } from './smart-routing/capability'
+import { capabilityModelsOfRoutes } from './smart-routing/capability'
 import {
   parseSmartRoutes,
   parseThinkingCapabilities,
@@ -54,11 +54,11 @@ export function SmartRoutingSection() {
   const overrides = parseThinkingCapabilities(
     query.data?.options[SMART_THINKING_CAPABILITIES_OPTION_KEY] ?? ''
   )
-  const tierModels = tierModelsOfRoutes(routes).sort()
+  const capabilityModels = capabilityModelsOfRoutes(routes).sort()
   const builtinQuery = useQuery({
-    queryKey: ['smart-routing', 'builtin-capabilities', tierModels],
-    queryFn: () => getBuiltinThinkingCapabilities(tierModels),
-    enabled: tierModels.length > 0,
+    queryKey: ['smart-routing', 'builtin-capabilities', capabilityModels],
+    queryFn: () => getBuiltinThinkingCapabilities(capabilityModels),
+    enabled: capabilityModels.length > 0,
   })
   if (query.isPending) return <LoadingState />
   if (query.isError) {
@@ -97,7 +97,7 @@ export function SmartRoutingSection() {
       <ThinkingCapabilitiesCard
         routes={routes}
         builtin={builtinQuery.data}
-        isPending={builtinQuery.isPending && tierModels.length > 0}
+        isPending={builtinQuery.isPending && capabilityModels.length > 0}
         isError={builtinQuery.isError}
         onRetry={() => void builtinQuery.refetch()}
         overrides={overrides}
