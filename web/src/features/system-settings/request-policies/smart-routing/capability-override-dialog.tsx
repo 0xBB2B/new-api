@@ -32,7 +32,7 @@ type CapabilityOverrideDialogProps = {
   model: string
   current: EffectiveCapability
   onOpenChange: (open: boolean) => void
-  onSave: (override: ThinkingCapabilityOverride) => void
+  onSave: (override: ThinkingCapabilityOverride) => Promise<void>
 }
 
 export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
@@ -40,6 +40,7 @@ export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
   const [noThinking, setNoThinking] = useState(props.current.noThinking)
   const [efforts, setEfforts] = useState<SmartEffort[]>(props.current.efforts)
   const [showError, setShowError] = useState(false)
+  const [saving, setSaving] = useState(false)
   const headingId = useId()
 
   const toggle = (effort: SmartEffort, checked: boolean) => {
@@ -49,41 +50,52 @@ export function CapabilityOverrideDialog(props: CapabilityOverrideDialogProps) {
     )
   }
 
-  const save = () => {
+  const save = async () => {
     if (!noThinking && efforts.length === 0) {
       setShowError(true)
       return
     }
-    props.onSave({
-      no_thinking: noThinking,
-      efforts: noThinking
-        ? []
-        : SMART_EFFORTS.filter((effort) => efforts.includes(effort)),
-    })
+    setSaving(true)
+    try {
+      await props.onSave({
+        no_thinking: noThinking,
+        efforts: noThinking
+          ? []
+          : SMART_EFFORTS.filter((effort) => efforts.includes(effort)),
+      })
+    } catch {
+      // 错误提示已由保存请求统一弹出
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <Dialog
       open
       contentClassName='sm:max-w-md'
-      onOpenChange={props.onOpenChange}
+      onOpenChange={(open) => {
+        if (!open && saving) return
+        props.onOpenChange(open)
+      }}
       title={t('Override thinking capability of {{model}}', {
         model: props.model,
       })}
       description={t(
-        'Tick the thinking efforts this model supports. Takes effect after you save changes.'
+        'Tick the thinking efforts this model supports. Takes effect immediately after you save.'
       )}
       footer={
         <>
           <Button
             type='button'
             variant='outline'
+            disabled={saving}
             onClick={() => props.onOpenChange(false)}
           >
             {t('Cancel')}
           </Button>
-          <Button type='button' onClick={save}>
-            {t('Save')}
+          <Button type='button' disabled={saving} onClick={() => void save()}>
+            {saving ? t('Saving...') : t('Save')}
           </Button>
         </>
       }

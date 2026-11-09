@@ -61,6 +61,8 @@ import type { SmartRoute, ThinkingCapabilityOverride } from './types'
 type SmartRoutesCardProps = {
   value: string
   onChange: (value: string) => void
+  onSave: (routes: SmartRoute[]) => Promise<void>
+  saving: boolean
   overrides: Record<string, ThinkingCapabilityOverride>
   builtin: BuiltinThinkingCapabilities | undefined
 }
@@ -76,6 +78,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
     route: SmartRoute | null
     index: number
   } | null>(null)
+  const [deletingPending, setDeletingPending] = useState(false)
   const { routes } = parseSmartRoutes(props.value)
 
   const changeMode = (next: string) => {
@@ -126,7 +129,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
               </TabsTrigger>
             </TabsList>
             <Button
-              disabled={mode === 'json'}
+              disabled={mode === 'json' || props.saving}
               onClick={() => setEditorTarget({ route: null, index: -1 })}
             >
               <Plus aria-hidden='true' data-icon='inline-start' />
@@ -139,6 +142,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
               routes={routes}
               overrides={props.overrides}
               builtin={props.builtin}
+              saving={props.saving}
               onAdd={() => setEditorTarget({ route: null, index: -1 })}
               onEdit={(route) =>
                 setEditorTarget({ route, index: routes.indexOf(route) })
@@ -171,14 +175,12 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
             .map((item) => item.name)}
           onOpenChange={(open) => !open && setEditorTarget(null)}
           onSave={(route) =>
-            props.onChange(
-              serializeSmartRoutes(
-                editorTarget.route === null
-                  ? [...routes, route]
-                  : routes.map((item, index) =>
-                      index === editorTarget.index ? route : item
-                    )
-              )
+            props.onSave(
+              editorTarget.route === null
+                ? [...routes, route]
+                : routes.map((item, index) =>
+                    index === editorTarget.index ? route : item
+                  )
             )
           }
         />
@@ -187,19 +189,28 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       {deleting !== null && (
         <ConfirmDialog
           open
-          onOpenChange={(open) => !open && setDeleting(null)}
+          onOpenChange={(open) =>
+            !open && !deletingPending && setDeleting(null)
+          }
           title={t('Delete virtual model')}
-          desc={t('Delete {{name}}? It takes effect after you save changes.', {
-            name: deleting.name,
-          })}
-          confirmText={t('Delete')}
-          handleConfirm={() => {
-            props.onChange(
-              serializeSmartRoutes(
+          desc={t(
+            'Delete {{name}}? It takes effect immediately after you confirm.',
+            { name: deleting.name }
+          )}
+          confirmText={deletingPending ? t('Saving...') : t('Delete')}
+          isLoading={deletingPending}
+          handleConfirm={async () => {
+            setDeletingPending(true)
+            try {
+              await props.onSave(
                 routes.filter((_, index) => index !== deleting.index)
               )
-            )
-            setDeleting(null)
+              setDeleting(null)
+            } catch {
+              // 错误提示已由保存请求统一弹出
+            } finally {
+              setDeletingPending(false)
+            }
           }}
           destructive
         />
@@ -212,6 +223,7 @@ type SmartRoutesTableProps = {
   routes: SmartRoute[]
   overrides: Record<string, ThinkingCapabilityOverride>
   builtin: BuiltinThinkingCapabilities | undefined
+  saving: boolean
   onAdd: () => void
   onEdit: (route: SmartRoute) => void
   onDelete: (route: SmartRoute) => void
@@ -236,7 +248,11 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
         )}
         className='min-h-56'
         action={
-          <Button variant='outline' onClick={props.onAdd}>
+          <Button
+            variant='outline'
+            disabled={props.saving}
+            onClick={props.onAdd}
+          >
             <Plus aria-hidden='true' data-icon='inline-start' />
             {t('Add virtual model')}
           </Button>
@@ -401,6 +417,7 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
                       variant='ghost'
                       size='icon'
                       aria-label={t('Edit')}
+                      disabled={props.saving}
                       onClick={() => props.onEdit(route)}
                     >
                       <Edit aria-hidden='true' />
@@ -413,6 +430,7 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
                 <DropdownMenuGroup>
                   <DropdownMenuItem
                     variant='destructive'
+                    disabled={props.saving}
                     onClick={() => props.onDelete(route)}
                   >
                     <Trash2 aria-hidden='true' />
