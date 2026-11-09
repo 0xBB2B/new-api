@@ -146,7 +146,7 @@ func runSmartRouteScorer(parent *gin.Context, route operation_setting.SmartRoute
 		return scorerFailed("reserving scorer quota: %s", apiErr.Error())
 	}
 
-	// 上游请求不带 context，超时只能靠这里放弃等待；放弃后协程独占 c 和 info，用完即弃
+	// 放弃等待后协程独占 c 和 info，用完即弃
 	type upstreamResult struct {
 		usage   *dto.Usage
 		content string
