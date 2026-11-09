@@ -5,7 +5,7 @@ category: virtual-model-pickers
 ---
 # 密钥模型限制里的虚拟模型
 ## 简介
-在密钥页新建 vm-limit-key，在「高级设置 → 模型限制」里展开下拉，勾 gpt-5.5 和 auto-gpt 后保存；再编辑这个密钥，核对已选标签，点 auto-gpt 标签的 × 移除，然后关闭抽屉不保存。
+在密钥页新建 vm-limit-key，在「高级设置 → 模型限制」里展开下拉，勾 gpt-5.5 和 auto-gpt 后保存（开发模式下右下角的 TanStack Router 开发工具按钮会挡住抽屉的「保存更改」，保存前先把它隐藏）；再编辑这个密钥，核对已选标签，点 auto-gpt 标签的 × 移除，然后关闭抽屉不保存。
 ## 测试目的
 二期 PRD 05 验收 C3 的网页部分：模型限制下拉列出全部虚拟模型（排在真实模型后面），勾 auto-gpt 并保存后编辑时显示为已选，可以点 × 移除。「用它请求 auto-gpt 成功、请求白名单外的真实模型被拒」要发真实请求，不在本用例里。
 ## 测试流程（固定 JSON，subagent 原样消费）
@@ -112,6 +112,11 @@ category: virtual-model-pickers
     {
       "action": "screenshot",
       "name": "limit-before-save"
+    },
+    {
+      "action": "evaluate",
+      "script": "() => { for (const b of document.querySelectorAll('button')) { if (b.textContent.includes('TanStack Router')) b.style.display = 'none'; } const save = [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim() === '保存更改'); if (!save) throw new Error('找不到保存更改'); const r = save.getBoundingClientRect(); const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); if (!save.contains(hit)) throw new Error('保存更改被遮挡：' + (hit ? hit.textContent.trim() : '无元素')); return 'ok'; }",
+      "expect": "ok"
     },
     {
       "action": "click",

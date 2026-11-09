@@ -74,7 +74,7 @@ env:
 | 用例 id | 说明 | last-run 状态 |
 | --- | --- | --- |
 | [cc-switch-virtual-models](web/virtual-model-pickers/cc-switch-virtual-models.md) | 「填入 CC Switch」选 Claude、Codex 时模型下拉末尾有虚拟模型，选 Gemini 时没有 | ✅ 通过（2026-11-09） |
-| [key-model-limits-virtual](web/virtual-model-pickers/key-model-limits-virtual.md) | 密钥模型限制能勾虚拟模型并保存，编辑时显示为已选标签、能点 × 移除 | ❌ 失败（2026-11-09）：开发模式下抽屉「保存更改」被右下角 TanStack Router 开发工具按钮遮挡，1280×720、1440×900 都点不到；保存之前的步骤通过 |
+| [key-model-limits-virtual](web/virtual-model-pickers/key-model-limits-virtual.md) | 密钥模型限制能勾虚拟模型并保存，编辑时显示为已选标签、能点 × 移除 | ✅ 通过（2026-11-09，用例在保存前隐藏开发模式下的 TanStack Router 开发工具按钮后重跑通过） |
 | [playground-chat-only](web/virtual-model-pickers/playground-chat-only.md) | 演练场只列勾了 Chat 的虚拟模型；给 auto-gpt 勾上 Chat 并在弹窗里保存（出现「保存成功」）后出现 | ✅ 通过（2026-11-09） |
 | [virtual-models-not-elsewhere](web/virtual-model-pickers/virtual-models-not-elsewhere.md) | 价格页、模型定价、档位模型下拉、渠道模型配置里没有虚拟模型；首页示例用第一个真实模型 | ✅ 通过（2026-11-09） |
 
