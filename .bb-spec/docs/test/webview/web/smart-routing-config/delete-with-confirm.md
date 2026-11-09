@@ -1,13 +1,13 @@
 ---
 name: delete-with-confirm
-description: 从「…」菜单删除 auto-gpt，先弹确认框，确认后这一行消失，保存更改后刷新仍为空
+description: 从「…」菜单删除 auto-gpt，先弹确认框，确认后立即提交、出现「保存成功」、这一行消失，刷新后仍为空
 category: smart-routing-config
 ---
 # 从菜单删除虚拟模型
 ## 简介
-在 auto-gpt 这一行打开「…」菜单点「删除」，在确认框里点「删除」，再保存更改并刷新。
+在 auto-gpt 这一行打开「…」菜单点「删除」，在确认框里点「删除」，看到「保存成功」后刷新。
 ## 测试目的
-一期 PRD 05-config-page 验收 C3：从「…」菜单删除时先弹确认框，确认后这一行消失。
+一期 PRD 05-config-page 验收 C3：从「…」菜单删除时先弹确认框，确认后这一行消失。立即保存 PRD 2026-11-09.smart-routing-instant-save 01 C3：确认框说明是"确定删除 <名称> 吗？确认后立即生效。"，点「删除」立即提交，顶部提示「保存成功」，刷新后仍然没有这一行。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -67,7 +67,7 @@ category: smart-routing-config
     },
     {
       "action": "waitFor",
-      "text": "确定删除 auto-gpt 吗？点「保存更改」后生效。"
+      "text": "确定删除 auto-gpt 吗？确认后立即生效。"
     },
     {
       "action": "assertText",
@@ -84,20 +84,16 @@ category: smart-routing-config
     },
     {
       "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
+      "action": "waitFor",
       "text": "还没有虚拟模型"
     },
     {
       "action": "evaluate",
       "script": "() => { if ([...document.querySelectorAll('tbody tr')].some((r) => r.textContent.includes('auto-gpt'))) throw new Error('auto-gpt 还在表格里'); return 'ok'; }",
       "expect": "ok"
-    },
-    {
-      "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
-    },
-    {
-      "action": "waitFor",
-      "text": "保存成功"
     },
     {
       "action": "navigate",
@@ -122,6 +118,6 @@ category: smart-routing-config
 }
 ```
 ## 如何验收
-- [ ] 点「删除」先弹出标题「删除虚拟模型」的确认框，写「确定删除 auto-gpt 吗？点「保存更改」后生效。」
-- [ ] 确认后 auto-gpt 这一行消失、显示空状态
-- [ ] 保存更改后刷新仍是空状态
+- [ ] 点「删除」先弹出标题「删除虚拟模型」的确认框，写「确定删除 auto-gpt 吗？确认后立即生效。」
+- [ ] 确认后出现「保存成功」，auto-gpt 这一行消失、显示空状态
+- [ ] 刷新后仍是空状态

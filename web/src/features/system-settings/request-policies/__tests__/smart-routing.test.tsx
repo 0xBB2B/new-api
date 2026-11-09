@@ -310,99 +310,364 @@ it('renders the count badge and two-line cells for every virtual model', async (
   expect(chat).toHaveTextContent(/glm-5.1\s*Default/)
 })
 
-it('deleting asks for confirmation and the saved array omits the row', async () => {
+it('the page has no Save Changes button', async () => {
   show()
-  const row = await screen.findByRole('row', { name: /auto-gpt/ })
+  await virtualModelsTable()
+  expect(screen.queryByRole('button', { name: 'Save Changes' })).toBeNull()
+})
+
+async function openDeleteConfirm(name: string) {
+  const row = await screen.findByRole('row', { name: new RegExp(name) })
   await userEvent.click(
     within(row).getByRole('button', { name: 'More actions' })
   )
   await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
-  const dialog = screen.getByRole('alertdialog')
+  return screen.getByRole('alertdialog')
+}
+
+function patchedKeys(call = 0) {
+  const payload = vi.mocked(api.patch).mock.calls[call][1] as {
+    options: Record<string, string>
+  }
+  return Object.keys(payload.options)
+}
+
+function failPatch(kind: 'rejected' | 'network') {
+  const working = vi.mocked(api.patch).getMockImplementation()
+  if (!working) throw new Error('api.patch is not mocked')
+  vi.mocked(api.patch).mockImplementation(async () => {
+    if (kind === 'network') throw new Error('Network down')
+    return { data: { success: false, message: 'Save rejected' } }
+  })
+  return () => vi.mocked(api.patch).mockImplementation(working)
+}
+
+function holdPatch() {
+  let release: () => void = () => {}
+  vi.mocked(api.patch).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            data: { success: true, data: { options: currentOptions } },
+          })
+      })
+  )
+  return () => release()
+}
+
+function toastCount() {
+  return document.querySelectorAll('[data-sonner-toast]').length
+}
+
+const failureKinds = [['rejected'], ['network']] as const
+
+it('deleting asks for confirmation and immediately saves the array without the row', async () => {
+  show()
+  const dialog = await openDeleteConfirm('auto-gpt')
   expect(dialog).toHaveTextContent('Delete virtual model')
   expect(dialog).toHaveTextContent(
-    'Delete auto-gpt? It takes effect after you save changes.'
+    'Delete auto-gpt? It takes effect immediately after you confirm.'
   )
   expect(api.patch).not.toHaveBeenCalled()
   await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
-  expect(
-    screen.queryByRole('row', { name: /auto-gpt/ })
-  ).not.toBeInTheDocument()
-  expect(api.patch).not.toHaveBeenCalled()
-
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(api.patch).toHaveBeenCalledTimes(1)
   expect(vi.mocked(api.patch).mock.calls[0][0]).toBe(
     '/api/option/request_policy'
   )
+  expect(patchedKeys()).toEqual([ROUTES_KEY])
   expect(savedRoutes().map((route) => route.name)).toEqual(['auto-chat'])
-})
-
-it('saving without changes shows a notice and sends no request', async () => {
-  show()
-  await virtualModelsTable()
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(await screen.findByText('No changes to save')).toBeVisible()
-  expect(api.patch).not.toHaveBeenCalled()
-})
-
-it('a non-array JSON draft reports an error and stays in the JSON view', async () => {
-  show()
-  await userEvent.click(await screen.findByRole('tab', { name: 'JSON' }))
-  const editor = await screen.findByRole('textbox')
-  fireEvent.input(editor, { target: { value: '{"name":"x"}' } })
-  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
-  expect(await screen.findByText(/must be an array/i)).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'JSON' })).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  expect(api.patch).not.toHaveBeenCalled()
-})
-
-it('a rejected save shows the backend message and keeps the edit', async () => {
-  vi.mocked(api.patch).mockResolvedValue({
-    data: { success: false, message: 'Save rejected' },
-  })
-  show()
-  const row = await screen.findByRole('row', { name: /auto-gpt/ })
-  await userEvent.click(
-    within(row).getByRole('button', { name: 'More actions' })
-  )
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
-  await userEvent.click(
-    within(screen.getByRole('alertdialog')).getByRole('button', {
-      name: 'Delete',
-    })
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(await screen.findByText('Save rejected')).toBeVisible()
   expect(
     screen.queryByRole('row', { name: /auto-gpt/ })
   ).not.toBeInTheDocument()
+  expect(await screen.findByText('Saved successfully')).toBeVisible()
 })
 
-async function writeJson(value: string) {
+it('deleting the only virtual model shows the empty state', async () => {
+  setRoutes([autoGpt])
+  show()
+  const dialog = await openDeleteConfirm('auto-gpt')
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  expect(await screen.findByText('No virtual models yet')).toBeVisible()
+  expect(savedRoutes()).toEqual([])
+})
+
+it('while the delete is saving Cancel and Delete are disabled and Delete reads Saving...', async () => {
+  const finish = holdPatch()
+  show()
+  const dialog = await openDeleteConfirm('auto-gpt')
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  expect(
+    await within(dialog).findByRole('button', { name: 'Saving...' })
+  ).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('alertdialog')).toBeVisible()
+  finish()
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+})
+
+it.each(failureKinds)(
+  'a %s delete keeps the confirm dialog and the row, shows one error and can be retried',
+  async (kind) => {
+    show()
+    const restore = failPatch(kind)
+    const dialog = await openDeleteConfirm('auto-gpt')
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Delete' })
+    )
+    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Delete' })
+      ).toBeEnabled()
+    )
+    expect(toastCount()).toBe(1)
+    expect(screen.getByRole('alertdialog')).toBeVisible()
+    expect(
+      screen.getByRole('row', { name: /auto-gpt/, hidden: true })
+    ).toBeInTheDocument()
+
+    restore()
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Delete' })
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    )
+    expect(
+      screen.queryByRole('row', { name: /auto-gpt/ })
+    ).not.toBeInTheDocument()
+  }
+)
+
+async function openJsonEditor() {
   await userEvent.click(await screen.findByRole('tab', { name: 'JSON' }))
-  const editor = await screen.findByRole('textbox')
+  return screen.findByRole('textbox')
+}
+
+async function editJson(value: string) {
+  const editor = await openJsonEditor()
   fireEvent.input(editor, { target: { value } })
+  return editor
+}
+
+function jsonSave() {
+  return screen.getByRole('button', { name: 'Save' })
+}
+
+function hardTierToGpt55(editor: HTMLElement, indent: number | string = 2) {
+  const routes = JSON.parse((editor as HTMLTextAreaElement).value) as {
+    tiers: { hard: { model: string } }
+  }[]
+  routes[0].tiers.hard.model = 'gpt-5.5'
+  return JSON.stringify(routes, null, indent)
+}
+
+function expectSelectedTabName(name: string) {
+  expect(screen.getByRole('tab', { name })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+}
+
+async function writeJson(value: string) {
+  const editor = await editJson(value)
+  await userEvent.click(jsonSave())
+  await waitFor(() => expect(jsonSave()).toBeDisabled())
   await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
   return editor
 }
 
-it.each(['[{"name":"x"}]', '[null]'])(
-  'malformed JSON %s reports an error, stays in JSON view and keeps the text',
+it('the Save button exists and is disabled in the JSON view and is absent in the visual view', async () => {
+  show()
+  await virtualModelsTable()
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+  await openJsonEditor()
+  expect(jsonSave()).toBeDisabled()
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+})
+
+it('re-indenting or formatting the saved configuration keeps Save disabled', async () => {
+  show()
+  const editor = await openJsonEditor()
+  const saved = JSON.parse((editor as HTMLTextAreaElement).value)
+  fireEvent.input(editor, {
+    target: { value: JSON.stringify(saved, null, '\t') },
+  })
+  expect(jsonSave()).toBeDisabled()
+  fireEvent.input(editor, { target: { value: JSON.stringify(saved) } })
+  expect(jsonSave()).toBeDisabled()
+  await userEvent.click(screen.getByRole('button', { name: 'Format JSON' }))
+  expect(jsonSave()).toBeDisabled()
+})
+
+it('a broken JSON draft counts as changed and enables Save', async () => {
+  show()
+  await editJson('[{')
+  expect(jsonSave()).toBeEnabled()
+})
+
+it('saving a changed JSON draft sends only the routes and stays in the JSON view', async () => {
+  show()
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value: hardTierToGpt55(editor) } })
+  expect(jsonSave()).toBeEnabled()
+  await userEvent.click(jsonSave())
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(api.patch).mock.calls[0][0]).toBe(
+    '/api/option/request_policy'
+  )
+  expect(patchedKeys()).toEqual([ROUTES_KEY])
+  const sent = JSON.parse(
+    (
+      vi.mocked(api.patch).mock.calls[0][1] as {
+        options: Record<string, string>
+      }
+    ).options[ROUTES_KEY]
+  ) as { tiers: { hard: { model: string } } }[]
+  expect(sent[0].tiers.hard.model).toBe('gpt-5.5')
+  expect(await screen.findByText('Saved successfully')).toBeVisible()
+  expectSelectedTabName('JSON')
+  await waitFor(() => expect(jsonSave()).toBeDisabled())
+  expect(api.patch).toHaveBeenCalledTimes(1)
+})
+
+it.each([['{"name":"x"}'], ['[{"name":"x"}]'], ['[null]'], ['[{']])(
+  'saving the invalid JSON draft %s reports an error, calls nothing and keeps the text',
   async (value) => {
     show()
-    const editor = await writeJson(value)
+    const editor = await editJson(value)
+    await userEvent.click(jsonSave())
     expect(
-      await screen.findByText(/must be|must include|invalid/i)
+      await screen.findByText(/must be|must include|invalid|expected/i)
     ).toBeVisible()
-    expect(screen.getByRole('tab', { name: 'JSON' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(editor).toBeInTheDocument()
+    expect(api.patch).not.toHaveBeenCalled()
+    expectSelectedTabName('JSON')
     expect(editor).toHaveValue(value)
+  }
+)
+
+it('while the JSON save is pending Save, the editor and both tabs are disabled', async () => {
+  const finish = holdPatch()
+  show()
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value: hardTierToGpt55(editor) } })
+  await userEvent.click(jsonSave())
+  expect(
+    await screen.findByRole('button', { name: 'Saving...' })
+  ).toBeDisabled()
+  expect(editor).toBeDisabled()
+  expect(screen.getByRole('tab', { name: /Visual/ })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  expect(screen.getByRole('tab', { name: /JSON/ })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  finish()
+  await waitFor(() => expect(jsonSave()).toBeDisabled())
+  expect(screen.queryByRole('button', { name: 'Saving...' })).toBeNull()
+})
+
+it.each(failureKinds)(
+  'a %s JSON save shows one error, keeps the draft and can be retried',
+  async (kind) => {
+    show()
+    const editor = await openJsonEditor()
+    const draft = hardTierToGpt55(editor)
+    fireEvent.input(editor, { target: { value: draft } })
+    const restore = failPatch(kind)
+    await userEvent.click(jsonSave())
+    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
+    await waitFor(() => expect(jsonSave()).toBeEnabled())
+    expect(toastCount()).toBe(1)
+    if (kind === 'rejected') {
+      expect(await screen.findByText('Save rejected')).toBeVisible()
+    }
+    expect(editor).toHaveValue(draft)
+    expectSelectedTabName('JSON')
+
+    restore()
+    await userEvent.click(jsonSave())
+    expect(await screen.findByText('Saved successfully')).toBeVisible()
+    await waitFor(() => expect(jsonSave()).toBeDisabled())
+  }
+)
+
+it('switching to visual with unsaved JSON changes asks first and Cancel keeps the draft', async () => {
+  show()
+  const editor = await openJsonEditor()
+  const draft = hardTierToGpt55(editor)
+  fireEvent.input(editor, { target: { value: draft } })
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(await screen.findByText('Discard unsaved changes?')).toBeVisible()
+  expect(
+    screen.getByText(
+      'The changes in JSON have not been saved. Switching to visual will discard them.'
+    )
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Discard changes' })).toBeVisible()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
+  )
+  expectSelectedTabName('JSON')
+  expect(editor).toHaveValue(draft)
+  expect(api.patch).not.toHaveBeenCalled()
+})
+
+it('Discard changes returns to the visual view with the saved configuration and calls nothing', async () => {
+  show()
+  const editor = await openJsonEditor()
+  fireEvent.input(editor, { target: { value: hardTierToGpt55(editor) } })
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Discard changes' })
+  )
+  expectSelectedTabName('Visual')
+  const gpt = await screen.findByRole('row', { name: /auto-gpt/ })
+  expect(gpt).toHaveTextContent('gpt-max')
+  expect(gpt).not.toHaveTextContent('gpt-5.5')
+  expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
+  expect(api.patch).not.toHaveBeenCalled()
+})
+
+it('switching to visual without JSON changes does not ask', async () => {
+  show()
+  await openJsonEditor()
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
+  expectSelectedTabName('Visual')
+  expect(await virtualModelsTable()).toBeVisible()
+})
+
+it('Add virtual model is disabled in the JSON view', async () => {
+  show()
+  await openJsonEditor()
+  const buttons = screen.getAllByRole('button', { name: 'Add virtual model' })
+  expect(buttons.length).toBeGreaterThan(0)
+  for (const button of buttons) expect(button).toBeDisabled()
+})
+
+it.each(['[{"name":"x"}]', '[null]'])(
+  'malformed JSON %s asks before switching to visual and keeps the text on Cancel',
+  async (value) => {
+    show()
+    const editor = await editJson(value)
+    await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+    expect(await screen.findByText('Discard unsaved changes?')).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expectSelectedTabName('JSON')
+    expect(editor).toHaveValue(value)
+    expect(api.patch).not.toHaveBeenCalled()
   }
 )
 
@@ -423,32 +688,15 @@ it('deleting one of two same-named records keeps the other', async () => {
       name: 'Delete',
     })
   )
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  expect(savedRoutes().map((route) => route.name)).toEqual(['dup'])
-})
-
-it('after a successful save a second save reports no changes and sends only the routes key', async () => {
-  show()
-  const row = await screen.findByRole('row', { name: /auto-gpt/ })
-  await userEvent.click(
-    within(row).getByRole('button', { name: 'More actions' })
-  )
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
-  await userEvent.click(
-    within(screen.getByRole('alertdialog')).getByRole('button', {
-      name: 'Delete',
-    })
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
+  const last = vi.mocked(api.patch).mock.calls[1][1] as {
     options: Record<string, string>
   }
-  expect(Object.keys(payload.options)).toEqual([ROUTES_KEY])
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(await screen.findByText('No changes to save')).toBeVisible()
-  expect(api.patch).toHaveBeenCalledTimes(1)
+  expect(
+    (JSON.parse(last.options[ROUTES_KEY]) as { name: string }[]).map(
+      (route) => route.name
+    )
+  ).toEqual(['dup'])
 })
 
 it('each row has an actions group named after the virtual model', async () => {
@@ -1081,6 +1329,8 @@ it('a name error from the server shows under the name and no left tab turns red'
   for (const tab of screen.getAllByRole('tab')) {
     expect(tab).not.toHaveTextContent(/error/i)
   }
+  expect(api.patch).not.toHaveBeenCalled()
+  expect(screen.getByRole('dialog')).toBeVisible()
 })
 
 it('an empty name and a 50 ms timeout fail locally without calling the check endpoint', async () => {
@@ -1232,7 +1482,7 @@ it('an error on an advanced field expands the advanced settings', async () => {
   expect(toggle).toHaveAttribute('aria-expanded', 'true')
 })
 
-it('a passing check closes the dialog and the renamed row is saved with the page', async () => {
+it('a passing check saves only the routes option at once, closes the dialog and shows the renamed row', async () => {
   setRoutes([dialogRoute, autoChat])
   mockDialogApis({ errors: [], endpoints: ['openai-response'] })
   show()
@@ -1247,15 +1497,72 @@ it('a passing check closes the dialog and the renamed row is saved with the page
   expect(vi.mocked(api.post).mock.calls[0][1]).toMatchObject({
     route: { name: 'auto-gpt-v2' },
   })
-  expect(screen.getByRole('row', { name: /auto-gpt-v2/ })).toBeVisible()
-  expect(api.patch).not.toHaveBeenCalled()
-
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(api.patch).toHaveBeenCalledTimes(1)
+  expect(patchedKeys()).toEqual([ROUTES_KEY])
   expect(savedRoutes().map((route) => route.name)).toEqual([
     'auto-gpt-v2',
     'auto-chat',
   ])
+  expect(screen.getByRole('row', { name: /auto-gpt-v2/ })).toBeVisible()
+  expect(await screen.findByText('Saved successfully')).toBeVisible()
+})
+
+it.each(failureKinds)(
+  'a %s save keeps the dialog and the typed values, shows one error, leaves the table and can be retried',
+  async (kind) => {
+    setRoutes([dialogRoute, autoChat])
+    mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+    show()
+    const dialog = await openEditDialog('auto-gpt')
+    const name = within(dialog).getByLabelText(/^Name/)
+    await userEvent.clear(name)
+    await userEvent.type(name, 'auto-renamed')
+    const restore = failPatch(kind)
+    await saveDialog()
+    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled()
+    )
+    expect(toastCount()).toBe(1)
+    expect(screen.getByRole('dialog')).toBeVisible()
+    expect(within(dialog).getByLabelText(/^Name/)).toHaveValue('auto-renamed')
+    expect(
+      screen.getByRole('row', { name: /auto-gpt/, hidden: true })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('row', { name: /auto-renamed/, hidden: true })
+    ).toBeNull()
+
+    restore()
+    await saveDialog()
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(screen.getByRole('row', { name: /auto-renamed/ })).toBeVisible()
+  }
+)
+
+it('while the save is pending Cancel and Save are disabled and Save reads Saving...', async () => {
+  setRoutes([dialogRoute, autoChat])
+  mockDialogApis({ errors: [], endpoints: ['openai-response'] })
+  const finish = holdPatch()
+  show()
+  const dialog = await openEditDialog('auto-gpt')
+  const name = within(dialog).getByLabelText(/^Name/)
+  await userEvent.clear(name)
+  await userEvent.type(name, 'auto-slow')
+  await saveDialog()
+  const saving = await within(dialog).findByRole('button', {
+    name: 'Saving...',
+  })
+  expect(saving).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('dialog')).toBeVisible()
+  finish()
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
 })
 
 async function renameInDialog(from: string, to: string) {
@@ -1267,7 +1574,7 @@ async function renameInDialog(from: string, to: string) {
   return dialog
 }
 
-it('two draft rows can swap names through a temporary one', async () => {
+it('two saved rows can swap names through a temporary one', async () => {
   setRoutes([dialogRoute, autoChat])
   const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
   show()
@@ -1284,12 +1591,14 @@ it('two draft rows can swap names through a temporary one', async () => {
   }
 
   expect(post).toHaveBeenCalledTimes(3)
+  expect(api.patch).toHaveBeenCalledTimes(3)
+  expect(savedRoutes()).toHaveLength(2)
   expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
   expect(screen.getByRole('row', { name: /auto-chat/ })).toBeVisible()
   expect(screen.queryByRole('row', { name: /auto-tmp/ })).toBeNull()
 })
 
-it('a deleted saved name can be used again by a new virtual model', async () => {
+it('a deleted name can be used again by a new virtual model', async () => {
   const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
   show()
   const row = await screen.findByRole('row', { name: /auto-gpt/ })
@@ -1313,6 +1622,7 @@ it('a deleted saved name can be used again by a new virtual model', async () => 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(post).toHaveBeenCalledTimes(1)
+  expect(api.patch).toHaveBeenCalledTimes(2)
   expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
 })
 
@@ -1335,10 +1645,11 @@ it('a name changed in the JSON view can be changed back in the visual view', asy
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(post).toHaveBeenCalledTimes(2)
+  expect(api.patch).toHaveBeenCalledTimes(3)
   expect(screen.getByRole('row', { name: /auto-gpt/ })).toBeVisible()
 })
 
-it('renaming a draft row onto another draft row fails locally and keeps the dialog open', async () => {
+it('renaming a row onto another row fails locally and keeps the dialog open', async () => {
   setRoutes([dialogRoute, autoChat])
   const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
   show()
@@ -1351,10 +1662,11 @@ it('renaming a draft row onto another draft row fails locally and keeps the dial
     )
   ).toBeVisible()
   expect(post).not.toHaveBeenCalled()
+  expect(api.patch).not.toHaveBeenCalled()
   expect(screen.getByRole('dialog')).toBeVisible()
 })
 
-it('a new virtual model passes the check and joins the table', async () => {
+it('a new virtual model passes the check, is saved at once and joins the table', async () => {
   const post = mockDialogApis({ errors: [], endpoints: ['openai-response'] })
   show()
   await userEvent.click(
@@ -1373,9 +1685,8 @@ it('a new virtual model passes the check and joins the table', async () => {
     },
   })
   expect(screen.getByRole('row', { name: /auto-new/ })).toBeVisible()
-
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(api.patch).toHaveBeenCalledTimes(1)
+  expect(patchedKeys()).toEqual([ROUTES_KEY])
   expect(savedRoutes().map((route) => route.name)).toEqual([
     'auto-gpt',
     'auto-chat',
@@ -1551,16 +1862,16 @@ it('the table shows No thinking on the gpt-4.1 tier of auto-chat', async () => {
   await waitFor(() => expect(chat).toHaveTextContent('No thinking'))
 })
 
-it('a route pasted in the JSON view without endpoints keeps the JSON view and shows an incomplete notice', async () => {
+it('a route pasted in the JSON view without endpoints asks before switching to visual', async () => {
   show()
   const { endpoints: _drop, ...withoutEndpoints } = autoGpt
-  const editor = await writeJson(JSON.stringify([withoutEndpoints]))
-  expect(await screen.findByText(/must include/i)).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'JSON' })).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  expect(editor).toBeInTheDocument()
+  const draft = JSON.stringify([withoutEndpoints])
+  const editor = await editJson(draft)
+  await userEvent.click(screen.getByRole('tab', { name: 'Visual' }))
+  expect(await screen.findByText('Discard unsaved changes?')).toBeVisible()
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expectSelectedTabName('JSON')
+  expect(editor).toHaveValue(draft)
   expect(screen.getByText('Virtual models')).toBeVisible()
 })
 
@@ -1626,6 +1937,19 @@ it('the Chinese text for a missing interface is the agreed sentence', () => {
     i18next.removeResourceBundle('zh', 'translation')
     if (original) i18next.addResourceBundle('zh', 'translation', original)
   }
+})
+
+it('the unsaved JSON changes sentence exists in all seven locales and zh matches the agreed text', () => {
+  const key =
+    'The changes in JSON have not been saved. Switching to visual will discard them.'
+  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
+  for (const [name, locale] of Object.entries(locales)) {
+    const entries = locale.translation as Record<string, string>
+    expect(entries[key], name).toEqual(expect.any(String))
+  }
+  expect((zh.translation as Record<string, string>)[key]).toBe(
+    'JSON 里的改动还没保存，切回可视化会丢掉这些改动。'
+  )
 })
 
 it('the error count key has every plural form in all seven locales, with no Cyrillic outside Russian', () => {
@@ -1820,10 +2144,13 @@ it('the capability card shows its explanation', async () => {
   ).toBeVisible()
 })
 
-it('overriding a model without its top level warns on the tier that exceeds it and saves only the capability option', async () => {
+it('overriding a model without its top level saves only the capability option at once and warns on the tier that exceeds it', async () => {
   setCapabilityOptions()
   show()
   const dialog = await openOverrideDialog('gpt-5.6-sol')
+  expect(dialog).toHaveTextContent(
+    'Tick the thinking efforts this model supports. Takes effect immediately after you save.'
+  )
   for (const level of ['low', 'medium', 'high', 'xhigh']) {
     expect(within(dialog).getByRole('checkbox', { name: level })).toBeChecked()
   }
@@ -1832,23 +2159,73 @@ it('overriding a model without its top level warns on the tier that exceeds it a
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
-  expect(api.patch).not.toHaveBeenCalled()
+  expect(api.patch).toHaveBeenCalledTimes(1)
+  expect(patchedKeys()).toEqual([CAPABILITIES_KEY])
   const gpt = screen.getByRole('row', { name: /auto-gpt/ })
   expect(gpt).toHaveTextContent('Exceeds the model capability, sent as high')
   expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Overridden')
-
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
-    options: Record<string, string>
-  }
-  expect(Object.keys(payload.options)).toEqual([CAPABILITIES_KEY])
   const overrides = savedOption(CAPABILITIES_KEY) as Record<
     string,
     { efforts: string[] }
   >
   expect(overrides['gpt-5.6-sol'].efforts).not.toContain('xhigh')
   expect(overrides['gpt-5.6-sol'].efforts).toContain('high')
+})
+
+it.each(failureKinds)(
+  'a %s override save keeps the dialog and the ticks, shows one error, leaves the row Built-in and can be retried',
+  async (kind) => {
+    setCapabilityOptions()
+    show()
+    const dialog = await openOverrideDialog('gpt-5.6-sol')
+    await userEvent.click(
+      within(dialog).getByRole('checkbox', { name: 'xhigh' })
+    )
+    const restore = failPatch(kind)
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled()
+    )
+    expect(toastCount()).toBe(1)
+    expect(screen.getByRole('dialog')).toBeVisible()
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'xhigh' })
+    ).not.toBeChecked()
+    const table = screen.getByRole('table', {
+      name: 'Model thinking capabilities',
+      hidden: true,
+    })
+    expect(
+      within(table).getByRole('row', { name: /gpt-5.6-sol/, hidden: true })
+    ).toHaveTextContent('Built-in')
+
+    restore()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Overridden')
+  }
+)
+
+it('while the override is saving Cancel and Save are disabled and Save reads Saving...', async () => {
+  setCapabilityOptions()
+  const finish = holdPatch()
+  show()
+  const dialog = await openOverrideDialog('gpt-5.6-sol')
+  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(
+    await within(dialog).findByRole('button', { name: 'Saving...' })
+  ).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('dialog')).toBeVisible()
+  finish()
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
 })
 
 it('an in-range tier shows no capability warning', async () => {
@@ -1871,6 +2248,7 @@ it('saving the override dialog with no level ticked shows an error and keeps the
     await within(dialog).findByText('Select at least one level')
   ).toBeVisible()
   expect(screen.getByRole('dialog')).toBeVisible()
+  expect(api.patch).not.toHaveBeenCalled()
 })
 
 it('turning on No thinking disables all seven level checkboxes', async () => {
@@ -1893,7 +2271,7 @@ it('turning on No thinking disables all seven level checkboxes', async () => {
   }
 })
 
-it('cancelling the override dialog leaves the row and the page draft unchanged', async () => {
+it('cancelling the override dialog leaves the row unchanged and sends nothing', async () => {
   setCapabilityOptions()
   show()
   const dialog = await openOverrideDialog('gpt-5.6-sol')
@@ -1903,32 +2281,75 @@ it('cancelling the override dialog leaves the row and the page draft unchanged',
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Built-in')
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(await screen.findByText('No changes to save')).toBeVisible()
+  expect(api.patch).not.toHaveBeenCalled()
 })
 
-it('restoring built-in on an overridden row only changes the draft and the row loses its override', async () => {
+it('restoring built-in on an overridden row saves at once without a confirm dialog', async () => {
   setCapabilityOptions()
   show()
   const row = await capabilityRow('gpt-5.5')
   await userEvent.click(
     within(row).getByRole('button', { name: 'Restore built-in' })
   )
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(patchedKeys()).toEqual([CAPABILITIES_KEY])
+  expect(savedOption(CAPABILITIES_KEY)).toEqual({})
+  await waitFor(async () =>
+    expect(await capabilityRow('gpt-5.5')).not.toHaveTextContent('Overridden')
+  )
   const restored = await capabilityRow('gpt-5.5')
   expect(restored).toHaveTextContent(/Built-in|Unconfirmed/)
-  expect(restored).not.toHaveTextContent('Overridden')
   expect(
     within(restored).queryByRole('button', { name: 'Restore built-in' })
   ).toBeNull()
   expect(
     within(restored).getByRole('button', { name: 'Override' })
   ).toBeVisible()
-  expect(api.patch).not.toHaveBeenCalled()
-
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  expect(savedOption(CAPABILITIES_KEY)).toEqual({})
 })
+
+it('while restoring built-in is saving every other change button is disabled', async () => {
+  setCapabilityOptions()
+  const finish = holdPatch()
+  show()
+  const row = await capabilityRow('gpt-5.5')
+  await userEvent.click(
+    within(row).getByRole('button', { name: 'Restore built-in' })
+  )
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const table = await capabilityTable()
+  for (const button of within(table).getAllByRole('button', {
+    name: /^(Override|Modify|Restore built-in)$/,
+  })) {
+    expect(button).toBeDisabled()
+  }
+  const routeRow = screen.getByRole('row', { name: /auto-gpt/ })
+  expect(within(routeRow).getByRole('button', { name: 'Edit' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Add virtual model' })
+  ).toBeDisabled()
+  finish()
+  await waitFor(() =>
+    expect(within(routeRow).getByRole('button', { name: 'Edit' })).toBeEnabled()
+  )
+})
+
+it.each(failureKinds)(
+  'a %s restore built-in shows the error once and the row stays Overridden',
+  async (kind) => {
+    setCapabilityOptions()
+    show()
+    const row = await capabilityRow('gpt-5.5')
+    failPatch(kind)
+    await userEvent.click(
+      within(row).getByRole('button', { name: 'Restore built-in' })
+    )
+    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    expect(toastCount()).toBe(1)
+    expect(await capabilityRow('gpt-5.5')).toHaveTextContent('Overridden')
+  }
+)
 
 it('deleting every virtual model empties the capability card', async () => {
   setCapabilityOptions()
@@ -1948,15 +2369,6 @@ it('deleting every virtual model empties the capability card', async () => {
   expect(
     await screen.findByText('No model is used by a virtual model yet')
   ).toBeVisible()
-})
-
-it('saving with nothing changed on both options reports no changes and sends nothing', async () => {
-  setCapabilityOptions()
-  show()
-  await capabilityTable()
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(await screen.findByText('No changes to save')).toBeVisible()
-  expect(api.patch).not.toHaveBeenCalled()
 })
 
 it('every locale has the capability card texts and Chinese uses the agreed sentences', () => {
@@ -1994,6 +2406,32 @@ it('every locale has the capability card texts and Chinese uses the agreed sente
   )
 })
 
+it('every locale has the two immediate-save texts and none keeps the old save-later texts', () => {
+  const added = [
+    'Delete {{name}}? It takes effect immediately after you confirm.',
+    'Tick the thinking efforts this model supports. Takes effect immediately after you save.',
+  ]
+  const removed = [
+    'Delete {{name}}? It takes effect after you save changes.',
+    'Tick the thinking efforts this model supports. Takes effect after you save changes.',
+  ]
+  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
+  for (const [name, locale] of Object.entries(locales)) {
+    const entries = locale.translation as Record<string, string>
+    for (const key of added) {
+      expect(entries[key], `${name} ${key}`).toEqual(expect.any(String))
+    }
+    for (const key of removed) {
+      expect(entries, `${name} ${key}`).not.toHaveProperty([key])
+    }
+  }
+  const zhEntries = zh.translation as Record<string, string>
+  expect(zhEntries[added[0]]).toBe('确定删除 {{name}} 吗？确认后立即生效。')
+  expect(zhEntries[added[1]]).toBe(
+    '勾选这个模型支持的思考力度，保存后立即生效。'
+  )
+})
+
 async function deleteVirtualModel(name: string) {
   const row = await screen.findByRole('row', { name: new RegExp(name) })
   await userEvent.click(
@@ -2007,36 +2445,25 @@ async function deleteVirtualModel(name: string) {
   )
 }
 
-it('changing only the virtual models submits only the routes option', async () => {
+it('deleting a virtual model submits only the routes option', async () => {
   setCapabilityOptions()
   show()
   await deleteVirtualModel('auto-chat')
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
   await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
-    options: Record<string, string>
-  }
-  expect(Object.keys(payload.options)).toEqual([ROUTES_KEY])
+  expect(patchedKeys()).toEqual([ROUTES_KEY])
 })
 
-it('changing both submits both options and leaves the stored effort untouched', async () => {
+it('changing a capability after deleting a virtual model sends two separate single-option requests and leaves the stored effort untouched', async () => {
   setCapabilityOptions()
   show()
   await deleteVirtualModel('auto-chat')
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
   const dialog = await openOverrideDialog('gpt-5.6-sol')
   await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
   await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
-    options: Record<string, string>
-  }
-  expect(Object.keys(payload.options).sort()).toEqual(
-    [CAPABILITIES_KEY, ROUTES_KEY].sort()
-  )
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
+  expect(patchedKeys(0)).toEqual([ROUTES_KEY])
+  expect(patchedKeys(1)).toEqual([CAPABILITIES_KEY])
   const routes = savedOption(ROUTES_KEY) as {
     name: string
     tiers: { hard: { effort_max: string } }
@@ -2135,7 +2562,9 @@ it('the override dialog groups the seven level checkboxes under Supported effort
   setCapabilityOptions()
   show()
   const dialog = await openOverrideDialog('gpt-5.6-sol')
-  const group = within(dialog).getByRole('group', { name: 'Supported efforts' })
+  const group = within(dialog).getByRole('group', {
+    name: 'Supported efforts',
+  })
   const boxes = within(group).getAllByRole('checkbox')
   expect(boxes).toHaveLength(7)
   for (const box of boxes) {
@@ -2288,7 +2717,6 @@ it('a stored virtual model without endpoints survives adding a new one in the vi
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(post).toHaveBeenCalledTimes(1)
-  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
   await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
   expect(savedRoutes().map((route) => route.name)).toEqual(
     expect.arrayContaining(['legacy-old', 'auto-new'])

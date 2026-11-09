@@ -5,7 +5,7 @@ category: smart-routing-editor
 ---
 # 虚拟模型表格的第二行文字
 ## 简介
-编辑 auto-gpt：接口勾上 Anthropic，困难档改成「跟随打分 medium～xhigh」，把分组从 api → subscription 拖成 subscription → api；保存弹窗、保存更改、刷新，核对表格。同一张表里还有 auto-chat（简单档 gpt-4.1 不支持思考、困难档固定 high），一起核对摘要写法。
+编辑 auto-gpt：接口勾上 Anthropic，困难档改成「跟随打分 medium～xhigh」，把分组从 api → subscription 拖成 subscription → api；在弹窗里保存（立即提交，出现「保存成功」），核对表格后刷新再核对一次。同一张表里还有 auto-chat（简单档 gpt-4.1 不支持思考、困难档固定 high），一起核对摘要写法。
 ## 测试目的
 二期 PRD 04 验收 C13：auto-gpt 名称下写「Responses / Anthropic 接口」，困难档第二行写「跟随打分 medium～xhigh · subscription → api」；力度摘要另有「不覆盖」「固定 high」「不支持思考」；第二行格子用省略号截断。对应 PRD 04 验证路径 2。
 ## 测试流程（固定 JSON，subagent 原样消费）
@@ -127,6 +127,10 @@ category: smart-routing-editor
       "expect": "ok"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "evaluate",
       "script": "() => { const row = [...document.querySelectorAll('tbody tr')].find((r) => { const td = r.querySelector('td'); return td && td.innerText.trim().split('\\n')[0].trim() === \"auto-gpt\"; }); if (!row) throw new Error('表格里没有 ' + \"auto-gpt\"); const want = [\"auto-gpt Responses / Anthropic 接口\", \"glm-5.1 不覆盖 · api\", \"gpt-5.5 默认 不覆盖 · api\", \"gpt-5.6-sol 跟随打分 medium～xhigh · subscription → api\"]; const got = [...row.querySelectorAll('td')].slice(0, want.length).map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(\"auto-gpt\" + ' 这一行：' + got.join(' | ') + '；期望：' + want.join(' | ')); return 'ok'; }",
       "expect": "ok"
@@ -138,15 +142,7 @@ category: smart-routing-editor
     },
     {
       "action": "screenshot",
-      "name": "table-before-save"
-    },
-    {
-      "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
-    },
-    {
-      "action": "waitFor",
-      "text": "保存成功"
+      "name": "table-after-save"
     },
     {
       "action": "navigate",
@@ -177,6 +173,6 @@ category: smart-routing-editor
 ```
 ## 如何验收
 - [ ] auto-chat 一行：名称下「Chat 接口」，简单档「不支持思考 · api」，普通档「不覆盖 · api」，困难档「固定 high · subscription → api」
-- [ ] 保存后 auto-gpt 名称下写「Responses / Anthropic 接口」，困难档第二行写「跟随打分 medium～xhigh · subscription → api」
+- [ ] 弹窗保存后出现「保存成功」，auto-gpt 名称下写「Responses / Anthropic 接口」，困难档第二行写「跟随打分 medium～xhigh · subscription → api」
 - [ ] 第二行文字设置了单行末尾省略（text-overflow: ellipsis）
-- [ ] 保存更改并刷新后显示不变
+- [ ] 刷新后显示不变

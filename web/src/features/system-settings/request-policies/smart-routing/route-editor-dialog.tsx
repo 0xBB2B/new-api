@@ -106,12 +106,13 @@ type RouteEditorDialogProps = {
   overrides: Record<string, ThinkingCapabilityOverride>
   builtin: BuiltinThinkingCapabilities | undefined
   onOpenChange: (open: boolean) => void
-  onSave: (route: SmartRoute) => void
+  onSave: (route: SmartRoute) => Promise<void>
 }
 
 export function RouteEditorDialog(props: RouteEditorDialogProps) {
   const { t } = useTranslation()
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
   const isPhone = useMediaQuery('(max-width: 767px)')
   const [tab, setTab] = useState<SmartEditorTab>('scoring')
   const [tier, setTier] = useState<SmartTierId>('simple')
@@ -219,6 +220,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
 
   const closedRef = useRef(false)
   const close = (open: boolean) => {
+    if (!open && saving) return
     if (!open) closedRef.current = true
     props.onOpenChange(open)
   }
@@ -258,11 +260,19 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
         showErrors(result.errors.map((error) => error.field))
         return
       }
-      props.onSave(next)
-      close(false)
     } catch (error) {
       handleServerError(error)
+      return
     }
+    setSaving(true)
+    try {
+      await props.onSave(next)
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
+    close(false)
   }
 
   const tabs: { id: SmartEditorTab; title: string; summary: string }[] = [
@@ -279,7 +289,12 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
       contentClassName='sm:max-w-5xl'
       footer={
         <>
-          <Button type='button' variant='outline' onClick={() => close(false)}>
+          <Button
+            type='button'
+            variant='outline'
+            disabled={saving}
+            onClick={() => close(false)}
+          >
             {t('Cancel')}
           </Button>
           <Button
@@ -287,7 +302,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
             form={ROUTE_FORM_ID}
             disabled={form.formState.isSubmitting}
           >
-            {t('Save')}
+            {saving ? t('Saving...') : t('Save')}
           </Button>
         </>
       }

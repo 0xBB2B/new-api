@@ -40,7 +40,10 @@ type ThinkingCapabilitiesCardProps = {
   isError: boolean
   onRetry: () => void
   overrides: Record<string, ThinkingCapabilityOverride>
-  onChange: (overrides: Record<string, ThinkingCapabilityOverride>) => void
+  onSave: (
+    overrides: Record<string, ThinkingCapabilityOverride>
+  ) => Promise<void>
+  saving: boolean
 }
 
 export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
@@ -50,9 +53,13 @@ export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
   const title = t('Model thinking capabilities')
   const builtin = props.builtin ?? {}
 
-  const restore = (model: string) => {
+  const restore = async (model: string) => {
     const { [model]: _removed, ...rest } = props.overrides
-    props.onChange(rest)
+    try {
+      await props.onSave(rest)
+    } catch {
+      // 错误提示已由保存请求统一弹出
+    }
   }
 
   const sourceBadge = (source: 'builtin' | 'override' | 'unconfirmed') => {
@@ -171,6 +178,7 @@ export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
                       <Button
                         variant='ghost'
                         size='sm'
+                        disabled={props.saving}
                         onClick={() => setEditing(model)}
                       >
                         {t('Modify')}
@@ -178,7 +186,8 @@ export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
                       <Button
                         variant='ghost'
                         size='sm'
-                        onClick={() => restore(model)}
+                        disabled={props.saving}
+                        onClick={() => void restore(model)}
                       >
                         {t('Restore built-in')}
                       </Button>
@@ -187,6 +196,7 @@ export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
                     <Button
                       variant='ghost'
                       size='sm'
+                      disabled={props.saving}
                       onClick={() => setEditing(model)}
                     >
                       {t('Override')}
@@ -203,8 +213,8 @@ export function ThinkingCapabilitiesCard(props: ThinkingCapabilitiesCardProps) {
           model={editing}
           current={effectiveCapability(editing, builtin, props.overrides)}
           onOpenChange={(open) => !open && setEditing(null)}
-          onSave={(override) => {
-            props.onChange({ ...props.overrides, [editing]: override })
+          onSave={async (override) => {
+            await props.onSave({ ...props.overrides, [editing]: override })
             setEditing(null)
           }}
         />

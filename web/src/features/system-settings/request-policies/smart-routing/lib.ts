@@ -52,10 +52,6 @@ export function parseSmartRoutes(text: string): {
   return { routes: parsed as SmartRoute[], error: null }
 }
 
-export function hasMissingEndpoints(routes: SmartRoute[]) {
-  return routes.some((route) => !Array.isArray(route.endpoints))
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

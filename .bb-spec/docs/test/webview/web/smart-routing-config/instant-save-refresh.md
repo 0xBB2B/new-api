@@ -1,17 +1,17 @@
 ---
-name: unsaved-refresh
-description: 编辑 auto-gpt 并在弹窗里保存，但不点「保存更改」直接刷新，改动不生效
+name: instant-save-refresh
+description: 编辑 auto-gpt 的「顾问」Tab，把连续不满意次数从 2 改成 3，弹窗保存后出现「保存成功」，刷新后顾问列是「连续 3 次不满意」
 category: smart-routing-config
 ---
-# 弹窗保存后不点保存更改就刷新
+# 弹窗保存后立即生效
 ## 简介
-编辑已有的 auto-gpt，在「顾问」Tab 把「连续不满意几次后交给顾问」从 2 改成 3，弹窗保存后表格先显示新值；不点「保存更改」直接刷新页面。
+编辑已有的 auto-gpt，在「顾问」Tab 把「连续不满意几次后交给顾问」从 2 改成 3，点弹窗的「保存」；看到「保存成功」后直接刷新页面，核对顾问列。
 ## 测试目的
-一期 PRD 05-config-page 验收 C8：弹窗保存后不点「保存更改」就刷新页面，改动不生效（点了才生效由 add-and-save 覆盖）。
+立即保存 PRD 2026-11-09.smart-routing-instant-save 01 C2（编辑弹窗点「保存」立即提交，弹窗关闭，表格显示新值，顶部提示「保存成功」）、C9（提交成功后刷新页面，看到的是刚保存的值）。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
-  "id": "unsaved-refresh",
+  "id": "instant-save-refresh",
   "category": "smart-routing-config",
   "target": "web",
   "setup": [
@@ -84,6 +84,10 @@ category: smart-routing-config
       "expect": "ok"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "assertText",
       "selector": "table",
       "text": "连续 3 次不满意"
@@ -98,12 +102,12 @@ category: smart-routing-config
     },
     {
       "action": "evaluate",
-      "script": "() => { const text = document.querySelector('table').innerText; if (!text.includes('连续 2 次不满意') || text.includes('连续 3 次不满意')) throw new Error('刷新后顾问列是：' + text.match(/连续 \\d+ 次不满意/)); return 'ok'; }",
+      "script": "() => { const text = document.querySelector('table').innerText; if (!text.includes('连续 3 次不满意') || text.includes('连续 2 次不满意')) throw new Error('刷新后顾问列是：' + text.match(/连续 \\d+ 次不满意/)); return 'ok'; }",
       "expect": "ok"
     },
     {
       "action": "screenshot",
-      "name": "unsaved-refresh"
+      "name": "instant-save-refresh"
     }
   ],
   "teardown": [
@@ -116,5 +120,5 @@ category: smart-routing-config
 }
 ```
 ## 如何验收
-- [ ] 弹窗保存后表格先显示「连续 3 次不满意」
-- [ ] 不点「保存更改」刷新后，顾问列恢复为「连续 2 次不满意」
+- [ ] 弹窗保存后弹窗关闭，出现「保存成功」，表格顾问列显示「连续 3 次不满意」
+- [ ] 刷新后顾问列仍是「连续 3 次不满意」

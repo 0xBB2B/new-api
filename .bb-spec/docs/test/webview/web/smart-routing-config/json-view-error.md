@@ -1,13 +1,13 @@
 ---
 name: json-view-error
-description: 在 JSON 视图里把困难档模型改成在 api 分组没有渠道的模型，点「保存更改」报同样的错误
+description: 在 JSON 视图里把困难档模型改成在 api 分组没有渠道的模型，点 JSON 框下方的「保存」报同样的错误，什么都不提交
 category: smart-routing-config
 ---
 # JSON 视图保存出错
 ## 简介
-切到「JSON」视图，把整份配置改成困难档用 gpt-5.6-terra 的版本（二期格式，带 endpoints 和 effort_mode），点右上角「保存更改」。
+切到「JSON」视图，把整份配置改成困难档用 gpt-5.6-terra 的版本（二期格式，带 endpoints 和 effort_mode），点编辑框下方靠右的「保存」，再刷新页面看配置有没有变。
 ## 测试目的
-一期 PRD 05-config-page 验收 C9：JSON 视图保存时按 C7 同样检查，报「gpt-5.6-terra 在分组 api 里没有可用渠道」。
+一期 PRD 05-config-page 验收 C9：JSON 视图保存时按 C7 同样检查，报「gpt-5.6-terra 在分组 api 里没有可用渠道」。立即保存 PRD 2026-11-09.smart-routing-instant-save 02 C3：JSON 框下方的「保存」检查不通过时在顶部弹出原因，什么都不提交。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -72,7 +72,7 @@ category: smart-routing-config
     },
     {
       "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
+      "selector": "role=button[name=\"保存\"s]"
     },
     {
       "action": "waitFor",
@@ -81,6 +81,19 @@ category: smart-routing-config
     {
       "action": "screenshot",
       "name": "json-view-error"
+    },
+    {
+      "action": "navigate",
+      "target": "/system-settings/request-policies/smart-routing"
+    },
+    {
+      "action": "waitFor",
+      "text": "Responses 接口"
+    },
+    {
+      "action": "evaluate",
+      "script": "() => { const row = [...document.querySelectorAll('tbody tr')].find((r) => { const td = r.querySelector('td'); return td && td.innerText.trim().split('\\n')[0].trim() === \"auto-gpt\"; }); if (!row) throw new Error('表格里没有 auto-gpt'); const got = row.querySelectorAll('td')[3].innerText.replace(/\\s+/g, ' ').trim(); if (!got.startsWith(\"gpt-5.6-sol \")) throw new Error('auto-gpt 困难档是：' + got + '；期望模型 ' + \"gpt-5.6-sol\"); return 'ok'; }",
+      "expect": "ok"
     }
   ],
   "teardown": [
@@ -93,4 +106,5 @@ category: smart-routing-config
 }
 ```
 ## 如何验收
-- [ ] 点「保存更改」后提示里写「gpt-5.6-terra 在分组 api 里没有可用渠道」（和弹窗里的中文提示相同），配置没有保存
+- [ ] 点 JSON 框下方的「保存」后提示里写「gpt-5.6-terra 在分组 api 里没有可用渠道」（和弹窗里的中文提示相同）
+- [ ] 刷新后困难档仍是 gpt-5.6-sol，配置没有保存

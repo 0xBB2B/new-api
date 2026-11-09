@@ -1,13 +1,13 @@
 ---
 name: capability-override-flow
-description: 覆盖 gpt-5.6-sol 去掉 xhigh、max 后来源变「已覆盖」，表格里困难档标黄写「超出模型能力，实际按 high 发送」，存的配置不变；保存更改后生效，恢复内置后标黄消失
+description: 覆盖 gpt-5.6-sol 去掉 xhigh、max 后来源变「已覆盖」，表格里困难档标黄写「超出模型能力，实际按 high 发送」，存的配置不变；覆盖保存和恢复内置都立即提交并出现「保存成功」，恢复内置后标黄消失
 category: smart-routing-capability
 ---
 # 覆盖模型能力与标黄提示
 ## 简介
-在「模型思考能力」里点 gpt-5.6-sol 的「覆盖」，核对弹窗的标题、说明、勾选框初值和「不支持思考」开关；取消勾选 xhigh、max 后保存，再点「保存更改」并刷新。核对能力表、虚拟模型表格的标黄提示和编辑弹窗里存的值。最后点「恢复内置」并保存更改。
+在「模型思考能力」里点 gpt-5.6-sol 的「覆盖」，核对弹窗的标题、说明、勾选框初值和「不支持思考」开关；取消勾选 xhigh、max 后保存（立即提交，出现「保存成功」），核对后刷新。核对能力表、虚拟模型表格的标黄提示和编辑弹窗里存的值。最后点「恢复内置」（立即提交，出现「保存成功」）并刷新。
 ## 测试目的
-二期 PRD 02 验收 C7（打开覆盖弹窗时勾选框是当前生效的值，打开「不支持思考」后勾选框变灰）、C8（点了「保存更改」才生效）、C9（困难档存「跟随打分 medium～xhigh」，把模型覆盖成只到 high 后那一格标黄并写「超出模型能力，实际按 high 发送」，编辑弹窗里存的值仍是 medium～xhigh）、C5 的操作列（已覆盖的行有「修改」「恢复内置」，来源小标签用主色），以及 C10 前半（力度下拉只列模型当前支持的档位）。对应 PRD 02 验证路径 2、3。
+二期 PRD 02 验收 C7（打开覆盖弹窗时勾选框是当前生效的值，打开「不支持思考」后勾选框变灰）、C9（困难档存「跟随打分 medium～xhigh」，把模型覆盖成只到 high 后那一格标黄并写「超出模型能力，实际按 high 发送」，编辑弹窗里存的值仍是 medium～xhigh）、C5 的操作列（已覆盖的行有「修改」「恢复内置」，来源小标签用主色），以及 C10 前半（力度下拉只列模型当前支持的档位）；立即保存 PRD 2026-11-09.smart-routing-instant-save 01 C4（覆盖弹窗说明是"勾选这个模型支持的思考力度，保存后立即生效。"，保存立即提交并提示「保存成功」）、C5（「恢复内置」不弹确认框，立即提交并提示「保存成功」）。对应 PRD 02 验证路径 2、3。
 ## 测试流程（固定 JSON，subagent 原样消费）
 ```json
 {
@@ -68,7 +68,7 @@ category: smart-routing-capability
     {
       "action": "assertText",
       "selector": "role=dialog",
-      "text": "勾选这个模型支持的思考力度，保存更改后生效。"
+      "text": "勾选这个模型支持的思考力度，保存后立即生效。"
     },
     {
       "action": "evaluate",
@@ -125,6 +125,10 @@ category: smart-routing-capability
       "expect": "ok"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "evaluate",
       "script": "() => { const card = document.querySelector('section[aria-label=\"模型思考能力\"]'); if (!card) throw new Error('没有「模型思考能力」卡片'); const rows = [...card.querySelectorAll('tbody tr')]; const cells = (r) => [...r.querySelectorAll('td')].map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); const rowOf = (model) => rows.find((r) => cells(r)[0] === model); const r = rowOf(\"gpt-5.6-sol\"); if (!r) throw new Error('能力表里没有 ' + \"gpt-5.6-sol\"); const got = cells(r); if (JSON.stringify(got) !== JSON.stringify([\"gpt-5.6-sol\", \"已覆盖\", \"none low medium high\", \"修改 恢复内置\"])) throw new Error(\"gpt-5.6-sol\" + ' 这一行是：' + got.join(' | ')); return 'ok'; }",
       "expect": "ok"
@@ -152,14 +156,6 @@ category: smart-routing-capability
     {
       "action": "screenshot",
       "name": "override-warning"
-    },
-    {
-      "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
-    },
-    {
-      "action": "waitFor",
-      "text": "保存成功"
     },
     {
       "action": "navigate",
@@ -229,6 +225,10 @@ category: smart-routing-capability
       "selector": "role=group[name=\"gpt-5.6-sol 的操作\"s] >> role=button[name=\"恢复内置\"s]"
     },
     {
+      "action": "waitFor",
+      "text": "保存成功"
+    },
+    {
       "action": "evaluate",
       "script": "() => { const card = document.querySelector('section[aria-label=\"模型思考能力\"]'); if (!card) throw new Error('没有「模型思考能力」卡片'); const rows = [...card.querySelectorAll('tbody tr')]; const cells = (r) => [...r.querySelectorAll('td')].map((td) => td.innerText.replace(/\\s+/g, ' ').trim()); const rowOf = (model) => rows.find((r) => cells(r)[0] === model); const r = rowOf(\"gpt-5.6-sol\"); if (!r) throw new Error('能力表里没有 ' + \"gpt-5.6-sol\"); const got = cells(r); if (JSON.stringify(got) !== JSON.stringify([\"gpt-5.6-sol\", \"内置\", \"none low medium high xhigh max\", \"覆盖\"])) throw new Error(\"gpt-5.6-sol\" + ' 这一行是：' + got.join(' | ')); return 'ok'; }",
       "expect": "ok"
@@ -237,14 +237,6 @@ category: smart-routing-capability
       "action": "evaluate",
       "script": "() => { if (document.body.innerText.includes('超出模型能力')) throw new Error('恢复内置后仍有标黄提示'); return 'ok'; }",
       "expect": "ok"
-    },
-    {
-      "action": "click",
-      "selector": "role=button[name=\"保存更改\"s]"
-    },
-    {
-      "action": "waitFor",
-      "text": "保存成功"
     },
     {
       "action": "navigate",
@@ -278,8 +270,8 @@ category: smart-routing-capability
 }
 ```
 ## 如何验收
-- [ ] 覆盖弹窗标题「覆盖 gpt-5.6-sol 的思考能力」，说明「勾选这个模型支持的思考力度，保存更改后生效。」，勾选框初值是 none low medium high xhigh max；打开「不支持思考」后七个勾选框都变灰，关掉后恢复
-- [ ] 去掉 xhigh、max 保存后，这一行来源「已覆盖」（主色），档位 none low medium high，操作「修改」「恢复内置」
+- [ ] 覆盖弹窗标题「覆盖 gpt-5.6-sol 的思考能力」，说明「勾选这个模型支持的思考力度，保存后立即生效。」，勾选框初值是 none low medium high xhigh max；打开「不支持思考」后七个勾选框都变灰，关掉后恢复
+- [ ] 去掉 xhigh、max 保存后出现「保存成功」，这一行来源「已覆盖」（主色），档位 none low medium high，操作「修改」「恢复内置」
 - [ ] auto-gpt 困难档力度文字标黄，下面黄色小字「超出模型能力，实际按 high 发送」；auto-chat 困难档（固定 high）不标黄
-- [ ] 保存更改并刷新后仍是已覆盖；编辑弹窗里困难档悬停显示存的值「跟随打分 medium～xhigh」，「最高」下拉只列 none low medium high
-- [ ] 点「恢复内置」后回到内置值、标黄消失；保存更改并刷新后仍是内置
+- [ ] 刷新后仍是已覆盖；编辑弹窗里困难档悬停显示存的值「跟随打分 medium～xhigh」，「最高」下拉只列 none low medium high
+- [ ] 点「恢复内置」后出现「保存成功」，回到内置值、标黄消失；刷新后仍是内置
