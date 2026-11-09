@@ -2087,27 +2087,113 @@ it('the table shows interfaces under the name and effort with groups under every
   await waitFor(() => expect(chat).toHaveTextContent('No thinking · api'))
 })
 
-it('the capability card counts the tier models once each and leaves out scorer and advisor models', async () => {
+it('the capability card counts the tier and scorer models once each and leaves out advisor-only models', async () => {
   setCapabilityOptions()
   show()
   const table = await capabilityTable()
   const heading = screen.getByText('Model thinking capabilities')
-  expect(heading.parentElement).toHaveTextContent('5')
+  expect(heading.parentElement).toHaveTextContent('6')
   for (const model of [
     'gpt-5.4-mini',
     'gpt-5.5',
     'gpt-5.6-sol',
     'gpt-4.1',
     'glm-5.1',
+    'gpt-5.6-luna',
   ]) {
     expect(within(table).getAllByText(model)).toHaveLength(1)
   }
-  expect(within(table).queryByText('gpt-5.6-luna')).toBeNull()
+  expect(within(table).getAllByRole('row')).toHaveLength(1 + 6)
   for (const header of ['Model', 'Source', 'Supported efforts', 'Actions']) {
     expect(
       within(table).getByRole('columnheader', { name: header })
     ).toBeVisible()
   }
+})
+
+it('an advisor-only model is not listed in the capability card', async () => {
+  setCapabilityOptions(
+    capabilityRoutes.map((route) => ({
+      ...route,
+      advisor: {
+        model: 'advisor-only',
+        groups: ['api'],
+        after_dissatisfied: 3,
+      },
+    }))
+  )
+  show()
+  const table = await capabilityTable()
+  expect(within(table).queryByText('advisor-only')).toBeNull()
+})
+
+it('the scorer model row behaves like a tier model row: unconfirmed, override, restore', async () => {
+  setCapabilityOptions()
+  show()
+  const unconfirmed = await capabilityRow('gpt-5.6-luna')
+  expect(unconfirmed).toHaveTextContent('Unconfirmed')
+  expect(unconfirmed).toHaveTextContent(/low.*medium.*high/)
+
+  const dialog = await openOverrideDialog('gpt-5.6-luna')
+  for (const level of ['low', 'medium', 'high']) {
+    expect(within(dialog).getByRole('checkbox', { name: level })).toBeChecked()
+  }
+  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'high' }))
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  const overridden = await capabilityRow('gpt-5.6-luna')
+  expect(overridden).toHaveTextContent('Overridden')
+  expect(overridden).not.toHaveTextContent('high')
+
+  await userEvent.click(
+    within(overridden).getByRole('button', { name: 'Restore built-in' })
+  )
+  const restored = await capabilityRow('gpt-5.6-luna')
+  expect(restored).toHaveTextContent('Unconfirmed')
+  expect(restored).toHaveTextContent(/low.*medium.*high/)
+})
+
+it('a scorer-only model known to the built-in table is queried and shown as Built-in', async () => {
+  setCapabilityOptions(
+    capabilityRoutes.map((route) => ({
+      ...route,
+      scorer: { ...route.scorer, model: 'scorer-only' },
+    }))
+  )
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/smart_routing/thinking_capabilities') {
+      const asked = String(
+        (config as { params: { models: string } }).params.models
+      ).split(',')
+      if (asked.includes('scorer-only')) {
+        return {
+          data: {
+            success: true,
+            data: {
+              'scorer-only': {
+                known: true,
+                no_thinking: false,
+                efforts: ['low', 'medium'],
+              },
+            },
+          },
+        }
+      }
+    }
+    return base(url, config)
+  })
+  show()
+  await waitFor(async () => {
+    expect(await capabilityRow('scorer-only')).toHaveTextContent('Built-in')
+  })
+  const row = await capabilityRow('scorer-only')
+  expect(row).toHaveTextContent(/low.*medium/)
+  expect(row).not.toHaveTextContent('high')
+  expect(within(row).getByRole('button', { name: 'Override' })).toBeVisible()
 })
 
 it('capability rows show their source, supported levels and the actions that fit', async () => {

@@ -114,9 +114,10 @@ export function effortOverflow(
   return { overflow: true, actual: clampEffort(reported, capability).value }
 }
 
-export function tierModelsOfRoutes(routes: SmartRoute[]) {
-  const models = routes.flatMap((route) =>
-    SMART_TIER_IDS.map((id) => route.tiers[id].model)
-  )
+export function capabilityModelsOfRoutes(routes: SmartRoute[]) {
+  const models = routes.flatMap((route) => [
+    ...SMART_TIER_IDS.map((id) => route.tiers[id].model),
+    route.scorer.model,
+  ])
   return [...new Set(models.filter(Boolean))]
 }

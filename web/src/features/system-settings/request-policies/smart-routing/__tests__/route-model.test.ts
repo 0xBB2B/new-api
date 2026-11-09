@@ -8,7 +8,7 @@ import {
   clampEffort,
   effectiveCapability,
   effortOverflow,
-  tierModelsOfRoutes,
+  capabilityModelsOfRoutes,
 } from '../capability'
 import {
   endpointShortNames,
@@ -491,13 +491,18 @@ describe('effortOverflow', () => {
   })
 })
 
-describe('tierModelsOfRoutes', () => {
-  it('dedupes tier models in first-seen order and skips scorer and advisor', () => {
+describe('capabilityModelsOfRoutes', () => {
+  it('lists tier and scorer models once each, skipping advisor and empty models', () => {
     const routes = [
-      route({ simple: 'b', normal: 'a', hard: 'b' }, 'scorer-m', 'advisor-m'),
-      route({ simple: 'c', normal: 'a', hard: 'd' }, 'scorer-m', 'advisor-m'),
+      route({ simple: 'm1', normal: 'm2', hard: 'm3' }, 's1', 'adv'),
+      route({ simple: 's1' }, '', 'adv'),
     ]
-    expect(tierModelsOfRoutes(routes)).toEqual(['b', 'a', 'c', 'd'])
+    expect(capabilityModelsOfRoutes(routes).sort()).toEqual([
+      'm1',
+      'm2',
+      'm3',
+      's1',
+    ])
   })
 })
 
