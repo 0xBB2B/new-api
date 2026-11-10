@@ -24,7 +24,7 @@ const scorerSystemPrompt = `You are a router that labels a user's latest request
 
 Read the user messages (oldest first; earlier messages show only their beginning) and the local features, then return exactly one JSON object and nothing else:
 
-{"task_type":"","reasoning":"","workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
+{"task_type":"","reasoning":"","effort_score":0,"workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
 
 Field rules:
 - task_type, judged on the LATEST message only, one of:
@@ -35,6 +35,7 @@ Field rules:
   analyze  = analyze data, investigate a failure, research and draw a conclusion
   plan     = design a solution, architecture, strategy or multi-part plan
 - reasoning: low | medium | high. How much multi-step thinking, calculation or trade-off weighing the latest request needs.
+- effort_score: a number from 0 to 1 for how much thinking the latest request needs. Higher when the goal is vague or the problem is hard; lower when the goal is clear and the task is simple.
 - workload: one_step | few_steps | many_steps. How many actions (reading files, searching, running tools, fetching data) it needs.
 - risk: low | high. high when the result will be published externally, used for decisions or bookkeeping, or touches production data, billing or security, and a mistake would be hard to notice.
 - domain: code | finance | operations | data_analysis | other.

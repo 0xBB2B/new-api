@@ -117,6 +117,7 @@ export interface ToolSurchargeItem {
 export interface SmartRouteLabels {
   task_type?: string
   reasoning?: string
+  effort_score?: number | 'invalid'
   workload?: string
   risk?: string
   domain?: string

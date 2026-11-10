@@ -3077,6 +3077,52 @@ it('the scorer reasoning effort help explains the empty choice, the closest-leve
   )
 })
 
+const TIER_EFFORT_HELP_EN =
+  'Not overridden keeps the value sent by the client and switches to the closest level when the model does not support it. Follow scoring uses the thinking need from scoring (0 to 1, higher when the goal is vague or the problem is hard) and picks proportionally among the levels this model supports between the minimum and maximum; with 3 levels, 0 to 0.33 picks the lowest and 0.67 to 1 the highest. The highest of them is used when scoring fails. The dropdowns only list the levels this model supports'
+const TIER_EFFORT_HELP_ZH =
+  '不覆盖：保留客户端传来的值，模型不支持这一档时自动换成最接近的档位。跟随打分：打分会给出「思考需求」（0～1，目标越模糊、问题越难越大），按比例在最低和最高之间、这个模型支持的档位里选；例如范围里有 3 档，0～0.33 取最低一档，0.67～1 取最高一档。打分失败时用其中最高的一档。力度下拉只列这个模型支持的档位'
+
+it('the tier reasoning effort help explains proportional picking by thinking need', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openTierPanel('auto-gpt', /^Hard/)
+  await userEvent.hover(
+    within(dialog).getByRole('button', { name: 'Reasoning effort help' })
+  )
+  await waitFor(() =>
+    expect(screen.getAllByText(TIER_EFFORT_HELP_EN).length).toBeGreaterThan(0)
+  )
+  expect(screen.queryByText(/takes the thinking depth from scoring/)).toBeNull()
+})
+
+it('a model without thinking shows the same reasoning effort help', async () => {
+  setRoutes([autoGpt, autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openTierPanel('auto-chat', /^Simple/)
+  await userEvent.hover(
+    await within(dialog).findByRole('button', {
+      name: 'Reasoning effort help',
+    })
+  )
+  await waitFor(() =>
+    expect(screen.getAllByText(TIER_EFFORT_HELP_EN).length).toBeGreaterThan(0)
+  )
+})
+
+it('the tier reasoning effort help has the agreed zh text and every locale drops the old sentence', () => {
+  const entries = zh.translation as Record<string, string>
+  expect(entries[TIER_EFFORT_HELP_EN]).toBe(TIER_EFFORT_HELP_ZH)
+  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
+  for (const [name, locale] of Object.entries(locales)) {
+    const all = locale.translation as Record<string, string>
+    expect(all[TIER_EFFORT_HELP_EN], name).toEqual(expect.any(String))
+    expect(JSON.stringify(all), name).not.toContain(
+      'takes the thinking depth from scoring'
+    )
+  }
+})
+
 it('every locale has the scorer reasoning effort texts', () => {
   const keys = [
     NOT_SET_EFFORT,

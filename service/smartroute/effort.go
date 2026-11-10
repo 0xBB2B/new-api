@@ -1,6 +1,7 @@
 package smartroute
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -36,18 +37,6 @@ type EffortInput struct {
 	Capability    ThinkingCapability
 }
 
-// scoredEffort 把打分标签里「要想多深」映射成力度，没有标签时返回空串。
-func scoredEffort(labels *ScorerLabels) string {
-	if labels == nil {
-		return ""
-	}
-	switch labels.Reasoning {
-	case "low", "medium", "high":
-		return labels.Reasoning
-	}
-	return ""
-}
-
 func ResolveTierEffort(in EffortInput) EffortDecision {
 	tier := in.Tier
 	value, source := "", ""
@@ -59,16 +48,30 @@ func ResolveTierEffort(in EffortInput) EffortDecision {
 		value, source = tier.Effort, EffortSourceFixed
 	case tier.EffortMode == EffortModeFollow:
 		source = EffortSourceFollow
-		scored := scoredEffort(in.Labels)
-		if !in.IsUserTurn || in.ScorerFailed || scored == "" {
-			value = tier.EffortMax
-			break
+		minRank := operation_setting.SmartEffortRank(tier.EffortMin)
+		maxRank := operation_setting.SmartEffortRank(tier.EffortMax)
+		var inRange, candidates []string
+		for _, level := range operation_setting.SmartEffortLevels {
+			rank := operation_setting.SmartEffortRank(level)
+			if rank < minRank || rank > maxRank {
+				continue
+			}
+			inRange = append(inRange, level)
+			if slices.Contains(in.Capability.Efforts, level) {
+				candidates = append(candidates, level)
+			}
 		}
-		value = scored
-		if operation_setting.SmartEffortRank(value) < operation_setting.SmartEffortRank(tier.EffortMin) {
-			value = tier.EffortMin
+		pool := candidates
+		if len(pool) == 0 {
+			pool = inRange
 		}
-		if operation_setting.SmartEffortRank(value) > operation_setting.SmartEffortRank(tier.EffortMax) {
+		hasScore := in.IsUserTurn && !in.ScorerFailed && in.Labels != nil && in.Labels.EffortScore != nil
+		switch {
+		case len(pool) > 0 && hasScore:
+			value = pool[min(int(*in.Labels.EffortScore*float64(len(pool))), len(pool)-1)]
+		case len(candidates) > 0:
+			value = candidates[len(candidates)-1]
+		default:
 			value = tier.EffortMax
 		}
 	default:

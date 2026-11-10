@@ -170,7 +170,7 @@ export function TierEffortField(props: TierEffortFieldProps) {
   const help = (
     <FieldInfo label={t('Reasoning effort')}>
       {t(
-        'Not overridden keeps the value sent by the client and switches to the closest level when the model does not support it. Follow scoring takes the thinking depth from scoring (low to low, medium to medium, high to high) and limits it between the minimum and maximum; the maximum is used when scoring fails. The dropdowns only list the levels this model supports'
+        'Not overridden keeps the value sent by the client and switches to the closest level when the model does not support it. Follow scoring uses the thinking need from scoring (0 to 1, higher when the goal is vague or the problem is hard) and picks proportionally among the levels this model supports between the minimum and maximum; with 3 levels, 0 to 0.33 picks the lowest and 0.67 to 1 the highest. The highest of them is used when scoring fails. The dropdowns only list the levels this model supports'
       )}
     </FieldInfo>
   )
