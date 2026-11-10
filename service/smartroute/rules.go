@@ -39,6 +39,8 @@ type ScorerLabels struct {
 	Domain     string
 	Confidence float64
 	Feedback   []string
+	// EffortScore 为 nil 表示打分没给出有效的 0～1 数字
+	EffortScore *float64
 }
 
 type TierChoice struct {
@@ -81,13 +83,14 @@ func ParseScorerOutput(raw string, expectedFeedback int) (ScorerLabels, error) {
 	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "```"))
 
 	var parsed struct {
-		TaskType   string   `json:"task_type"`
-		Reasoning  string   `json:"reasoning"`
-		Workload   string   `json:"workload"`
-		Risk       string   `json:"risk"`
-		Domain     string   `json:"domain"`
-		Confidence *float64 `json:"confidence"`
-		Feedback   []string `json:"feedback"`
+		TaskType    string            `json:"task_type"`
+		Reasoning   string            `json:"reasoning"`
+		Workload    string            `json:"workload"`
+		Risk        string            `json:"risk"`
+		Domain      string            `json:"domain"`
+		Confidence  *float64          `json:"confidence"`
+		Feedback    []string          `json:"feedback"`
+		EffortScore common.RawMessage `json:"effort_score"`
 	}
 	if err := common.UnmarshalJsonStr(text, &parsed); err != nil {
 		return ScorerLabels{}, err
@@ -110,14 +113,22 @@ func ParseScorerOutput(raw string, expectedFeedback int) (ScorerLabels, error) {
 			return ScorerLabels{}, errors.New("unknown feedback value")
 		}
 	}
+	var effortScore *float64
+	if common.GetJsonType(parsed.EffortScore) == "number" {
+		var v float64
+		if err := common.Unmarshal(parsed.EffortScore, &v); err == nil && v >= 0 && v <= 1 {
+			effortScore = &v
+		}
+	}
 	return ScorerLabels{
-		TaskType:   parsed.TaskType,
-		Reasoning:  parsed.Reasoning,
-		Workload:   parsed.Workload,
-		Risk:       parsed.Risk,
-		Domain:     parsed.Domain,
-		Confidence: *parsed.Confidence,
-		Feedback:   parsed.Feedback,
+		TaskType:    parsed.TaskType,
+		Reasoning:   parsed.Reasoning,
+		Workload:    parsed.Workload,
+		Risk:        parsed.Risk,
+		Domain:      parsed.Domain,
+		Confidence:  *parsed.Confidence,
+		Feedback:    parsed.Feedback,
+		EffortScore: effortScore,
 	}, nil
 }
 

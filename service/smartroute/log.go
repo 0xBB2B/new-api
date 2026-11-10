@@ -26,6 +26,11 @@ func MainLogFields(result RouteResult, cleanedReasoning int) map[string]any {
 			"domain":     labels.Domain,
 			"confidence": labels.Confidence,
 		}
+		if labels.EffortScore != nil {
+			logLabels["effort_score"] = *labels.EffortScore
+		} else {
+			logLabels["effort_score"] = "invalid"
+		}
 		if n := len(labels.Feedback); n > 0 {
 			logLabels["feedback"] = labels.Feedback[n-1]
 		}

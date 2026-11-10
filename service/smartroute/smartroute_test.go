@@ -493,7 +493,7 @@ func TestRequestEndpointFromPath(t *testing.T) {
 	}
 }
 
-const validScorerJSON = `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":["neutral","satisfied"]}`
+const validScorerJSON = `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"effort_score":0.5,"feedback":["neutral","satisfied"]}`
 
 func TestParseScorerOutput(t *testing.T) {
 	tests := []struct {
@@ -538,17 +538,53 @@ func TestParseScorerOutput(t *testing.T) {
 	}
 }
 
+func TestParseScorerOutput_EffortScore(t *testing.T) {
+	const valid = `"effort_score":0.5`
+	tests := []struct {
+		name    string
+		raw     string
+		want    *float64
+		wantErr bool
+	}{
+		{name: "0 is valid", raw: strings.Replace(validScorerJSON, valid, `"effort_score":0`, 1), want: new(0.0)},
+		{name: "0.5 is valid", raw: validScorerJSON, want: new(0.5)},
+		{name: "1 is valid", raw: strings.Replace(validScorerJSON, valid, `"effort_score":1`, 1), want: new(1.0)},
+		{name: "below 0 is invalid", raw: strings.Replace(validScorerJSON, valid, `"effort_score":-0.1`, 1)},
+		{name: "above 1 is invalid", raw: strings.Replace(validScorerJSON, valid, `"effort_score":1.5`, 1)},
+		{name: "string is invalid", raw: strings.Replace(validScorerJSON, valid, `"effort_score":"0.5"`, 1)},
+		{name: "null is invalid", raw: strings.Replace(validScorerJSON, valid, `"effort_score":null`, 1)},
+		{name: "missing is invalid", raw: strings.Replace(validScorerJSON, valid+",", "", 1)},
+		{name: "valid effort_score does not rescue a bad label", raw: strings.Replace(strings.Replace(validScorerJSON, valid, `"effort_score":0.4`, 1), "one_step", "lots", 1), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			labels, err := smartroute.ParseScorerOutput(tt.raw, 2)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, labels.EffortScore)
+			assert.Equal(t, "lookup", labels.TaskType)
+			assert.Equal(t, "one_step", labels.Workload)
+			assert.Equal(t, 0.9, labels.Confidence)
+			assert.Equal(t, []string{"neutral", "satisfied"}, labels.Feedback)
+		})
+	}
+}
+
 func TestParseScorerOutput_Fields(t *testing.T) {
 	labels, err := smartroute.ParseScorerOutput(validScorerJSON, 2)
 	require.NoError(t, err)
 	assert.Equal(t, smartroute.ScorerLabels{
-		TaskType:   "lookup",
-		Reasoning:  "low",
-		Workload:   "one_step",
-		Risk:       "low",
-		Domain:     "code",
-		Confidence: 0.9,
-		Feedback:   []string{"neutral", "satisfied"},
+		TaskType:    "lookup",
+		Reasoning:   "low",
+		Workload:    "one_step",
+		Risk:        "low",
+		Domain:      "code",
+		Confidence:  0.9,
+		EffortScore: new(0.5),
+		Feedback:    []string{"neutral", "satisfied"},
 	}, labels)
 }
 
@@ -600,6 +636,27 @@ func TestSelectTier(t *testing.T) {
 			if tt.wantMatched != nil {
 				assert.ElementsMatch(t, tt.wantMatched, got.Params["matched"])
 			}
+		})
+	}
+}
+
+func TestSelectTier_IgnoresEffortScore(t *testing.T) {
+	base := labelsOf("analyze", "high", "few_steps", "low", 0.9)
+	for _, tt := range []struct {
+		name  string
+		score *float64
+	}{
+		{name: "0", score: new(0.0)},
+		{name: "1", score: new(1.0)},
+		{name: "invalid", score: nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			labels := base
+			labels.EffortScore = tt.score
+			got := smartroute.SelectTier(smartRouteCfg(), labels, 10)
+			want := smartroute.SelectTier(smartRouteCfg(), base, 10)
+			assert.Equal(t, "hard", got.Tier)
+			assert.Equal(t, want, got)
 		})
 	}
 }
@@ -1355,7 +1412,7 @@ const wantScorerSystemPrompt = `You are a router that labels a user's latest req
 
 Read the user messages (oldest first; earlier messages show only their beginning) and the local features, then return exactly one JSON object and nothing else:
 
-{"task_type":"","reasoning":"","workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
+{"task_type":"","reasoning":"","effort_score":0,"workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
 
 Field rules:
 - task_type, judged on the LATEST message only, one of:
@@ -1366,6 +1423,7 @@ Field rules:
   analyze  = analyze data, investigate a failure, research and draw a conclusion
   plan     = design a solution, architecture, strategy or multi-part plan
 - reasoning: low | medium | high. How much multi-step thinking, calculation or trade-off weighing the latest request needs.
+- effort_score: a number from 0 to 1 for how much thinking the latest request needs. Higher when the goal is vague or the problem is hard; lower when the goal is clear and the task is simple.
 - workload: one_step | few_steps | many_steps. How many actions (reading files, searching, running tools, fetching data) it needs.
 - risk: low | high. high when the result will be published externally, used for decisions or bookkeeping, or touches production data, billing or security, and a mistake would be hard to notice.
 - domain: code | finance | operations | data_analysis | other.
@@ -1483,7 +1541,7 @@ func TestMainLogFields(t *testing.T) {
 				Params:       map[string]any{"history_tokens": 86420, "limit": 20000, "kept_tier": "hard", "scored_tier": "simple"},
 				Labels: &smartroute.ScorerLabels{
 					TaskType: "lookup", Reasoning: "low", Workload: "one_step", Risk: "low", Domain: "code",
-					Confidence: 0.91, Feedback: []string{"neutral", "satisfied"},
+					Confidence: 0.91, EffortScore: new(0.72), Feedback: []string{"neutral", "satisfied"},
 				},
 				ScorerStatus: smartroute.ScorerStatusOK,
 				ScorerBilled: true,
@@ -1493,7 +1551,7 @@ func TestMainLogFields(t *testing.T) {
 				"role":"main","virtual_model":"auto-gpt","tier":"hard","scored_tier":"simple",
 				"reason":"downgrade_blocked",
 				"reason_params":{"history_tokens":86420,"limit":20000,"kept_tier":"hard","scored_tier":"simple"},
-				"labels":{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.91,"feedback":"satisfied"},
+				"labels":{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.91,"effort_score":0.72,"feedback":"satisfied"},
 				"scorer":{"status":"ok","billed":true},
 				"cleaned_reasoning":2
 			}`,
@@ -1540,7 +1598,7 @@ func TestMainLogFields(t *testing.T) {
 			want: `{
 				"role":"main","virtual_model":"auto-gpt","tier":"simple",
 				"reason":"rule_simple","reason_params":{},
-				"labels":{"task_type":"chat_qa","reasoning":"low","workload":"one_step","risk":"low","domain":"other","confidence":0.8},
+				"labels":{"task_type":"chat_qa","reasoning":"low","workload":"one_step","risk":"low","domain":"other","confidence":0.8,"effort_score":"invalid"},
 				"scorer":{"status":"ok","billed":true}
 			}`,
 		},
