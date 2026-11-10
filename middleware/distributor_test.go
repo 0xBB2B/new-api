@@ -560,6 +560,11 @@ func smartLabels(taskType, reasoning string, feedback ...string) *smartroute.Sco
 	}
 }
 
+func smartScored(labels *smartroute.ScorerLabels, score float64) *smartroute.ScorerLabels {
+	labels.EffortScore = &score
+	return labels
+}
+
 type smartDistributeSeen struct {
 	ran           bool
 	originalModel string
@@ -1083,24 +1088,29 @@ func smartEffortResponsesBody(message, reasoning string) string {
 	return fmt.Sprintf(`{"model":"eff","input":%q%s}`, message, reasoning)
 }
 
-func TestSmartRouteDistributeEffortFollowMapsReasoningLabelAndClamps(t *testing.T) {
+func TestSmartRouteDistributeEffortFollowUsesEffortScore(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		labels    *smartroute.ScorerLabels
 		failure   string
 		wantValue string
 	}{
-		{"high", smartLabels("plan", "high", "neutral"), "", "high"},
-		{"medium", smartLabels("analyze", "medium", "neutral"), "", "medium"},
-		{"low is raised to min", smartLabels("analyze", "low", "neutral"), "", "medium"},
-		{"low confidence default tier still maps reasoning", func() *smartroute.ScorerLabels {
-			labels := smartLabels("analyze", "low", "neutral")
+		{"score 0 picks lowest candidate", smartScored(smartLabels("plan", "high", "neutral"), 0), "", "medium"},
+		{"score 0.30", smartScored(smartLabels("plan", "high", "neutral"), 0.30), "", "medium"},
+		{"score 0.50", smartScored(smartLabels("plan", "high", "neutral"), 0.50), "", "high"},
+		{"score 0.72", smartScored(smartLabels("plan", "high", "neutral"), 0.72), "", "xhigh"},
+		{"score 1 stays on highest candidate", smartScored(smartLabels("plan", "high", "neutral"), 1), "", "xhigh"},
+		{"reasoning low does not matter", smartScored(smartLabels("analyze", "low", "neutral"), 0.72), "", "xhigh"},
+		{"reasoning low same score", smartScored(smartLabels("analyze", "low", "neutral"), 0.30), "", "medium"},
+		{"low confidence default tier still follows score", func() *smartroute.ScorerLabels {
+			labels := smartScored(smartLabels("analyze", "low", "neutral"), 0.30)
 			labels.Confidence = 0.3
 			return labels
 		}(), "", "medium"},
-		{"scorer timeout uses max", nil, smartroute.FailureScorerTimeout, "xhigh"},
-		{"scorer error uses max", nil, smartroute.FailureScorerError, "xhigh"},
-		{"scorer invalid uses max", nil, smartroute.FailureScorerInvalid, "xhigh"},
+		{"missing score uses highest candidate", smartLabels("plan", "low", "neutral"), "", "xhigh"},
+		{"scorer timeout uses highest candidate", nil, smartroute.FailureScorerTimeout, "xhigh"},
+		{"scorer error uses highest candidate", nil, smartroute.FailureScorerError, "xhigh"},
+		{"scorer invalid uses highest candidate", nil, smartroute.FailureScorerInvalid, "xhigh"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{}`)
@@ -1113,11 +1123,69 @@ func TestSmartRouteDistributeEffortFollowMapsReasoningLabelAndClamps(t *testing.
 
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 			assert.Equal(t, tc.wantValue, smartBodyField(t, seen.body, "reasoning", "effort"))
-			effort, ok := seen.routeLog["effort"].(map[string]any)
-			require.True(t, ok, "log effort: %v", seen.routeLog["effort"])
-			assert.Equal(t, tc.wantValue, effort["value"])
-			assert.Equal(t, "follow", effort["source"])
-			assert.NotContains(t, effort, "from")
+			assert.Equal(t, map[string]any{"value": tc.wantValue, "source": "follow"}, seen.routeLog["effort"])
+		})
+	}
+}
+
+func TestSmartRouteDistributeEffortFollowScoreAgainstCapability(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, fields, capabilities string
+		labels                            *smartroute.ScorerLabels
+		failure                           string
+		wantValue, wantFrom               string
+	}{
+		{"gap below picks nearest supported", "gpt-5.6-sol", `"effort_mode":"follow","effort_min":"medium","effort_max":"high"`,
+			`{"gpt-5.6-sol":{"efforts":["low","xhigh"]}}`, smartScored(smartLabels("plan", "high", "neutral"), 0.3), "", "low", "medium"},
+		{"gap above picks nearest supported", "gpt-5.6-sol", `"effort_mode":"follow","effort_min":"medium","effort_max":"high"`,
+			`{"gpt-5.6-sol":{"efforts":["low","xhigh"]}}`, smartScored(smartLabels("plan", "high", "neutral"), 0.8), "", "xhigh", "high"},
+		{"timeout with capped capability takes highest candidate without from", "gpt-5.6-sol", effortFollowMediumXhigh,
+			`{"gpt-5.6-sol":{"efforts":["none","low","medium","high"]}}`, nil, smartroute.FailureScorerTimeout, "high", ""},
+		{"glm low", "glm-5.3", `"effort_mode":"follow","effort_min":"low","effort_max":"max"`, `{}`,
+			smartScored(smartLabels("plan", "high", "neutral"), 0.2), "", "low", ""},
+		{"glm high", "glm-5.3", `"effort_mode":"follow","effort_min":"low","effort_max":"max"`, `{}`,
+			smartScored(smartLabels("plan", "high", "neutral"), 0.5), "", "high", ""},
+		{"glm max", "glm-5.3", `"effort_mode":"follow","effort_min":"low","effort_max":"max"`, `{}`,
+			smartScored(smartLabels("plan", "high", "neutral"), 0.9), "", "max", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, tc.model, tc.fields, tc.capabilities)
+			installSmartScorerStub(t, tc.labels, tc.failure, nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{
+				path: "/v1/responses", tokenID: tokenID,
+				body: smartEffortResponsesBody("cap-"+tc.name, ""),
+			})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, tc.wantValue, smartBodyField(t, seen.body, "reasoning", "effort"))
+			want := map[string]any{"value": tc.wantValue, "source": "follow"}
+			if tc.wantFrom != "" {
+				want["from"] = tc.wantFrom
+			}
+			assert.Equal(t, want, seen.routeLog["effort"])
+		})
+	}
+}
+
+func TestSmartRouteDistributeEffortFollowScoreSameAcrossFormats(t *testing.T) {
+	const budget = `"thinking":{"type":"enabled","budget_tokens":2048}`
+	for _, tc := range []struct {
+		name, path, body string
+		effortPath       []string
+	}{
+		{"responses", "/v1/responses", smartEffortResponsesBody("fmt-resp", ""), []string{"reasoning", "effort"}},
+		{"chat", "/v1/chat/completions", `{"model":"eff","messages":[{"role":"user","content":"fmt-chat"}]}`, []string{"reasoning_effort"}},
+		{"messages", "/v1/messages", smartEffortMessagesBody("fmt-msg", budget), []string{"output_config", "effort"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{}`)
+			installSmartScorerStub(t, smartScored(smartLabels("plan", "low", "neutral"), 0.72), "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, tokenID: tokenID, body: tc.body})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, "xhigh", smartBodyField(t, seen.body, tc.effortPath...))
 		})
 	}
 }
@@ -1125,22 +1193,11 @@ func TestSmartRouteDistributeEffortFollowMapsReasoningLabelAndClamps(t *testing.
 func TestSmartRouteDistributeEffortLogShape(t *testing.T) {
 	t.Run("no from when the effort kept its level", func(t *testing.T) {
 		tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{}`)
-		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+		installSmartScorerStub(t, smartScored(smartLabels("plan", "high", "neutral"), 0.5), "", nil)
 
 		_, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses", tokenID: tokenID, body: smartEffortResponsesBody("log-plain", "")})
 
 		assert.Equal(t, map[string]any{"value": "high", "source": "follow"}, seen.routeLog["effort"])
-	})
-
-	t.Run("timeout max lowered by capability records from", func(t *testing.T) {
-		tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh,
-			`{"gpt-5.6-sol":{"efforts":["none","low","medium","high"]}}`)
-		installSmartScorerStub(t, nil, smartroute.FailureScorerTimeout, nil)
-
-		_, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses", tokenID: tokenID, body: smartEffortResponsesBody("log-timeout", "")})
-
-		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning", "effort"))
-		assert.Equal(t, map[string]any{"value": "high", "source": "follow", "from": "xhigh"}, seen.routeLog["effort"])
 	})
 
 	t.Run("capability with only low and high raises medium to high", func(t *testing.T) {
@@ -1252,7 +1309,7 @@ func TestSmartRouteDistributeEffortNoThinkingModelDropsThinkingParams(t *testing
 func TestSmartRouteDistributeEffortContinuationReusesSessionEffort(t *testing.T) {
 	t.Run("tool result continuation reuses the last sent effort", func(t *testing.T) {
 		tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{}`)
-		stub := installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+		stub := installSmartScorerStub(t, smartScored(smartLabels("plan", "high", "neutral"), 0.5), "", nil)
 
 		first, _ := serveSmartRoute(t, smartRequest{path: "/v1/responses", tokenID: tokenID, body: smartEffortResponsesBody("continue-reuse", "")})
 		require.Equal(t, http.StatusOK, first.Code, first.Body.String())
@@ -1274,7 +1331,7 @@ func TestSmartRouteDistributeEffortContinuationReusesSessionEffort(t *testing.T)
 
 	t.Run("compact request reuses the last sent effort", func(t *testing.T) {
 		tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{}`)
-		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+		installSmartScorerStub(t, smartScored(smartLabels("plan", "high", "neutral"), 0.5), "", nil)
 		body := `{"model":"eff","input":[{"role":"user","content":"compact-reuse"}],"prompt_cache_key":"pck-effort-compact"}`
 
 		first, _ := serveSmartRoute(t, smartRequest{path: "/v1/responses", tokenID: tokenID, body: body})
@@ -1333,7 +1390,7 @@ func TestSmartRouteDistributeEffortContinuationRecomputesWhenTierDiffersFromSess
 	normal := effortTier{"gpt-5.4-mini", `"effort_mode":"fixed","effort":"low"`}
 	hard := effortTier{"gpt-5.6-sol", effortFollowMediumXhigh}
 	tokenID := setupSmartEffortTiers(t, normal, normal, hard, `{}`)
-	installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+	installSmartScorerStub(t, smartScored(smartLabels("plan", "high", "neutral"), 0.5), "", nil)
 	hardBody := smartEffortResponsesBody("continue-tier-differs-hard", "")
 	hardFirst, hardSeen := serveSmartRoute(t, smartRequest{path: "/v1/responses", tokenID: tokenID, body: hardBody})
 	require.Equal(t, http.StatusOK, hardFirst.Code, hardFirst.Body.String())

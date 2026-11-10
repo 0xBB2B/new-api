@@ -1984,6 +1984,50 @@ func TestClampEffortToCapability(t *testing.T) {
 	}
 }
 
+func TestResolveTierEffort_FollowScoreSegments(t *testing.T) {
+	all := smartroute.ThinkingCapability{Source: "builtin", Efforts: []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}}
+	follow := func(lo, hi string) operation_setting.SmartRouteTier {
+		return operation_setting.SmartRouteTier{EffortMode: smartroute.EffortModeFollow, EffortMin: lo, EffortMax: hi}
+	}
+	scored := func(score float64) *smartroute.ScorerLabels { return &smartroute.ScorerLabels{EffortScore: &score} }
+	tests := []struct {
+		name       string
+		tier       operation_setting.SmartRouteTier
+		labels     *smartroute.ScorerLabels
+		failed     bool
+		capability smartroute.ThinkingCapability
+		want       smartroute.EffortDecision
+	}{
+		{"3 档: 0 落第 1 段", follow("medium", "xhigh"), scored(0), false, all, smartroute.EffortDecision{Value: "medium", Source: "follow"}},
+		{"3 档: 0.33 仍在第 1 段", follow("medium", "xhigh"), scored(0.33), false, all, smartroute.EffortDecision{Value: "medium", Source: "follow"}},
+		{"3 档: 0.34 进第 2 段", follow("medium", "xhigh"), scored(0.34), false, all, smartroute.EffortDecision{Value: "high", Source: "follow"}},
+		{"3 档: 0.66 仍在第 2 段", follow("medium", "xhigh"), scored(0.66), false, all, smartroute.EffortDecision{Value: "high", Source: "follow"}},
+		{"3 档: 0.67 进第 3 段", follow("medium", "xhigh"), scored(0.67), false, all, smartroute.EffortDecision{Value: "xhigh", Source: "follow"}},
+		{"3 档: 1 不越界", follow("medium", "xhigh"), scored(1), false, all, smartroute.EffortDecision{Value: "xhigh", Source: "follow"}},
+		{"2 档: 0.5 进第 2 段", follow("high", "xhigh"), scored(0.5), false, all, smartroute.EffortDecision{Value: "xhigh", Source: "follow"}},
+		{"1 档: 任意分数都是这一档", follow("high", "high"), scored(0.9), false, all, smartroute.EffortDecision{Value: "high", Source: "follow"}},
+		{"模型能力裁掉候选后重新分段", follow("none", "max"), scored(0.5), false,
+			smartroute.ThinkingCapability{Source: "builtin", Efforts: []string{"low", "high", "max"}},
+			smartroute.EffortDecision{Value: "high", Source: "follow"}},
+		{"没有分数取候选最高档", follow("medium", "xhigh"), &smartroute.ScorerLabels{}, false, all, smartroute.EffortDecision{Value: "xhigh", Source: "follow"}},
+		{"打分失败取候选最高档", follow("medium", "xhigh"), scored(0.1), true, all, smartroute.EffortDecision{Value: "xhigh", Source: "follow"}},
+		{"候选为 0 档: 上下一样近取更高", follow("medium", "medium"), scored(0.5), false,
+			smartroute.ThinkingCapability{Source: "override", Efforts: []string{"low", "high"}},
+			smartroute.EffortDecision{Value: "high", Source: "follow", From: "medium"}},
+		{"候选为 0 档且没有分数: 取 EffortMax 再换档", follow("medium", "high"), nil, true,
+			smartroute.ThinkingCapability{Source: "override", Efforts: []string{"low", "xhigh"}},
+			smartroute.EffortDecision{Value: "xhigh", Source: "follow", From: "high"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := smartroute.ResolveTierEffort(smartroute.EffortInput{
+				Tier: tt.tier, IsUserTurn: true, Labels: tt.labels, ScorerFailed: tt.failed, Capability: tt.capability,
+			})
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestClampEffortToCapability_NoThinkingYieldsEmpty(t *testing.T) {
 	for _, effort := range []string{"none", "low", "high", "max"} {
 		got, _ := smartroute.ClampEffortToCapability(effort, smartroute.ThinkingCapability{Source: "builtin", NoThinking: true})
