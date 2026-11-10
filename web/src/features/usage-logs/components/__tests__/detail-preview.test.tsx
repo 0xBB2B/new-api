@@ -1037,6 +1037,81 @@ test('score labels confidence follows the French decimal comma with two decimals
   expect(dialog.queryByText(/0\.91/)).toBeNull()
 })
 
+test('score labels put Thinking need right after Reasoning depth', () => {
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      labels: { ...fullLabels, effort_score: 0.72 },
+    },
+  })
+  expect(
+    dialog.getByText(
+      'Task type: Look up information · Reasoning depth: Low · Thinking need: 0.72 · Workload: One step · Risk of error: Low · Work domain: Code · Confidence: 0.91 · User feedback: Satisfied'
+    )
+  ).toBeVisible()
+})
+
+test('score labels Thinking need keeps two decimals', () => {
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      labels: { ...fullLabels, effort_score: 0.5 },
+    },
+  })
+  expect(dialog.getByText(/Thinking need: 0\.50 ·/)).toBeVisible()
+})
+
+test('score labels show an invalid Thinking need as Invalid', () => {
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      labels: { ...fullLabels, effort_score: 'invalid' },
+    },
+  })
+  expect(
+    dialog.getByText(
+      'Task type: Look up information · Reasoning depth: Low · Thinking need: Invalid · Workload: One step · Risk of error: Low · Work domain: Code · Confidence: 0.91 · User feedback: Satisfied'
+    )
+  ).toBeVisible()
+})
+
+test('score labels without effort_score show no Thinking need', () => {
+  const dialog = renderDialog({
+    smart_routing: { ...mainRouting, labels: fullLabels },
+  })
+  expect(dialog.queryByText(/Thinking need/)).toBeNull()
+})
+
+test('score labels Thinking need is translated in zh', async () => {
+  i18n.addResourceBundle('zh', 'translation', zh.translation)
+  await i18n.changeLanguage('zh')
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      labels: { ...fullLabels, effort_score: 0.72 },
+    },
+  })
+  expect(
+    dialog.getByText(
+      '任务类型：查找资料或信息 · 要想多深：低 · 思考需求：0.72 · 工作量：一步 · 出错代价：低 · 工作类型：代码 · 把握：0.91 · 用户反馈：满意'
+    )
+  ).toBeVisible()
+})
+
+test('score labels invalid Thinking need is translated in zh', async () => {
+  i18n.addResourceBundle('zh', 'translation', zh.translation)
+  await i18n.changeLanguage('zh')
+  const dialog = renderDialog({
+    smart_routing: {
+      ...mainRouting,
+      labels: { ...fullLabels, effort_score: 'invalid' },
+    },
+  })
+  expect(
+    dialog.getByText(/要想多深：低 · 思考需求：无效 · 工作量/)
+  ).toBeVisible()
+})
+
 test.each([
   {
     name: 'follow',

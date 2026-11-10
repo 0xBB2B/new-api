@@ -48,6 +48,7 @@ function labelNames(t: TFunction): Record<string, string> {
   return {
     task_type: t('Task type'),
     reasoning: t('Reasoning depth'),
+    effort_score: t('Thinking need'),
     workload: t('Workload'),
     risk: t('Risk of error'),
     domain: t('Work domain'),
@@ -71,6 +72,7 @@ function labelValues(t: TFunction): Record<string, Record<string, string>> {
       medium: t('Medium'),
       high: t('High'),
     },
+    effort_score: { invalid: t('Invalid', { context: 'routing' }) },
     workload: {
       one_step: t('One step'),
       few_steps: t('A few steps'),
@@ -95,6 +97,7 @@ function labelValues(t: TFunction): Record<string, Record<string, string>> {
 const LABEL_ORDER: Array<keyof SmartRouteLabels> = [
   'task_type',
   'reasoning',
+  'effort_score',
   'workload',
   'risk',
   'domain',
