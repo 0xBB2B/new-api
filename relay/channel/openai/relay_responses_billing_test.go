@@ -900,3 +900,59 @@ func TestOaiChatToResponsesHandlerTagsReasoningID(t *testing.T) {
 		requireTaggedReasoningID(t, id, "")
 	}
 }
+
+func TestResponsesHandlersTagReasoningWithRetriedChannel(t *testing.T) {
+	retriedContext := func(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
+		c, w := newReasoningTagContext(t)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 3)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+		return c, w
+	}
+
+	t.Run("non-stream", func(t *testing.T) {
+		c, w := retriedContext(t)
+		upstream := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_r","summary":[]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(upstream)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+
+		_, apiErr := OaiResponsesHandler(c, &relaycommon.RelayInfo{OriginModelName: "gpt-5.1"}, resp)
+		require.Nil(t, apiErr)
+
+		var got struct {
+			Output []struct {
+				ID string `json:"id"`
+			} `json:"output"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+		require.Len(t, got.Output, 1)
+		requireTaggedReasoningID(t, got.Output[0].ID, "rs_r")
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		c, w := retriedContext(t)
+		body := "data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"reasoning","id":"rs_r"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
+			"data: [DONE]\n\n"
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}
+		info := &relaycommon.RelayInfo{
+			OriginModelName: "gpt-5.1",
+			DisablePing:     true,
+			ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+		}
+
+		_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+		require.Nil(t, apiErr)
+
+		ids := reasoningIDsInSSE(t, w.Body.String())
+		require.NotEmpty(t, ids)
+		for _, id := range ids {
+			requireTaggedReasoningID(t, id, "rs_r")
+		}
+	})
+}

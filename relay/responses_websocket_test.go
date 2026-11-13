@@ -886,3 +886,36 @@ func TestResponsesWSRunRequestTerminalFrameTagsReasoningID(t *testing.T) {
 	assert.Equal(t, 9, channelID)
 	assert.Equal(t, "rs_t", original)
 }
+
+func TestResponsesWSCreatePayloadRestoresOrStripsReasoningByChannel(t *testing.T) {
+	oldSecret := common.CryptoSecret
+	common.CryptoSecret = "reasoning-tag-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = oldSecret })
+	own := service.EncodeReasoningTag(5, "rs_a")
+	other := service.EncodeReasoningTag(9, "rs_b")
+	message := fmt.Sprintf(`{"type":"response.create","response":{"model":"gpt-5.1","stream":true,"input":[`+
+		`{"type":"reasoning","id":%q,"encrypted_content":"enc_a","summary":[]},`+
+		`{"type":"reasoning","id":%q,"encrypted_content":"enc_b","summary":[{"type":"summary_text","text":"kept"}]}]}}`, own, other)
+	create, _, err := normalizeResponsesWSTestMessage([]byte(message))
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(create.Body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, create.Request.Model)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+	info := relaycommon.GenRelayInfoResponses(c, &create.Request)
+
+	payload, apiErr := buildResponsesWSCreatePayload(c, info, create.Request, create.Generate, create.StreamID)
+	require.Nil(t, apiErr)
+
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
+	require.NoError(t, common.Unmarshal(payload, &got))
+	require.Len(t, got.Input, 2)
+	assert.Equal(t, "rs_a", got.Input[0]["id"])
+	assert.NotContains(t, got.Input[1], "id")
+	assert.NotContains(t, got.Input[1], "encrypted_content")
+	assert.NotEmpty(t, got.Input[1]["summary"])
+}
