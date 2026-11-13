@@ -17,8 +17,8 @@ import (
 )
 
 // 思考记录的 id、签名和加密内容只在签发它的渠道里有效：标记指向目标渠道的还原成原值，其余的清理。
-// 清理后带摘要的条目保留摘要，没有摘要的整条丢弃。
-func filterResponsesReasoningInput(input json.RawMessage, channelID int) (json.RawMessage, int, bool) {
+// 清理后带摘要的条目保留摘要，没有摘要的整条丢弃。其他条目的 id、加密内容和审批 id 按同样的标记规则处理，但不计入清理段数。
+func filterResponsesInput(input json.RawMessage, channelID int) (json.RawMessage, int, bool) {
 	var items []json.RawMessage
 	if err := common.Unmarshal(input, &items); err != nil {
 		return input, 0, false
@@ -33,8 +33,13 @@ func filterResponsesReasoningInput(input json.RawMessage, channelID int) (json.R
 			continue
 		}
 		var itemType string
-		if common.Unmarshal(fields["type"], &itemType) != nil || (itemType != "reasoning" && itemType != "item_reference") {
-			kept = append(kept, item)
+		_ = common.Unmarshal(fields["type"], &itemType)
+		if itemType != "reasoning" && itemType != "item_reference" {
+			cleaned, itemChanged, drop := cleanResponsesItemTags(item, fields, itemType, channelID)
+			changed = changed || itemChanged
+			if !drop {
+				kept = append(kept, cleaned)
+			}
 			continue
 		}
 		var id string
@@ -90,6 +95,45 @@ func filterResponsesReasoningInput(input json.RawMessage, channelID int) (json.R
 		return input, 0, false
 	}
 	return out, stripped, true
+}
+
+// 非思考条目的 id 和审批 id 带着标记发给客户端，回传时同渠道还原，换渠道后上游不认，只能清掉；
+// 没有审批 id 就无从应答的 mcp_approval_response 整条丢弃。
+func cleanResponsesItemTags(item json.RawMessage, fields map[string]json.RawMessage, itemType string, channelID int) (json.RawMessage, bool, bool) {
+	changed := false
+	var id string
+	_ = common.Unmarshal(fields["id"], &id)
+	if tagChannel, original, ok := service.DecodeReasoningTag(id); ok && tagChannel == channelID {
+		fields["id"], _ = common.Marshal(original)
+		changed = true
+	} else {
+		for _, name := range []string{"id", "encrypted_content"} {
+			if _, has := fields[name]; has {
+				delete(fields, name)
+				changed = true
+			}
+		}
+	}
+	if _, has := fields["approval_request_id"]; has {
+		var approvalID string
+		_ = common.Unmarshal(fields["approval_request_id"], &approvalID)
+		if tagChannel, original, ok := service.DecodeReasoningTag(approvalID); ok && tagChannel == channelID {
+			fields["approval_request_id"], _ = common.Marshal(original)
+		} else if itemType == "mcp_approval_response" {
+			return item, true, true
+		} else {
+			delete(fields, "approval_request_id")
+		}
+		changed = true
+	}
+	if !changed {
+		return item, false, false
+	}
+	cleaned, err := common.Marshal(fields)
+	if err != nil {
+		return item, false, false
+	}
+	return cleaned, true, false
 }
 
 // 思考块的签名只在签发它的渠道里有效：标记指向目标渠道的还原成原值，其余的去掉。去空的 assistant 消息整条删除，上游会合并相邻同角色消息。

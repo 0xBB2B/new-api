@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
@@ -17,14 +18,26 @@ import (
 
 const ReasoningTagPrefix = "rtag_"
 
-func reasoningTagKey(purpose string) []byte {
-	mac := hmac.New(sha256.New, []byte(common.CryptoSecret))
+type reasoningTagCrypto struct {
+	secret   string
+	gcm      cipher.AEAD
+	nonceKey []byte
+}
+
+var reasoningTagCache atomic.Pointer[reasoningTagCrypto]
+
+func reasoningTagKey(secret, purpose string) []byte {
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(purpose))
 	return mac.Sum(nil)
 }
 
-func newReasoningTagGCM() cipher.AEAD {
-	block, err := aes.NewCipher(reasoningTagKey("new-api reasoning channel tag v1 aes"))
+func currentReasoningTagCrypto() *reasoningTagCrypto {
+	secret := common.CryptoSecret
+	if c := reasoningTagCache.Load(); c != nil && c.secret == secret {
+		return c
+	}
+	block, err := aes.NewCipher(reasoningTagKey(secret, "new-api reasoning channel tag v1 aes"))
 	if err != nil {
 		panic(err)
 	}
@@ -32,20 +45,26 @@ func newReasoningTagGCM() cipher.AEAD {
 	if err != nil {
 		panic(err)
 	}
-	return gcm
+	c := &reasoningTagCrypto{
+		secret:   secret,
+		gcm:      gcm,
+		nonceKey: reasoningTagKey(secret, "new-api reasoning channel tag v1 nonce"),
+	}
+	reasoningTagCache.Store(c)
+	return c
 }
 
 func EncodeReasoningTag(channelID int, original string) string {
 	plain := binary.BigEndian.AppendUint64(nil, uint64(channelID))
 	plain = append(plain, original...)
 
-	// 随机数由明文派生：流式响应里同一条思考记录出现在多个事件中，必须得到同一个标记
-	mac := hmac.New(sha256.New, reasoningTagKey("new-api reasoning channel tag v1 nonce"))
+	// 随机数由明文派生：流式响应里同一个条目出现在多个事件中，必须得到同一个标记
+	c := currentReasoningTagCrypto()
+	mac := hmac.New(sha256.New, c.nonceKey)
 	mac.Write(plain)
-	gcm := newReasoningTagGCM()
-	nonce := mac.Sum(nil)[:gcm.NonceSize()]
+	nonce := mac.Sum(nil)[:c.gcm.NonceSize()]
 
-	sealed := gcm.Seal(nonce, nonce, plain, nil)
+	sealed := c.gcm.Seal(nonce, nonce, plain, nil)
 	return ReasoningTagPrefix + base64.RawURLEncoding.EncodeToString(sealed)
 }
 
@@ -58,7 +77,7 @@ func DecodeReasoningTag(tag string) (int, string, bool) {
 	if err != nil {
 		return 0, "", false
 	}
-	gcm := newReasoningTagGCM()
+	gcm := currentReasoningTagCrypto().gcm
 	if len(raw) < gcm.NonceSize() {
 		return 0, "", false
 	}
@@ -73,7 +92,7 @@ func DecodeReasoningTag(tag string) (int, string, bool) {
 	return channelID, string(plain[8:]), true
 }
 
-func tagReasoningIDAt(data []byte, path string, channelID int) []byte {
+func tagValueAt(data []byte, path string, channelID int) []byte {
 	id := ojson.GetBytes(data, path)
 	if id.Type != ojson.String || id.String() == "" {
 		return data
@@ -85,40 +104,40 @@ func tagReasoningIDAt(data []byte, path string, channelID int) []byte {
 	return out
 }
 
-func tagReasoningOutput(data []byte, outputPath string, channelID int) []byte {
-	for i, item := range ojson.GetBytes(data, outputPath).Array() {
-		if item.Get("type").String() != "reasoning" {
-			continue
-		}
-		data = tagReasoningIDAt(data, outputPath+"."+strconv.Itoa(i)+".id", channelID)
+func tagItemAt(data []byte, itemPath string, channelID int) []byte {
+	data = tagValueAt(data, itemPath+".id", channelID)
+	return tagValueAt(data, itemPath+".approval_request_id", channelID)
+}
+
+func tagItemOutput(data []byte, outputPath string, channelID int) []byte {
+	for i := range ojson.GetBytes(data, outputPath).Array() {
+		data = tagItemAt(data, outputPath+"."+strconv.Itoa(i), channelID)
 	}
 	return data
 }
 
-func TagResponsesReasoningBody(body []byte, channelID int) []byte {
-	if channelID <= 0 || !bytes.Contains(body, []byte(`"reasoning"`)) || !ojson.ValidBytes(body) {
+func TagResponsesItemBody(body []byte, channelID int) []byte {
+	if channelID <= 0 || !bytes.Contains(body, []byte("id")) || !ojson.ValidBytes(body) {
 		return body
 	}
-	return tagReasoningOutput(body, "output", channelID)
+	return tagItemOutput(body, "output", channelID)
 }
 
-func TagResponsesReasoningEvent(data []byte, channelID int) []byte {
-	if channelID <= 0 || !bytes.Contains(data, []byte("reasoning")) || !ojson.ValidBytes(data) {
+func TagResponsesItemEvent(data []byte, channelID int) []byte {
+	if channelID <= 0 || !bytes.Contains(data, []byte("id")) || !ojson.ValidBytes(data) {
 		return data
 	}
 	eventType := ojson.GetBytes(data, "type").String()
+	if ojson.GetBytes(data, "item_id").Exists() {
+		data = tagValueAt(data, "item_id", channelID)
+	}
 	switch {
 	case eventType == "response.output_item.added" || eventType == "response.output_item.done":
-		if ojson.GetBytes(data, "item.type").String() != "reasoning" {
-			return data
-		}
-		return tagReasoningIDAt(data, "item.id", channelID)
-	case strings.HasPrefix(eventType, "response.reasoning_"):
-		return tagReasoningIDAt(data, "item_id", channelID)
+		return tagItemAt(data, "item", channelID)
 	case eventType == "response.created", eventType == "response.in_progress",
 		eventType == "response.completed", eventType == "response.incomplete", eventType == "response.failed",
 		eventType == "response.done", eventType == "response.cancelled", eventType == "response.canceled":
-		return tagReasoningOutput(data, "response.output", channelID)
+		return tagItemOutput(data, "response.output", channelID)
 	}
 	return data
 }
@@ -131,13 +150,13 @@ func TagClaudeThinkingEvent(data []byte, channelID int) []byte {
 	case "content_block_start":
 		switch ojson.GetBytes(data, "content_block.type").String() {
 		case "thinking":
-			return tagReasoningIDAt(data, "content_block.signature", channelID)
+			return tagValueAt(data, "content_block.signature", channelID)
 		case "redacted_thinking":
-			return tagReasoningIDAt(data, "content_block.data", channelID)
+			return tagValueAt(data, "content_block.data", channelID)
 		}
 	case "content_block_delta":
 		if ojson.GetBytes(data, "delta.type").String() == "signature_delta" {
-			return tagReasoningIDAt(data, "delta.signature", channelID)
+			return tagValueAt(data, "delta.signature", channelID)
 		}
 	}
 	return data
@@ -151,9 +170,9 @@ func TagClaudeThinkingBody(body []byte, channelID int) []byte {
 		prefix := "content." + strconv.Itoa(i)
 		switch block.Get("type").String() {
 		case "thinking":
-			body = tagReasoningIDAt(body, prefix+".signature", channelID)
+			body = tagValueAt(body, prefix+".signature", channelID)
 		case "redacted_thinking":
-			body = tagReasoningIDAt(body, prefix+".data", channelID)
+			body = tagValueAt(body, prefix+".data", channelID)
 		}
 	}
 	return body

@@ -1178,3 +1178,164 @@ func TestPrepareResponsesRequestItemReferenceFollowsChannelTag(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareResponsesRequestNonReasoningItemIdsFollowChannelTag(t *testing.T) {
+	modes := []struct {
+		name    string
+		setting dto.ChannelSettings
+	}{
+		{"converted", dto.ChannelSettings{}},
+		{"passthrough", dto.ChannelSettings{PassThroughBodyEnabled: true}},
+	}
+	tag := func(channelID int, id string) string { return service.EncodeReasoningTag(channelID, id) }
+	sentInput := func(sent []byte) string { return string(ojson.GetBytes(sent, "input").Raw) }
+	toolCall := func(id string) string {
+		return `{"type":"custom_tool_call","id":"` + id + `","call_id":"call_1","name":"exec","input":"x"}`
+	}
+	assistant := func(id string) string {
+		return `{"type":"message","id":"` + id + `","role":"assistant","encrypted_content":"E","content":"hi"}`
+	}
+
+	for _, mode := range modes {
+		t.Run(mode.name+" foreign and untagged ids are dropped while items stay", func(t *testing.T) {
+			raw := responsesInput(
+				toolCall(tag(5, "ctc_x")),
+				`{"type":"custom_tool_call_output","id":"ctco_11111111-1111-1111-1111-111111111111","call_id":"call_1","output":"ok"}`,
+				`{"type":"message","id":"msg_22222222-2222-2222-2222-222222222222","role":"user","content":"hi"}`,
+			)
+
+			sent, _ := prepareResponsesSent(t, raw, 8, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, `[
+				{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"x"},
+				{"type":"custom_tool_call_output","call_id":"call_1","output":"ok"},
+				{"type":"message","role":"user","content":"hi"}]`, sentInput(sent))
+		})
+
+		t.Run(mode.name+" same channel restores ids and keeps encrypted_content", func(t *testing.T) {
+			raw := responsesInput(toolCall(tag(8, "ctc_x")), assistant(tag(8, "msg_y")))
+
+			sent, _ := prepareResponsesSent(t, raw, 8, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, "["+toolCall("ctc_x")+","+assistant("msg_y")+"]", sentInput(sent))
+		})
+
+		t.Run(mode.name+" other channel drops id and encrypted_content", func(t *testing.T) {
+			raw := responsesInput(assistant(tag(8, "msg_y")))
+
+			sent, _ := prepareResponsesSent(t, raw, 9, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, `[{"type":"message","role":"assistant","content":"hi"}]`, sentInput(sent))
+		})
+
+		t.Run(mode.name+" tampered tag and typeless shorthand message lose id", func(t *testing.T) {
+			valid := tag(8, "ctc_x")
+			flipped := byte('A')
+			if valid[len(valid)/2] == 'A' {
+				flipped = 'B'
+			}
+			tampered := valid[:len(valid)/2] + string(flipped) + valid[len(valid)/2+1:]
+			raw := responsesInput(toolCall(tampered), `{"role":"user","content":"hi","id":"msg_z"}`)
+
+			sent, _ := prepareResponsesSent(t, raw, 8, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, `[
+				{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"x"},
+				{"role":"user","content":"hi"}]`, sentInput(sent))
+		})
+
+		t.Run(mode.name+" mcp approval request ids follow the channel tag", func(t *testing.T) {
+			response := func(id string) string {
+				return `{"type":"mcp_approval_response","approval_request_id":"` + id + `","approve":true}`
+			}
+			call := func(approval string) string {
+				return `{"type":"mcp_call","id":"mcp_1","name":"x","approval_request_id":"` + approval + `"}`
+			}
+			raw := responsesInput(response(tag(8, "mcpr_1")), call(tag(5, "mcpr_2")))
+
+			sentSame, _ := prepareResponsesSent(t, raw, 8, mode.setting, &smartroute.RouteResult{})
+			sentOther, _ := prepareResponsesSent(t, raw, 9, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, `[`+response("mcpr_1")+`,{"type":"mcp_call","name":"x"}]`, sentInput(sentSame))
+			assert.JSONEq(t, `[{"type":"mcp_call","name":"x"}]`, sentInput(sentOther))
+		})
+	}
+}
+
+func TestPrepareResponsesRequestNonReasoningCleaningIsNotCounted(t *testing.T) {
+	raw := responsesInput(`{"type":"message","id":"`+service.EncodeReasoningTag(5, "msg_1")+`","role":"user","content":"hi"}`, userMessage)
+
+	var buf bytes.Buffer
+	common.LogWriterMu.Lock()
+	origOut, origErr := gin.DefaultWriter, gin.DefaultErrorWriter
+	gin.DefaultWriter, gin.DefaultErrorWriter = &buf, &buf
+	common.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultWriter, gin.DefaultErrorWriter = origOut, origErr
+		common.LogWriterMu.Unlock()
+	})
+
+	sent, c := prepareResponsesSent(t, raw, 9, dto.ChannelSettings{}, &smartroute.RouteResult{})
+
+	assert.JSONEq(t, `[{"type":"message","role":"user","content":"hi"},`+userMessage+`]`, string(ojson.GetBytes(sent, "input").Raw))
+	result, _ := smartroute.GetRouteResult(c)
+	assert.Equal(t, 0, result.StrippedReasoningCount)
+	fields, ok := common.GetContextKey(c, constant.ContextKeySmartRouteLog)
+	if ok {
+		assert.NotContains(t, fields.(map[string]any), "cleaned_reasoning")
+	}
+	common.LogWriterMu.RLock()
+	defer common.LogWriterMu.RUnlock()
+	assert.NotContains(t, buf.String(), "stripped")
+}
+
+func TestPrepareResponsesRequestPassthroughNonReasoningItems(t *testing.T) {
+	passthrough := dto.ChannelSettings{PassThroughBodyEnabled: true}
+
+	t.Run("items without id or encrypted_content leave the client body byte for byte", func(t *testing.T) {
+		const raw = `{ "model":"gpt-4o",  "big":12345678901234567890,"input":[{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"},{"role":"user","content":"hi"}]}`
+
+		sent, _ := prepareResponsesSent(t, raw, 6, passthrough, &smartroute.RouteResult{})
+
+		assert.Equal(t, raw, string(sent))
+	})
+
+	t.Run("foreign id is dropped", func(t *testing.T) {
+		raw := responsesInput(`{"type":"function_call","id":"` + service.EncodeReasoningTag(5, "fc_1") + `","call_id":"c1","name":"f","arguments":"{}"}`)
+
+		sent, _ := prepareResponsesSent(t, raw, 6, passthrough, &smartroute.RouteResult{})
+
+		assert.JSONEq(t, responsesInput(`{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`), string(sent))
+	})
+}
+
+func TestPrepareResponsesRequestRetryRecomputesNonReasoningIds(t *testing.T) {
+	raw := responsesInput(`{"type":"message","id":"` + service.EncodeReasoningTag(8, "msg_1") + `","role":"user","content":"hi"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	storage, err := common.CreateBodyStorage([]byte(raw))
+	require.NoError(t, err)
+	defer storage.Close()
+	c.Set(common.KeyBodyStorage, storage)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{})
+	smartroute.SetRouteResult(c, smartroute.RouteResult{})
+
+	attempt := func(channelID int) string {
+		common.SetContextKey(c, constant.ContextKeyChannelId, channelID)
+		request := &dto.OpenAIResponsesRequest{}
+		require.NoError(t, common.UnmarshalJsonStr(raw, request))
+		info := relaycommon.GenRelayInfoResponses(c, request)
+		_, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
+		require.Nil(t, apiErr)
+		defer closer.Close()
+		sent, err := io.ReadAll(body)
+		require.NoError(t, err)
+		return string(ojson.GetBytes(sent, "input").Raw)
+	}
+
+	assert.JSONEq(t, `[{"type":"message","role":"user","content":"hi"}]`, attempt(3))
+	assert.JSONEq(t, `[{"type":"message","id":"msg_1","role":"user","content":"hi"}]`, attempt(8))
+}

@@ -852,6 +852,32 @@ func TestResponsesWSWriteClientTagsReasoningID(t *testing.T) {
 	}
 }
 
+func TestResponsesWSWriteClientTagsMessageID(t *testing.T) {
+	reader, server, cleanup := newTestWebSocketPair(t)
+	defer cleanup()
+	s := &responsesWSSession{client: server, lockedChannelID: 9}
+	frame := `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","id":"msg_w","role":"assistant","content":[]}]}}`
+
+	require.NoError(t, s.writeClient(websocket.TextMessage, []byte(frame)))
+
+	require.NoError(t, reader.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, got, err := reader.ReadMessage()
+	require.NoError(t, err)
+	var event struct {
+		Response struct {
+			Output []struct {
+				ID string `json:"id"`
+			} `json:"output"`
+		} `json:"response"`
+	}
+	require.NoError(t, common.Unmarshal(got, &event))
+	require.Len(t, event.Response.Output, 1)
+	channelID, original, ok := service.DecodeReasoningTag(event.Response.Output[0].ID)
+	require.True(t, ok, "id=%q", event.Response.Output[0].ID)
+	assert.Equal(t, 9, channelID)
+	assert.Equal(t, "msg_w", original)
+}
+
 func TestResponsesWSRunRequestTerminalFrameTagsReasoningID(t *testing.T) {
 	reader, server, cleanup := newTestWebSocketPair(t)
 	defer cleanup()
@@ -918,4 +944,82 @@ func TestResponsesWSCreatePayloadRestoresOrStripsReasoningByChannel(t *testing.T
 	assert.NotContains(t, got.Input[1], "id")
 	assert.NotContains(t, got.Input[1], "encrypted_content")
 	assert.NotEmpty(t, got.Input[1]["summary"])
+}
+
+func TestResponsesWSCreatePayloadNonReasoningItemIDByChannel(t *testing.T) {
+	oldSecret := common.CryptoSecret
+	common.CryptoSecret = "reasoning-tag-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = oldSecret })
+
+	tests := []struct {
+		name          string
+		item          string
+		targetChannel int
+		wantID        string
+		wantEncrypted any
+	}{
+		{
+			name:          "switched channel drops id and keeps call_id",
+			item:          fmt.Sprintf(`{"type":"custom_tool_call","id":%q,"call_id":"call_1"}`, service.EncodeReasoningTag(5, "ctc_x")),
+			targetChannel: 9,
+		},
+		{
+			name:          "same channel restores id",
+			item:          fmt.Sprintf(`{"type":"custom_tool_call","id":%q,"call_id":"call_1"}`, service.EncodeReasoningTag(9, "ctc_x")),
+			targetChannel: 9,
+			wantID:        "ctc_x",
+		},
+		{
+			name:          "same channel keeps encrypted_content",
+			item:          fmt.Sprintf(`{"type":"message","role":"assistant","id":%q,"encrypted_content":"E","content":[{"type":"output_text","text":"hi"}]}`, service.EncodeReasoningTag(9, "msg_y")),
+			targetChannel: 9,
+			wantID:        "msg_y",
+			wantEncrypted: "E",
+		},
+		{
+			name:          "other channel drops id and encrypted_content",
+			item:          fmt.Sprintf(`{"type":"message","role":"assistant","id":%q,"encrypted_content":"E","content":[{"type":"output_text","text":"hi"}]}`, service.EncodeReasoningTag(9, "msg_y")),
+			targetChannel: 8,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message := `{"type":"response.create","response":{"model":"gpt-5.1","stream":true,"input":[` + tt.item + `]}}`
+			create, _, err := normalizeResponsesWSTestMessage([]byte(message))
+			require.NoError(t, err)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(create.Body)))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, create.Request.Model)
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			common.SetContextKey(c, constant.ContextKeyChannelId, tt.targetChannel)
+			info := relaycommon.GenRelayInfoResponses(c, &create.Request)
+
+			payload, apiErr := buildResponsesWSCreatePayload(c, info, create.Request, create.Generate, create.StreamID)
+			require.Nil(t, apiErr)
+
+			var got struct {
+				Input []map[string]any `json:"input"`
+			}
+			require.NoError(t, common.Unmarshal(payload, &got))
+			require.Len(t, got.Input, 1)
+			item := got.Input[0]
+			if tt.wantID == "" {
+				assert.NotContains(t, item, "id")
+			} else {
+				assert.Equal(t, tt.wantID, item["id"])
+			}
+			if tt.wantEncrypted == nil {
+				assert.NotContains(t, item, "encrypted_content")
+			} else {
+				assert.Equal(t, tt.wantEncrypted, item["encrypted_content"])
+			}
+			if item["type"] == "custom_tool_call" {
+				assert.Equal(t, "call_1", item["call_id"])
+			} else {
+				assert.Equal(t, "assistant", item["role"])
+				assert.NotEmpty(t, item["content"])
+			}
+		})
+	}
 }

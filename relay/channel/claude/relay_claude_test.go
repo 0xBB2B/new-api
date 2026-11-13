@@ -539,6 +539,41 @@ func TestHandleClaudeResponseDataResponsesTagsReasoningID(t *testing.T) {
 	}
 }
 
+func TestHandleClaudeResponseDataResponsesTagsMessageID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+	}
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`
+
+	require.Nil(t, HandleClaudeResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, nil, []byte(body)))
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	var messageIDs []string
+	for _, item := range got.Output {
+		if item.Type == "message" {
+			messageIDs = append(messageIDs, item.ID)
+		}
+	}
+	require.NotEmpty(t, messageIDs, "body=%s", w.Body.String())
+	for _, id := range messageIDs {
+		channelID, _, ok := service.DecodeReasoningTag(id)
+		require.True(t, ok, "id=%q", id)
+		assert.Equal(t, 7, channelID)
+	}
+}
+
 func TestClaudeNativeResponseTagsThinkingSignature(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	newCtx := func() (*gin.Context, *httptest.ResponseRecorder, *relaycommon.RelayInfo) {

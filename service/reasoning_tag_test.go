@@ -3,6 +3,7 @@ package service
 import (
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -121,24 +122,26 @@ func decodeTaggedID(t *testing.T, tag string, wantChannel int, wantOriginal stri
 	assert.Equal(t, wantOriginal, original)
 }
 
-func TestTagResponsesReasoningBody(t *testing.T) {
+func TestTagResponsesItemBody(t *testing.T) {
 	swapCryptoSecret(t, "tag-body-secret")
 	body := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_y","summary":[]},{"type":"message","id":"msg_1","content":[]}]}`
 
 	var got map[string]any
-	require.NoError(t, common.Unmarshal(TagResponsesReasoningBody([]byte(body), 5), &got))
+	require.NoError(t, common.Unmarshal(TagResponsesItemBody([]byte(body), 5), &got))
 	output := got["output"].([]any)
 	reasoning := output[0].(map[string]any)
 	decodeTaggedID(t, reasoning["id"].(string), 5, "rs_y")
-	assert.Equal(t, "msg_1", output[1].(map[string]any)["id"])
+	message := output[1].(map[string]any)
+	decodeTaggedID(t, message["id"].(string), 5, "msg_1")
 
 	reasoning["id"] = "rs_y"
+	message["id"] = "msg_1"
 	expected := map[string]any{}
 	require.NoError(t, common.Unmarshal([]byte(body), &expected))
 	assert.Equal(t, expected, got)
 }
 
-func TestTagResponsesReasoningEventSequence(t *testing.T) {
+func TestTagResponsesItemEventSequence(t *testing.T) {
 	swapCryptoSecret(t, "tag-event-secret")
 	events := []string{
 		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_y"}}`,
@@ -150,7 +153,7 @@ func TestTagResponsesReasoningEventSequence(t *testing.T) {
 	var parsed []map[string]any
 	for _, event := range events {
 		var m map[string]any
-		require.NoError(t, common.Unmarshal(TagResponsesReasoningEvent([]byte(event), 5), &m))
+		require.NoError(t, common.Unmarshal(TagResponsesItemEvent([]byte(event), 5), &m))
 		parsed = append(parsed, m)
 	}
 
@@ -165,53 +168,150 @@ func TestTagResponsesReasoningEventSequence(t *testing.T) {
 	}
 	decodeTaggedID(t, tags[0], 5, "rs_y")
 
-	assert.Equal(t, "msg_1", parsed[2]["item_id"])
-	assert.Equal(t, "msg_1", parsed[4]["response"].(map[string]any)["output"].([]any)[1].(map[string]any)["id"])
+	decodeTaggedID(t, parsed[2]["item_id"].(string), 5, "msg_1")
+	decodeTaggedID(t, parsed[4]["response"].(map[string]any)["output"].([]any)[1].(map[string]any)["id"].(string), 5, "msg_1")
 }
 
-func TestTagResponsesReasoningEventLeavesBytesUntouched(t *testing.T) {
+func TestTagResponsesItemEventLeavesBytesUntouched(t *testing.T) {
 	swapCryptoSecret(t, "tag-untouched-secret")
 	for _, tc := range []struct{ name, data string }{
-		{"no reasoning", `{"type":"response.output_text.delta",  "item_id":"msg_1","delta":"hi"}`},
+		{"no id or item_id", `{"type":"response.in_progress",  "sequence_number":1}`},
+		{"empty item_id", `{"type":"response.output_text.delta", "item_id":"","delta":"hi"}`},
 		{"not json", `data: not json {`},
 		{"truncated json with reasoning keyword", `{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_x"`},
 		{"empty reasoning id", `{"type":"response.output_item.added", "item":{"type":"reasoning","id":""}}`},
-		{"message item", `{"type":"response.output_item.added", "item":{"type":"message","id":"msg_1"}}`},
+		{"empty message id", `{"type":"response.output_item.added", "item":{"type":"message","id":""}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, []byte(tc.data), TagResponsesReasoningEvent([]byte(tc.data), 5))
+			assert.Equal(t, []byte(tc.data), TagResponsesItemEvent([]byte(tc.data), 5))
 		})
 	}
 	body := `{"output":[ {"type":"reasoning","id":""} ]}`
-	assert.Equal(t, []byte(body), TagResponsesReasoningBody([]byte(body), 5))
-	assert.Equal(t, []byte("nope"), TagResponsesReasoningBody([]byte("nope"), 5))
+	assert.Equal(t, []byte(body), TagResponsesItemBody([]byte(body), 5))
+	assert.Equal(t, []byte("nope"), TagResponsesItemBody([]byte("nope"), 5))
 	truncated := `{"output":[{"type":"reasoning","id":"rs_x"}`
-	assert.Equal(t, []byte(truncated), TagResponsesReasoningBody([]byte(truncated), 5))
+	assert.Equal(t, []byte(truncated), TagResponsesItemBody([]byte(truncated), 5))
 }
 
-func TestTagResponsesReasoningZeroChannelLeavesBytesUntouched(t *testing.T) {
+func TestTagResponsesItemZeroChannelLeavesBytesUntouched(t *testing.T) {
 	swapCryptoSecret(t, "tag-zero-secret")
 	event := `{"type":"response.completed",  "response":{"output":[ {"type":"reasoning","id":"rs_y"} ]}}`
 	item := `{"type":"response.output_item.added", "item":{"type":"reasoning","id":"rs_y"}}`
 	body := `{"output":[ {"type":"reasoning","id":"rs_y"} ]}`
 
-	assert.Equal(t, []byte(event), TagResponsesReasoningEvent([]byte(event), 0))
-	assert.Equal(t, []byte(item), TagResponsesReasoningEvent([]byte(item), 0))
-	assert.Equal(t, []byte(body), TagResponsesReasoningBody([]byte(body), 0))
+	assert.Equal(t, []byte(event), TagResponsesItemEvent([]byte(event), 0))
+	assert.Equal(t, []byte(item), TagResponsesItemEvent([]byte(item), 0))
+	assert.Equal(t, []byte(body), TagResponsesItemBody([]byte(body), 0))
 }
 
-func TestTagResponsesReasoningEventDoneAndCancelled(t *testing.T) {
+func TestTagResponsesItemBodyAllTypes(t *testing.T) {
+	swapCryptoSecret(t, "tag-all-types-secret")
+	body := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_r","summary":[]},{"type":"custom_tool_call","id":"msg_aaa","call_id":"call_1","name":"exec","input":"x"},{"type":"message","id":"msg_bbb","role":"assistant","content":[]},{"type":"web_search_call","id":"ws_ccc","status":"completed"}]}`
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(TagResponsesItemBody([]byte(body), 5), &got))
+	assert.Equal(t, "resp_1", got["id"])
+	output := got["output"].([]any)
+	require.Len(t, output, 4)
+	for i, original := range []string{"rs_r", "msg_aaa", "msg_bbb", "ws_ccc"} {
+		item := output[i].(map[string]any)
+		decodeTaggedID(t, item["id"].(string), 5, original)
+		item["id"] = original
+	}
+	assert.Equal(t, "call_1", output[1].(map[string]any)["call_id"])
+
+	expected := map[string]any{}
+	require.NoError(t, common.Unmarshal([]byte(body), &expected))
+	assert.Equal(t, expected, got)
+}
+
+func TestTagResponsesItemEventAllTypesSequence(t *testing.T) {
+	swapCryptoSecret(t, "tag-all-events-secret")
+	events := []string{
+		`{"type":"response.output_item.added","item":{"type":"custom_tool_call","id":"msg_aaa","call_id":"call_1"}}`,
+		`{"type":"response.custom_tool_call_input.delta","item_id":"msg_aaa","delta":"x"}`,
+		`{"type":"response.output_text.delta","item_id":"msg_bbb","delta":"hi"}`,
+		`{"type":"response.content_part.added","item_id":"msg_bbb","part":{"type":"output_text"}}`,
+		`{"type":"response.output_item.done","item":{"type":"message","id":"msg_bbb"}}`,
+		`{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"custom_tool_call","id":"msg_aaa","call_id":"call_1"},{"type":"message","id":"msg_bbb"}]}}`,
+	}
+	var parsed []map[string]any
+	for _, event := range events {
+		var m map[string]any
+		require.NoError(t, common.Unmarshal(TagResponsesItemEvent([]byte(event), 5), &m))
+		parsed = append(parsed, m)
+	}
+	completed := parsed[5]["response"].(map[string]any)
+	completedOutput := completed["output"].([]any)
+
+	aaa := []string{
+		parsed[0]["item"].(map[string]any)["id"].(string),
+		parsed[1]["item_id"].(string),
+		completedOutput[0].(map[string]any)["id"].(string),
+	}
+	bbb := []string{
+		parsed[2]["item_id"].(string),
+		parsed[3]["item_id"].(string),
+		parsed[4]["item"].(map[string]any)["id"].(string),
+		completedOutput[1].(map[string]any)["id"].(string),
+	}
+	for _, tag := range aaa {
+		assert.Equal(t, aaa[0], tag)
+	}
+	for _, tag := range bbb {
+		assert.Equal(t, bbb[0], tag)
+	}
+	decodeTaggedID(t, aaa[0], 5, "msg_aaa")
+	decodeTaggedID(t, bbb[0], 5, "msg_bbb")
+	assert.Equal(t, "resp_1", completed["id"])
+	assert.Equal(t, "call_1", completedOutput[0].(map[string]any)["call_id"])
+}
+
+func TestTagResponsesItemEventDoneAndCancelled(t *testing.T) {
 	swapCryptoSecret(t, "tag-terminal-secret")
 	for _, eventType := range []string{"response.done", "response.cancelled", "response.canceled"} {
 		t.Run(eventType, func(t *testing.T) {
 			event := `{"type":"` + eventType + `","response":{"output":[{"type":"reasoning","id":"rs_y"},{"type":"message","id":"msg_1"}]}}`
 			var got map[string]any
-			require.NoError(t, common.Unmarshal(TagResponsesReasoningEvent([]byte(event), 5), &got))
+			require.NoError(t, common.Unmarshal(TagResponsesItemEvent([]byte(event), 5), &got))
 			output := got["response"].(map[string]any)["output"].([]any)
 			decodeTaggedID(t, output[0].(map[string]any)["id"].(string), 5, "rs_y")
-			assert.Equal(t, "msg_1", output[1].(map[string]any)["id"])
+			decodeTaggedID(t, output[1].(map[string]any)["id"].(string), 5, "msg_1")
 		})
 	}
+}
+
+func TestTagResponsesItemBodyApprovalRequestID(t *testing.T) {
+	swapCryptoSecret(t, "tag-approval-body-secret")
+	body := `{"id":"resp_1","output":[{"type":"mcp_approval_request","id":"mcpr_1","name":"tool"},{"type":"mcp_call","id":"mcp_2","approval_request_id":"mcpr_1","name":"tool"}]}`
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(TagResponsesItemBody([]byte(body), 5), &got))
+	output := got["output"].([]any)
+	request := output[0].(map[string]any)
+	call := output[1].(map[string]any)
+	assert.Equal(t, request["id"], call["approval_request_id"])
+	decodeTaggedID(t, request["id"].(string), 5, "mcpr_1")
+	decodeTaggedID(t, call["id"].(string), 5, "mcp_2")
+}
+
+func TestTagResponsesItemEventApprovalRequestID(t *testing.T) {
+	swapCryptoSecret(t, "tag-approval-event-secret")
+	events := []string{
+		`{"type":"response.output_item.added","item":{"type":"mcp_approval_request","id":"mcpr_1"}}`,
+		`{"type":"response.output_item.done","item":{"type":"mcp_call","id":"mcp_2","approval_request_id":"mcpr_1"}}`,
+	}
+	var parsed []map[string]any
+	for _, event := range events {
+		var m map[string]any
+		require.NoError(t, common.Unmarshal(TagResponsesItemEvent([]byte(event), 5), &m))
+		parsed = append(parsed, m)
+	}
+	request := parsed[0]["item"].(map[string]any)
+	call := parsed[1]["item"].(map[string]any)
+	assert.Equal(t, request["id"], call["approval_request_id"])
+	decodeTaggedID(t, request["id"].(string), 5, "mcpr_1")
+	decodeTaggedID(t, call["id"].(string), 5, "mcp_2")
 }
 
 func TestTagClaudeThinkingBody(t *testing.T) {
@@ -296,5 +396,48 @@ func TestTagClaudeThinkingBody_Unchanged(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tt.body, string(TagClaudeThinkingBody([]byte(tt.body), tt.channelID)))
 		})
+	}
+}
+
+func TestReasoningTag_ConcurrentEncodeDecode(t *testing.T) {
+	swapCryptoSecret(t, "concurrent-secret")
+
+	inputs := []struct {
+		channelID int
+		original  string
+	}{
+		{1, reasoningTagTestSignature},
+		{5, "rs_0123456789abcdef"},
+		{123456, "msg_other"},
+		{42, "x"},
+	}
+	want := make([]string, len(inputs))
+	for i, in := range inputs {
+		want[i] = EncodeReasoningTag(in.channelID, in.original)
+	}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	tags := make([][]string, workers)
+	decoded := make([][]bool, workers)
+	for w := range workers {
+		tags[w] = make([]string, len(inputs))
+		decoded[w] = make([]bool, len(inputs))
+		wg.Go(func() {
+			for i, in := range inputs {
+				tag := EncodeReasoningTag(in.channelID, in.original)
+				tags[w][i] = tag
+				channelID, original, ok := DecodeReasoningTag(tag)
+				decoded[w][i] = ok && channelID == in.channelID && original == in.original
+			}
+		})
+	}
+	wg.Wait()
+
+	for w := range workers {
+		for i := range inputs {
+			assert.Equal(t, want[i], tags[w][i], "worker %d input %d", w, i)
+			assert.True(t, decoded[w][i], "worker %d input %d", w, i)
+		}
 	}
 }

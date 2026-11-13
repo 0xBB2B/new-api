@@ -117,6 +117,52 @@ func TestGeminiResponsesHandlerTagsReasoningID(t *testing.T) {
 	}
 }
 
+func TestGeminiResponsesHandlerTagsMessageID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "gemini-message-tag-test")
+	common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+
+	payload := dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			Content: dto.GeminiChatContent{
+				Role:  "model",
+				Parts: []dto.GeminiPart{{Text: "hello"}},
+			},
+		}},
+		UsageMetadata: dto.GeminiUsageMetadata{PromptTokenCount: 2, CandidatesTokenCount: 3, TotalTokenCount: 5},
+	}
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+
+	_, newAPIError := GeminiResponsesHandler(c, newGeminiResponsesRelayInfo(false), &http.Response{
+		Body: io.NopCloser(bytes.NewReader(body)),
+	})
+	require.Nil(t, newAPIError)
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &got))
+	var messageIDs []string
+	for _, item := range got.Output {
+		if item.Type == "message" {
+			messageIDs = append(messageIDs, item.ID)
+		}
+	}
+	require.NotEmpty(t, messageIDs, "body=%s", recorder.Body.String())
+	for _, id := range messageIDs {
+		channelID, _, ok := service.DecodeReasoningTag(id)
+		require.True(t, ok, "id=%q", id)
+		assert.Equal(t, 7, channelID)
+	}
+}
+
 func TestGeminiResponsesHandlerClosesBodyOnReadError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

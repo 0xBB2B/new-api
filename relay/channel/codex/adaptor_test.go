@@ -209,7 +209,18 @@ func TestDoResponseNonStreamClientGetsCompleteJSON(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
 	assert.NotContains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
-	assert.Equal(t, decodeJSONObject(t, codexCompletedResponse), decodeJSONObject(t, recorder.Body.String()))
+	gotBody := decodeJSONObject(t, recorder.Body.String())
+	gotOutput, ok := gotBody["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, gotOutput, 1)
+	gotMessage, ok := gotOutput[0].(map[string]any)
+	require.True(t, ok)
+	channelID, originalID, ok := service.DecodeReasoningTag(gotMessage["id"].(string))
+	require.True(t, ok)
+	assert.Equal(t, 7, channelID)
+	assert.Equal(t, "msg_1", originalID)
+	gotMessage["id"] = "msg_1"
+	assert.Equal(t, decodeJSONObject(t, codexCompletedResponse), gotBody)
 	require.NotNil(t, info.StreamStatus)
 	assert.True(t, info.StreamStatus.IsNormalEnd())
 }
@@ -237,6 +248,13 @@ func TestDoResponseNonStreamSupplementsEmptyOutputInIndexOrder(t *testing.T) {
 	assert.Equal(t, 7, channelID)
 	assert.Equal(t, "rs_1", originalID)
 	taggedReasoning["id"] = "rs_1"
+	taggedCall, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	channelID, originalID, ok = service.DecodeReasoningTag(taggedCall["id"].(string))
+	require.True(t, ok)
+	assert.Equal(t, 7, channelID)
+	assert.Equal(t, "fc_1", originalID)
+	taggedCall["id"] = "fc_1"
 	assert.Equal(t, []any{decodeJSONObject(t, reasoning), decodeJSONObject(t, call)}, output)
 }
 
