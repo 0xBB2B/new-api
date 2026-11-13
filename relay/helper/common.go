@@ -290,7 +290,7 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 	if err := event.Render(c.Writer); err != nil {
 		return err
 	}
-	data = string(service.TagResponsesReasoningEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
+	data = string(service.TagResponsesItemEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
 	event.Data = fmt.Sprintf("data: %s", data)
 	if err := event.Render(c.Writer); err != nil {
 		return err

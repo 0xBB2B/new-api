@@ -14,6 +14,7 @@ description: 发往上游前，非思考条目按编号标记处理：同渠道�
 - 这项处理不计入清理段数：返回的清理段数只统计思考记录（与现状一致），智能路由结果的 `StrippedReasoningCount` 与日志字段 `cleaned_reasoning` 不因它变化，服务器日志里"stripped N reasoning segments"那一行也只按思考记录段数记。
 - 有任何字段被改动时标记"有改动"；透传渠道只有"有改动"时才改写原始 body，否则原样发送（逐字节不变）。WebSocket 经同一个 `PrepareResponsesRequest`，同样生效。
 - 思考记录、`item_reference` 现有规则不变。
+- 条目上的 `approval_request_id`：标记读得出且渠道 == 目标渠道 → 还原原值；否则 `mcp_approval_response` 条目整条去掉，其他条目只删该字段。这项也不计入清理段数。
 - 重试换渠道：每次尝试都从客户端原始请求重新处理（现有机制已保证），不会带上一次尝试的结果。
 
 ## 涉及文件
@@ -46,4 +47,5 @@ description: 发往上游前，非思考条目按编号标记处理：同渠道�
 - [ ] 只有非思考条目被去掉编号 → 清理段数 0，智能路由结果 `StrippedReasoningCount` 为 0、日志无 `cleaned_reasoning`、服务器日志无 "stripped" 行。
 - [ ] 透传：input 的非思考条目都不带 `id` 和 `encrypted_content`（且无思考记录）→ 上游 body 与客户端原 body 逐字节相同；带别渠道 id → 被去掉。
 - [ ] 第一次发往渠道 3、重试发往渠道 8（标记为渠道 8 的条目）→ 第一次去掉编号，重试那次还原（沿用现有重试测试方式）。
+- [ ] mcp_approval_response（approval_request_id 为渠道 8 标记、原值 `mcpr_1`）→ 发往 8：为 `mcpr_1`；发往 9：整条不在。mcp_call 带渠道 5 标记的 approval_request_id、发往 9 → 删该字段，条目保留。
 - [ ] 思考记录、`item_reference` 现有用例结果不变。

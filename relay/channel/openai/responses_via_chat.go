@@ -60,7 +60,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
-	responseBody = service.TagResponsesReasoningBody(responseBody, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+	responseBody = service.TagResponsesItemBody(responseBody, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
 }

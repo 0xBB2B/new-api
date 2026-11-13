@@ -213,7 +213,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		s.stateMu.Lock()
 		if outgoing != nil {
 			if outgoing.kind == websocket.TextMessage {
-				outgoing.body = service.TagResponsesReasoningEvent(outgoing.body, s.lockedChannelID)
+				outgoing.body = service.TagResponsesItemEvent(outgoing.body, s.lockedChannelID)
 			}
 			if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(outgoing.body))); err != nil {
 				state.closeCode = websocket.CloseInternalServerErr
@@ -893,7 +893,7 @@ func (s *responsesWSSession) writeClient(kind int, message []byte) error {
 	s.clientWriteMu.Lock()
 	defer s.clientWriteMu.Unlock()
 	if kind == websocket.TextMessage {
-		message = service.TagResponsesReasoningEvent(message, s.lockedChannelID)
+		message = service.TagResponsesItemEvent(message, s.lockedChannelID)
 	}
 	if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(message))); err != nil {
 		return err

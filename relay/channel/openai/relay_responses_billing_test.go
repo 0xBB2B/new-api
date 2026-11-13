@@ -707,7 +707,7 @@ func TestAzureHostedWebSearch(t *testing.T) {
 	}
 }
 
-func newReasoningTagContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
+func newItemTagContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	oldSecret, oldTimeout := common.CryptoSecret, constant.StreamingTimeout
@@ -725,7 +725,7 @@ func newReasoningTagContext(t *testing.T) (*gin.Context, *httptest.ResponseRecor
 	return c, w
 }
 
-func requireTaggedReasoningID(t *testing.T, tag, wantOriginal string) {
+func requireTaggedItemID(t *testing.T, tag, wantOriginal string) {
 	t.Helper()
 	channelID, original, ok := service.DecodeReasoningTag(tag)
 	require.True(t, ok, "tag=%q", tag)
@@ -762,8 +762,8 @@ func reasoningIDsInSSE(t *testing.T, body string) []string {
 	return ids
 }
 
-func TestOaiResponsesHandlerTagsReasoningID(t *testing.T) {
-	c, w := newReasoningTagContext(t)
+func TestOaiResponsesHandlerTagsItemIDs(t *testing.T) {
+	c, w := newItemTagContext(t)
 	upstream := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_y","summary":[]},{"type":"message","id":"msg_1","content":[]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -782,12 +782,12 @@ func TestOaiResponsesHandlerTagsReasoningID(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
 	require.Len(t, got.Output, 2)
-	requireTaggedReasoningID(t, got.Output[0].ID, "rs_y")
-	assert.Equal(t, "msg_1", got.Output[1].ID)
+	requireTaggedItemID(t, got.Output[0].ID, "rs_y")
+	requireTaggedItemID(t, got.Output[1].ID, "msg_1")
 }
 
-func TestOaiResponsesStreamHandlerTagsReasoningID(t *testing.T) {
-	c, w := newReasoningTagContext(t)
+func TestOaiResponsesStreamHandlerTagsItemIDs(t *testing.T) {
+	c, w := newItemTagContext(t)
 	body := "data: " + `{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_y"}}` + "\n\n" +
 		"data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"reasoning","id":"rs_y"},{"type":"message","id":"msg_1"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -808,8 +808,80 @@ func TestOaiResponsesStreamHandlerTagsReasoningID(t *testing.T) {
 	ids := reasoningIDsInSSE(t, w.Body.String())
 	require.Len(t, ids, 2)
 	assert.Equal(t, ids[0], ids[1])
-	requireTaggedReasoningID(t, ids[0], "rs_y")
-	assert.Contains(t, w.Body.String(), `"id":"msg_1"`)
+	requireTaggedItemID(t, ids[0], "rs_y")
+	assert.NotContains(t, w.Body.String(), `"id":"msg_1"`)
+	var msgTags []string
+	for line := range strings.SplitSeq(w.Body.String(), "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Response struct {
+				Output []struct {
+					Type string `json:"type"`
+					ID   string `json:"id"`
+				} `json:"output"`
+			} `json:"response"`
+		}
+		require.NoError(t, common.Unmarshal([]byte(data), &event))
+		for _, item := range event.Response.Output {
+			if item.Type == "message" {
+				msgTags = append(msgTags, item.ID)
+			}
+		}
+	}
+	require.Len(t, msgTags, 1)
+	requireTaggedItemID(t, msgTags[0], "msg_1")
+}
+
+func TestOaiResponsesStreamHandlerTagsNonReasoningItemID(t *testing.T) {
+	c, w := newItemTagContext(t)
+	body := "data: " + `{"type":"response.output_item.added","item":{"type":"custom_tool_call","id":"msg_aaa","call_id":"call_1"}}` + "\n\n" +
+		"data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"custom_tool_call","id":"msg_aaa","call_id":"call_1"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.1",
+		DisablePing:     true,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+	}
+
+	_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+
+	var ids []string
+	for line := range strings.SplitSeq(w.Body.String(), "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Item struct {
+				ID string `json:"id"`
+			} `json:"item"`
+			Response struct {
+				Output []struct {
+					ID string `json:"id"`
+				} `json:"output"`
+			} `json:"response"`
+		}
+		require.NoError(t, common.Unmarshal([]byte(data), &event))
+		if event.Item.ID != "" {
+			ids = append(ids, event.Item.ID)
+		}
+		for _, item := range event.Response.Output {
+			ids = append(ids, item.ID)
+		}
+	}
+	require.Len(t, ids, 2)
+	assert.Equal(t, ids[0], ids[1])
+	requireTaggedItemID(t, ids[0], "msg_aaa")
+	assert.Contains(t, w.Body.String(), `"call_id":"call_1"`)
 }
 
 func TestOaiChatToResponsesStreamHandlerTagsReasoningID(t *testing.T) {
@@ -837,12 +909,12 @@ func TestOaiChatToResponsesStreamHandlerTagsReasoningID(t *testing.T) {
 	ids := reasoningIDsInSSE(t, recorder.Body.String())
 	require.NotEmpty(t, ids)
 	for _, id := range ids {
-		requireTaggedReasoningID(t, id, "")
+		requireTaggedItemID(t, id, "")
 	}
 }
 
 func TestOaiResponsesBufferedStreamHandlerTagsReasoningID(t *testing.T) {
-	c, w := newReasoningTagContext(t)
+	c, w := newItemTagContext(t)
 	body := "data: " + `{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_b","summary":[]}}` + "\n\n" +
 		"data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -863,11 +935,11 @@ func TestOaiResponsesBufferedStreamHandlerTagsReasoningID(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
 	require.Len(t, got.Output, 1)
-	requireTaggedReasoningID(t, got.Output[0].ID, "rs_b")
+	requireTaggedItemID(t, got.Output[0].ID, "rs_b")
 }
 
 func TestOaiChatToResponsesHandlerTagsReasoningID(t *testing.T) {
-	c, w := newReasoningTagContext(t)
+	c, w := newItemTagContext(t)
 	upstream := `{"id":"chatcmpl_1","object":"chat.completion","created":1710000000,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"hello","reasoning_content":"thinking"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -897,13 +969,13 @@ func TestOaiChatToResponsesHandlerTagsReasoningID(t *testing.T) {
 	}
 	require.NotEmpty(t, reasoningIDs, "body=%s", w.Body.String())
 	for _, id := range reasoningIDs {
-		requireTaggedReasoningID(t, id, "")
+		requireTaggedItemID(t, id, "")
 	}
 }
 
 func TestResponsesHandlersTagReasoningWithRetriedChannel(t *testing.T) {
 	retriedContext := func(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
-		c, w := newReasoningTagContext(t)
+		c, w := newItemTagContext(t)
 		common.SetContextKey(c, constant.ContextKeyChannelId, 3)
 		common.SetContextKey(c, constant.ContextKeyChannelId, 5)
 		return c, w
@@ -928,7 +1000,7 @@ func TestResponsesHandlersTagReasoningWithRetriedChannel(t *testing.T) {
 		}
 		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
 		require.Len(t, got.Output, 1)
-		requireTaggedReasoningID(t, got.Output[0].ID, "rs_r")
+		requireTaggedItemID(t, got.Output[0].ID, "rs_r")
 	})
 
 	t.Run("stream", func(t *testing.T) {
@@ -952,7 +1024,7 @@ func TestResponsesHandlersTagReasoningWithRetriedChannel(t *testing.T) {
 		ids := reasoningIDsInSSE(t, w.Body.String())
 		require.NotEmpty(t, ids)
 		for _, id := range ids {
-			requireTaggedReasoningID(t, id, "rs_r")
+			requireTaggedItemID(t, id, "rs_r")
 		}
 	})
 }

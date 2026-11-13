@@ -14,6 +14,7 @@ description: Responses 响应改写从"只改思考记录编号"扩大到"所有
   - 任何带顶层 `item_id` 字段的事件，例如 `response.output_text.delta`、`response.function_call_arguments.delta`、`response.custom_tool_call_input.delta`、`response.content_part.added`、`response.reasoning_*`；
   - `response.created` / `in_progress` / `completed` / `incomplete` / `failed` / `done` / `cancelled` / `canceled` 中 `response.output[]` 各条目的 `id`。
 - 非流式 body：顶层 `output[]` 中各条目的 `id`。
+- 引用字段：条目上的 `approval_request_id`（`mcp_call` 等）同样换成标记，与被引用条目的标记一致（确定性编码保证）。流式与非流式都适用。
 - 不改：工具调用的 `call_id`、响应本身的 `id`（`response.id` 与非流式顶层 `id`）、条目其他字段。原 `id` 为空不改；JSON 无效原样返回；没有可改内容时返回原字节（逐字节不变）。
 - 编码确定性已由 `EncodeReasoningTag` 保证：同一条目在不同事件里得到同一标记；还原值与原值逐字节相同。
 - 覆盖面不变：现有调用点已覆盖 OpenAI 原生流式/非流式、codex 缓冲流式、Chat/Claude/Gemini 上游转 Responses、透传、WebSocket。
@@ -48,5 +49,6 @@ description: Responses 响应改写从"只改思考记录编号"扩大到"所有
 - [ ] 非流式 body：`output` = [reasoning `rs_r`, custom_tool_call `msg_aaa`（call_id `call_1`）, message `msg_bbb`, web_search_call `ws_ccc`]，渠道 5 → 四条 `id` 分别解码得 (5, 原值)；`call_id` 仍 `call_1`；顶层 `id` `resp_1` 不变。
 - [ ] 流式事件逐个改写：output_item.added(custom_tool_call `msg_aaa`)、`response.custom_tool_call_input.delta`(item_id `msg_aaa`)、`response.output_text.delta`(item_id `msg_bbb`)、`response.content_part.added`(item_id `msg_bbb`)、output_item.done(message `msg_bbb`)、`response.completed`(response.id `resp_1`, output 含两条) → 每处 `msg_aaa` 都是同一标记、每处 `msg_bbb` 都是同一标记，`response.id` 仍为 `resp_1`。
 - [ ] 无 `id`/`item_id` 的事件、`id` 为空的条目、非 JSON、渠道 0 → 逐字节不变。
+- [ ] `output` 含 mcp_approval_request（id `mcpr_1`）与 mcp_call（approval_request_id `mcpr_1`）→ 两处是同一标记，解码得 (5, `mcpr_1`)。
 - [ ] 思考记录的现有用例结果不变。
 - [ ] HTTP：`OaiResponsesStreamHandler` 上游流含 custom_tool_call `msg_aaa` → 客户端收到的编号是标记，解码出本次渠道。

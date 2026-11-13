@@ -852,6 +852,32 @@ func TestResponsesWSWriteClientTagsReasoningID(t *testing.T) {
 	}
 }
 
+func TestResponsesWSWriteClientTagsMessageID(t *testing.T) {
+	reader, server, cleanup := newTestWebSocketPair(t)
+	defer cleanup()
+	s := &responsesWSSession{client: server, lockedChannelID: 9}
+	frame := `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","id":"msg_w","role":"assistant","content":[]}]}}`
+
+	require.NoError(t, s.writeClient(websocket.TextMessage, []byte(frame)))
+
+	require.NoError(t, reader.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, got, err := reader.ReadMessage()
+	require.NoError(t, err)
+	var event struct {
+		Response struct {
+			Output []struct {
+				ID string `json:"id"`
+			} `json:"output"`
+		} `json:"response"`
+	}
+	require.NoError(t, common.Unmarshal(got, &event))
+	require.Len(t, event.Response.Output, 1)
+	channelID, original, ok := service.DecodeReasoningTag(event.Response.Output[0].ID)
+	require.True(t, ok, "id=%q", event.Response.Output[0].ID)
+	assert.Equal(t, 9, channelID)
+	assert.Equal(t, "msg_w", original)
+}
+
 func TestResponsesWSRunRequestTerminalFrameTagsReasoningID(t *testing.T) {
 	reader, server, cleanup := newTestWebSocketPair(t)
 	defer cleanup()
