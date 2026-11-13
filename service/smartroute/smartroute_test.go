@@ -1489,14 +1489,14 @@ func TestBuildScorerMessages(t *testing.T) {
 			body:    `{"messages":[{"role":"user","content":"hi"}]}`,
 			history: 2,
 			wantUser: "Local features: latest_message_chars=2, user_turns=1, has_attachment=false, has_code_or_table=false\n" +
-				"User messages (oldest first):\n[latest] hi\nThe feedback array must have exactly 1 values.",
+				"User messages (oldest first):\n[latest] hi\nThe feedback array must have exactly 1 value.",
 		},
 		{
 			name:    "attachment and code flags render as true",
 			body:    "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"u\"}},{\"type\":\"text\",\"text\":\"```go\\nx\\n```\"}]}]}",
 			history: 2,
 			wantUser: "Local features: latest_message_chars=11, user_turns=1, has_attachment=true, has_code_or_table=true\n" +
-				"User messages (oldest first):\n[latest] ```go\nx\n```\nThe feedback array must have exactly 1 values.",
+				"User messages (oldest first):\n[latest] ```go\nx\n```\nThe feedback array must have exactly 1 value.",
 		},
 	}
 	for _, tt := range tests {
