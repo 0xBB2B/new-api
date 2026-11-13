@@ -428,3 +428,61 @@ func saveSmartRouteSession(c *gin.Context) {
 	}
 	smartroute.SaveSessionAfterSuccess(result.SessionKey, result.IsUserTurn, result.Tier, result.Effort)
 }
+
+func countTopLevelJSONKey(data []byte, target string) int {
+	depth := 0
+	inString := false
+	escaped := false
+	stringStart := 0
+	expectingKey := false
+	count := 0
+	for index, current := range data {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if current == '\\' {
+				escaped = true
+				continue
+			}
+			if current != '"' {
+				continue
+			}
+			inString = false
+			if depth == 1 && expectingKey {
+				key := string(data[stringStart:index])
+				var decodedKey string
+				if common.Unmarshal(data[stringStart-1:index+1], &decodedKey) == nil {
+					key = decodedKey
+				}
+				cursor := index + 1
+				for cursor < len(data) && (data[cursor] == ' ' || data[cursor] == '\t' || data[cursor] == '\r' || data[cursor] == '\n') {
+					cursor++
+				}
+				if cursor < len(data) && data[cursor] == ':' && key == target {
+					count++
+				}
+				expectingKey = false
+			}
+			continue
+		}
+		switch current {
+		case '"':
+			inString = true
+			stringStart = index + 1
+		case '{':
+			depth++
+			if depth == 1 {
+				expectingKey = true
+			}
+		case '}':
+			depth--
+		case ',':
+			if depth == 1 {
+				expectingKey = true
+			}
+		}
+	}
+	return count
+}

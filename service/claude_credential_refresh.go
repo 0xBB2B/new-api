@@ -100,6 +100,7 @@ func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts Cla
 	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", newKey).Error; err != nil {
 		return nil, nil, err
 	}
+	model.BumpSyncTopic(model.SyncTopicChannels)
 
 	if opts.ResetCaches {
 		model.InitChannelCache()
