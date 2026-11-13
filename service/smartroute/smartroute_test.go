@@ -500,6 +500,7 @@ func TestParseScorerOutput(t *testing.T) {
 		name         string
 		raw          string
 		wantFeedback int
+		wantValues   []string
 		wantErr      bool
 	}{
 		{name: "valid", raw: validScorerJSON, wantFeedback: 2},
@@ -518,8 +519,12 @@ func TestParseScorerOutput(t *testing.T) {
 		{name: "confidence above 1", raw: strings.Replace(validScorerJSON, "0.9", "1.2", 1), wantFeedback: 2, wantErr: true},
 		{name: "confidence below 0", raw: strings.Replace(validScorerJSON, "0.9", "-0.1", 1), wantFeedback: 2, wantErr: true},
 		{name: "confidence missing", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","feedback":["neutral","satisfied"]}`, wantFeedback: 2, wantErr: true},
-		{name: "feedback shorter than expected", raw: validScorerJSON, wantFeedback: 3, wantErr: true},
-		{name: "feedback longer than expected", raw: validScorerJSON, wantFeedback: 1, wantErr: true},
+		{name: "feedback shorter than expected is kept as is", raw: validScorerJSON, wantFeedback: 3, wantValues: []string{"neutral", "satisfied"}},
+		{name: "feedback longer than expected keeps the last values", raw: validScorerJSON, wantFeedback: 1, wantValues: []string{"satisfied"}},
+		{name: "live sample with one feedback value for two messages", raw: `{"task_type":"chat_qa","reasoning":"low","workload":"one_step","risk":"low","domain":"other","confidence":0.95,"feedback":["neutral"]}`, wantFeedback: 2, wantValues: []string{"neutral"}},
+		{name: "unknown feedback value is rejected even when truncated away", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":["happy","satisfied"]}`, wantFeedback: 1, wantErr: true},
+		{name: "empty feedback array is kept empty", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":[]}`, wantFeedback: 2, wantValues: []string{}},
+		{name: "null feedback is rejected", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":null}`, wantFeedback: 2, wantErr: true},
 		{name: "feedback value unknown", raw: strings.Replace(validScorerJSON, "satisfied", "happy", 1), wantFeedback: 2, wantErr: true},
 		{name: "feedback missing", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9}`, wantFeedback: 2, wantErr: true},
 		{name: "not json", raw: "I think this is easy", wantFeedback: 2, wantErr: true},
@@ -533,9 +538,42 @@ func TestParseScorerOutput(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			if tt.wantValues != nil {
+				assert.Equal(t, tt.wantValues, labels.Feedback)
+				return
+			}
 			assert.Len(t, labels.Feedback, tt.wantFeedback)
 		})
 	}
+}
+
+func TestParseScorerOutput_TruncatedFeedbackTrailingCount(t *testing.T) {
+	const tpl = `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":%s}`
+	tests := []struct {
+		name     string
+		feedback string
+		want     int
+	}{
+		{"leading dissatisfied are truncated away", `["dissatisfied","dissatisfied","neutral","neutral"]`, 0},
+		{"trailing dissatisfied survive truncation", `["neutral","dissatisfied","dissatisfied"]`, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			labels, err := smartroute.ParseScorerOutput(fmt.Sprintf(tpl, tt.feedback), 2)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, smartroute.CountTrailingDissatisfied(labels.Feedback))
+		})
+	}
+}
+
+func TestParseScorerOutput_FeedbackMismatchKeepsOtherFields(t *testing.T) {
+	labels, err := smartroute.ParseScorerOutput(validScorerJSON, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 0.9, labels.Confidence)
+	require.NotNil(t, labels.EffortScore)
+	assert.Equal(t, 0.5, *labels.EffortScore)
+	assert.Equal(t, "lookup", string(labels.TaskType))
+	assert.Equal(t, "code", string(labels.Domain))
 }
 
 func TestParseScorerOutput_EffortScore(t *testing.T) {
@@ -1444,21 +1482,21 @@ func TestBuildScorerMessages(t *testing.T) {
 			body:    `{"messages":[{"role":"user","content":"first"},{"role":"assistant","content":"x"},{"role":"user","content":"second"},{"role":"user","content":"hello"}]}`,
 			history: 2,
 			wantUser: "Local features: latest_message_chars=5, user_turns=3, has_attachment=false, has_code_or_table=false\n" +
-				"User messages (oldest first):\n[1] first\n[2] second\n[latest] hello",
+				"User messages (oldest first):\n[1] first\n[2] second\n[latest] hello\nThe feedback array must have exactly 3 values.",
 		},
 		{
 			name:    "single message has only the latest line",
 			body:    `{"messages":[{"role":"user","content":"hi"}]}`,
 			history: 2,
 			wantUser: "Local features: latest_message_chars=2, user_turns=1, has_attachment=false, has_code_or_table=false\n" +
-				"User messages (oldest first):\n[latest] hi",
+				"User messages (oldest first):\n[latest] hi\nThe feedback array must have exactly 1 values.",
 		},
 		{
 			name:    "attachment and code flags render as true",
 			body:    "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"u\"}},{\"type\":\"text\",\"text\":\"```go\\nx\\n```\"}]}]}",
 			history: 2,
 			wantUser: "Local features: latest_message_chars=11, user_turns=1, has_attachment=true, has_code_or_table=true\n" +
-				"User messages (oldest first):\n[latest] ```go\nx\n```",
+				"User messages (oldest first):\n[latest] ```go\nx\n```\nThe feedback array must have exactly 1 values.",
 		},
 	}
 	for _, tt := range tests {

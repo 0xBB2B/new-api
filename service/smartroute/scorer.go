@@ -76,6 +76,7 @@ func BuildScorerMessages(input ScorerInput, features LocalFeatures) (system, use
 		sb.WriteString("\n[" + strconv.Itoa(i+1) + "] " + m)
 	}
 	sb.WriteString("\n[latest] " + input.Latest)
+	sb.WriteString("\nThe feedback array must have exactly " + strconv.Itoa(len(input.History)+1) + " values.")
 	return scorerSystemPrompt, sb.String()
 }
 

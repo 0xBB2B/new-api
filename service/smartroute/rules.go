@@ -105,13 +105,16 @@ func ParseScorerOutput(raw string, expectedFeedback int) (ScorerLabels, error) {
 	if parsed.Confidence == nil || *parsed.Confidence < 0 || *parsed.Confidence > 1 {
 		return ScorerLabels{}, errors.New("confidence missing or out of range")
 	}
-	if len(parsed.Feedback) != expectedFeedback {
-		return ScorerLabels{}, errors.New("feedback length mismatch")
+	if parsed.Feedback == nil {
+		return ScorerLabels{}, errors.New("feedback missing")
 	}
 	for _, f := range parsed.Feedback {
 		if !slices.Contains(feedbackValues, f) {
 			return ScorerLabels{}, errors.New("unknown feedback value")
 		}
+	}
+	if len(parsed.Feedback) > expectedFeedback {
+		parsed.Feedback = parsed.Feedback[len(parsed.Feedback)-expectedFeedback:]
 	}
 	var effortScore *float64
 	if common.GetJsonType(parsed.EffortScore) == "number" {
