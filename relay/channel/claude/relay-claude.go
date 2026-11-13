@@ -410,7 +410,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 		responseData = service.TagResponsesReasoningBody(responseData, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	case types.RelayFormatClaude:
-		responseData = data
+		responseData = service.TagClaudeThinkingBody(data, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	case types.RelayFormatGemini:
 		{
 			convertResult, convertErr := service.ConvertResponse(c, info, types.RelayFormatGemini, &claudeResponse)

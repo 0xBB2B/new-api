@@ -538,3 +538,66 @@ func TestHandleClaudeResponseDataResponsesTagsReasoningID(t *testing.T) {
 		assert.Equal(t, 7, channelID)
 	}
 }
+
+func TestClaudeNativeResponseTagsThinkingSignature(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newCtx := func() (*gin.Context, *httptest.ResponseRecorder, *relaycommon.RelayInfo) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+		info := &relaycommon.RelayInfo{
+			RelayFormat: types.RelayFormatClaude,
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+		}
+		return c, w, info
+	}
+
+	t.Run("non-stream", func(t *testing.T) {
+		c, w, info := newCtx()
+		body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[{"type":"thinking","thinking":"hmm","signature":"sig_z"},{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`
+		require.Nil(t, HandleClaudeResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, nil, []byte(body)))
+
+		var got struct {
+			Content []map[string]any `json:"content"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+		require.NotEmpty(t, got.Content, "body=%s", w.Body.String())
+		channelID, original, ok := service.DecodeReasoningTag(got.Content[0]["signature"].(string))
+		require.True(t, ok)
+		assert.Equal(t, 7, channelID)
+		assert.Equal(t, "sig_z", original)
+		assert.Equal(t, "hmm", got.Content[0]["thinking"])
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		c, w, info := newCtx()
+		claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+		thinkingDelta := `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}`
+		signatureDelta := `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_z"}}`
+		require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, thinkingDelta))
+		require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, signatureDelta))
+
+		out := w.Body.String()
+		assert.Contains(t, out, "data: "+thinkingDelta+"\n")
+		assert.NotContains(t, out, `"signature":"sig_z"`)
+		var signature string
+		for line := range strings.SplitSeq(out, "\n") {
+			payload, found := strings.CutPrefix(line, "data: ")
+			if !found || !strings.Contains(payload, "signature_delta") {
+				continue
+			}
+			var event struct {
+				Delta struct {
+					Signature string `json:"signature"`
+				} `json:"delta"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(payload, &event))
+			signature = event.Delta.Signature
+		}
+		channelID, original, ok := service.DecodeReasoningTag(signature)
+		require.True(t, ok, "out=%s", out)
+		assert.Equal(t, 7, channelID)
+		assert.Equal(t, "sig_z", original)
+	})
+}

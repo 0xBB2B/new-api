@@ -3,11 +3,11 @@
 |---|---|---|---|
 | 01 | 01-reasoning-tag-codec | done | 2026-11-13 |
 | 02 | 02-responses-output-tag | done | 2026-11-13 |
-| 03 | 03-claude-output-tag | in-progress | — |
+| 03 | 03-claude-output-tag | done | 2026-11-13 |
 | 04 | 04-request-filter-by-tag | done | 2026-11-13 |
 | 05 | 05-chat-convert-reasoning | done | 2026-11-13 |
 ## 当前
-01、05、02、04 已完成。正在执行 03-claude-output-tag（Red）。之后依次 02 → 04 → 03。
+全部 5 步已完成，进入收尾：全量测试。之后依次 02 → 04 → 03。
 ## 阻塞
 （无）
 ## 重试与自修（每次记一条）

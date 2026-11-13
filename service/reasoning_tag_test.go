@@ -174,6 +174,7 @@ func TestTagResponsesReasoningEventLeavesBytesUntouched(t *testing.T) {
 	for _, tc := range []struct{ name, data string }{
 		{"no reasoning", `{"type":"response.output_text.delta",  "item_id":"msg_1","delta":"hi"}`},
 		{"not json", `data: not json {`},
+		{"truncated json with reasoning keyword", `{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_x"`},
 		{"empty reasoning id", `{"type":"response.output_item.added", "item":{"type":"reasoning","id":""}}`},
 		{"message item", `{"type":"response.output_item.added", "item":{"type":"message","id":"msg_1"}}`},
 	} {
@@ -184,6 +185,8 @@ func TestTagResponsesReasoningEventLeavesBytesUntouched(t *testing.T) {
 	body := `{"output":[ {"type":"reasoning","id":""} ]}`
 	assert.Equal(t, []byte(body), TagResponsesReasoningBody([]byte(body), 5))
 	assert.Equal(t, []byte("nope"), TagResponsesReasoningBody([]byte("nope"), 5))
+	truncated := `{"output":[{"type":"reasoning","id":"rs_x"}`
+	assert.Equal(t, []byte(truncated), TagResponsesReasoningBody([]byte(truncated), 5))
 }
 
 func TestTagResponsesReasoningZeroChannelLeavesBytesUntouched(t *testing.T) {
@@ -207,6 +210,91 @@ func TestTagResponsesReasoningEventDoneAndCancelled(t *testing.T) {
 			output := got["response"].(map[string]any)["output"].([]any)
 			decodeTaggedID(t, output[0].(map[string]any)["id"].(string), 5, "rs_y")
 			assert.Equal(t, "msg_1", output[1].(map[string]any)["id"])
+		})
+	}
+}
+
+func TestTagClaudeThinkingBody(t *testing.T) {
+	body := `{"type":"message","content":[{"type":"thinking","thinking":"T","signature":"sig_z"},{"type":"redacted_thinking","data":"d+/="},{"type":"text","text":"hi"}]}`
+
+	var got struct {
+		Content []map[string]any `json:"content"`
+	}
+	require.NoError(t, common.Unmarshal(TagClaudeThinkingBody([]byte(body), 7), &got))
+	require.Len(t, got.Content, 3)
+
+	channelID, original, ok := DecodeReasoningTag(got.Content[0]["signature"].(string))
+	require.True(t, ok)
+	assert.Equal(t, 7, channelID)
+	assert.Equal(t, "sig_z", original)
+	assert.Equal(t, "T", got.Content[0]["thinking"])
+
+	channelID, original, ok = DecodeReasoningTag(got.Content[1]["data"].(string))
+	require.True(t, ok)
+	assert.Equal(t, 7, channelID)
+	assert.Equal(t, "d+/=", original)
+
+	assert.Equal(t, "hi", got.Content[2]["text"])
+}
+
+func TestTagClaudeThinkingEvent(t *testing.T) {
+	tagged := func(t *testing.T, out []byte, path ...string) (int, string, bool) {
+		t.Helper()
+		var node any
+		require.NoError(t, common.Unmarshal(out, &node))
+		for _, key := range path {
+			node = node.(map[string]any)[key]
+		}
+		return DecodeReasoningTag(node.(string))
+	}
+
+	t.Run("signature_delta", func(t *testing.T) {
+		out := TagClaudeThinkingEvent([]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_z"}}`), 7)
+		channelID, original, ok := tagged(t, out, "delta", "signature")
+		require.True(t, ok)
+		assert.Equal(t, 7, channelID)
+		assert.Equal(t, "sig_z", original)
+	})
+
+	t.Run("redacted_thinking start", func(t *testing.T) {
+		out := TagClaudeThinkingEvent([]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"d1"}}`), 7)
+		channelID, original, ok := tagged(t, out, "content_block", "data")
+		require.True(t, ok)
+		assert.Equal(t, 7, channelID)
+		assert.Equal(t, "d1", original)
+	})
+
+	unchanged := []struct {
+		name      string
+		data      string
+		channelID int
+	}{
+		{"empty signature", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`, 7},
+		{"thinking_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"T"}}`, 7},
+		{"no thinking block", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, 7},
+		{"not json", `event: ping`, 7},
+		{"truncated json with signature keyword", `{"type":"content_block_delta","delta":{"type":"signature_delta","signature":"x"`, 7},
+		{"channel zero", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_z"}}`, 0},
+	}
+	for _, tt := range unchanged {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.data, string(TagClaudeThinkingEvent([]byte(tt.data), tt.channelID)))
+		})
+	}
+}
+
+func TestTagClaudeThinkingBody_Unchanged(t *testing.T) {
+	cases := map[string]struct {
+		body      string
+		channelID int
+	}{
+		"no thinking":  {`{"type":"message","content":[{"type":"text","text":"hi"}]}`, 7},
+		"not json":     {`not json`, 7},
+		"channel zero": {`{"type":"message","content":[{"type":"thinking","thinking":"T","signature":"sig_z"}]}`, 0},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tt.body, string(TagClaudeThinkingBody([]byte(tt.body), tt.channelID)))
 		})
 	}
 }

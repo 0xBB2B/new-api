@@ -122,3 +122,39 @@ func TagResponsesReasoningEvent(data []byte, channelID int) []byte {
 	}
 	return data
 }
+
+func TagClaudeThinkingEvent(data []byte, channelID int) []byte {
+	if channelID <= 0 || !(bytes.Contains(data, []byte("signature")) || bytes.Contains(data, []byte("redacted_thinking"))) || !ojson.ValidBytes(data) {
+		return data
+	}
+	switch ojson.GetBytes(data, "type").String() {
+	case "content_block_start":
+		switch ojson.GetBytes(data, "content_block.type").String() {
+		case "thinking":
+			return tagReasoningIDAt(data, "content_block.signature", channelID)
+		case "redacted_thinking":
+			return tagReasoningIDAt(data, "content_block.data", channelID)
+		}
+	case "content_block_delta":
+		if ojson.GetBytes(data, "delta.type").String() == "signature_delta" {
+			return tagReasoningIDAt(data, "delta.signature", channelID)
+		}
+	}
+	return data
+}
+
+func TagClaudeThinkingBody(body []byte, channelID int) []byte {
+	if channelID <= 0 || !(bytes.Contains(body, []byte("signature")) || bytes.Contains(body, []byte("redacted_thinking"))) || !ojson.ValidBytes(body) {
+		return body
+	}
+	for i, block := range ojson.GetBytes(body, "content").Array() {
+		prefix := "content." + strconv.Itoa(i)
+		switch block.Get("type").String() {
+		case "thinking":
+			body = tagReasoningIDAt(body, prefix+".signature", channelID)
+		case "redacted_thinking":
+			body = tagReasoningIDAt(body, prefix+".data", channelID)
+		}
+	}
+	return body
+}
