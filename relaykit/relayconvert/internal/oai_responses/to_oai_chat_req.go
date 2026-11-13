@@ -180,6 +180,9 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 		var pendingReasoning []string
 		for _, item := range items {
 			itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+			if itemType == "item_reference" {
+				continue
+			}
 			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
 				messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
 				pendingMedia = nil

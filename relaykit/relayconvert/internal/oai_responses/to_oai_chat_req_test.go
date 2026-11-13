@@ -687,6 +687,54 @@ func TestResponsesRequestToChatCompletionsRequestReasoningItems(t *testing.T) {
 				assert.Equal(t, "答", msgs[4].StringContent())
 			},
 		},
+		{
+			name: "item_reference produces no message",
+			input: []map[string]any{
+				userMsg("问"),
+				{"type": "item_reference", "id": "rs_1"},
+				assistantMsg("答"),
+			},
+			wantRoles: []string{"user", "assistant"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				assert.Equal(t, "问", msgs[0].StringContent())
+				assert.Equal(t, "答", msgs[1].StringContent())
+			},
+		},
+		{
+			name: "item_reference between reasoning and assistant keeps reasoning attached",
+			input: []map[string]any{
+				userMsg("问"),
+				reasoning("r1", "", "A"),
+				{"type": "item_reference", "id": "rs_x"},
+				assistantMsg("答"),
+			},
+			wantRoles:     []string{"user", "assistant"},
+			wantReasoning: map[int]string{1: "A"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				assert.Equal(t, "答", msgs[1].StringContent())
+			},
+		},
+		{
+			name: "item_reference inside tool output batch does not split image hoisting",
+			input: []map[string]any{
+				userMsg("问"),
+				{"type": "function_call", "call_id": "call_1", "name": "screenshot", "arguments": "{}"},
+				{"type": "function_call", "call_id": "call_2", "name": "read_file", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "call_1", "output": []map[string]any{{"type": "input_image", "image_url": "https://example.com/a.png"}}},
+				{"type": "item_reference", "id": "rs_x"},
+				{"type": "function_call_output", "call_id": "call_2", "output": "ok"},
+			},
+			wantRoles: []string{"user", "assistant", "tool", "tool", "user"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				assert.Len(t, msgs[1].ParseToolCalls(), 2)
+				assert.Equal(t, "call_1", msgs[2].ToolCallId)
+				assert.Equal(t, "call_2", msgs[3].ToolCallId)
+				parts := msgs[4].ParseContent()
+				require.Len(t, parts, 1)
+				require.NotNil(t, parts[0].GetImageMedia())
+				assert.Equal(t, "https://example.com/a.png", parts[0].GetImageMedia().Url)
+			},
+		},
 	}
 
 	for _, tt := range tests {
