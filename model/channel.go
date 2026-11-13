@@ -345,14 +345,13 @@ func (channel *Channel) SetOtherInfo(otherInfo map[string]any) {
 }
 
 func SetChannelOtherInfoEntry(channelID int, key string, value any) error {
-	var channel Channel
-	if err := DB.Select("id", "other_info").Where("id = ?", channelID).First(&channel).Error; err != nil {
-		return err
-	}
-	otherInfo := channel.GetOtherInfo()
-	otherInfo[key] = value
-	channel.SetOtherInfo(otherInfo)
-	return DB.Model(&Channel{}).Where("id = ?", channelID).Update("other_info", channel.OtherInfo).Error
+	_, err := UpdateChannelOtherInfo(channelID, func(channel *Channel) (map[string]any, error) {
+		otherInfo := channel.GetOtherInfo()
+		otherInfo[key] = value
+		channel.SetOtherInfo(otherInfo)
+		return map[string]any{}, nil
+	})
+	return err
 }
 
 func (channel *Channel) GetTag() string {
