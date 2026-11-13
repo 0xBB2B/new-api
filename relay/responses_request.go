@@ -66,7 +66,7 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		var fields map[string]json.RawMessage
 		if common.Unmarshal(raw, &fields) == nil {
 			if input, ok := fields["input"]; ok {
-				cleaned, count, changed := filterResponsesReasoningInput(input, info.ChannelId)
+				cleaned, count, changed := filterResponsesInput(input, info.ChannelId)
 				recordStrippedReasoning(c, count)
 				if changed {
 					fields["input"] = cleaned
@@ -89,7 +89,7 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	}
 
 	var strippedCount int
-	request.Input, strippedCount, _ = filterResponsesReasoningInput(request.Input, info.ChannelId)
+	request.Input, strippedCount, _ = filterResponsesInput(request.Input, info.ChannelId)
 	convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 	if err != nil {
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
