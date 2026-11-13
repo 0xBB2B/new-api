@@ -129,7 +129,7 @@ func TagResponsesItemEvent(data []byte, channelID int) []byte {
 	}
 	eventType := ojson.GetBytes(data, "type").String()
 	if ojson.GetBytes(data, "item_id").Exists() {
-		return tagValueAt(data, "item_id", channelID)
+		data = tagValueAt(data, "item_id", channelID)
 	}
 	switch {
 	case eventType == "response.output_item.added" || eventType == "response.output_item.done":

@@ -1028,3 +1028,96 @@ func TestResponsesHandlersTagReasoningWithRetriedChannel(t *testing.T) {
 		}
 	})
 }
+
+func nonReasoningItemsInSSE(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	var items []map[string]any
+	collect := func(item any) {
+		m, _ := item.(map[string]any)
+		if m != nil && (m["type"] == "message" || m["type"] == "function_call") {
+			items = append(items, m)
+		}
+	}
+	for line := range strings.SplitSeq(body, "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		var event map[string]any
+		require.NoError(t, common.Unmarshal([]byte(data), &event))
+		collect(event["item"])
+		if response, ok := event["response"].(map[string]any); ok {
+			output, _ := response["output"].([]any)
+			for _, item := range output {
+				collect(item)
+			}
+		}
+	}
+	return items
+}
+
+func requireChatToolItemsTagged(t *testing.T, items []map[string]any) {
+	t.Helper()
+	seen := map[any]bool{}
+	for _, item := range items {
+		seen[item["type"]] = true
+		id, _ := item["id"].(string)
+		requireTaggedItemID(t, id, "")
+		if item["type"] == "function_call" {
+			callID, _ := item["call_id"].(string)
+			_, _, isTag := service.DecodeReasoningTag(callID)
+			assert.False(t, isTag, "call_id=%q", callID)
+			assert.Equal(t, "call_1", callID)
+		}
+	}
+	assert.True(t, seen["message"], "items=%v", items)
+	assert.True(t, seen["function_call"], "items=%v", items)
+}
+
+func TestOaiChatToResponsesHandlerTagsMessageAndFunctionCallID(t *testing.T) {
+	c, w := newItemTagContext(t)
+	upstream := `{"id":"chatcmpl_1","object":"chat.completion","created":1710000000,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"hello","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(upstream)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-test"},
+		RelayFormat: types.RelayFormatOpenAIResponses,
+	}
+
+	_, apiErr := OaiChatToResponsesHandler(c, info, resp)
+	require.Nil(t, apiErr)
+
+	var got struct {
+		Output []map[string]any `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	requireChatToolItemsTagged(t, got.Output)
+}
+
+func TestOaiChatToResponsesStreamHandlerTagsMessageAndFunctionCallID(t *testing.T) {
+	c, recorder, resp, info := newResponsesChatTestContext(t, strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+		`data: [DONE]`,
+		``,
+	}, "\n"), true)
+	gin.SetMode(gin.TestMode)
+	oldSecret, oldTimeout := common.CryptoSecret, constant.StreamingTimeout
+	common.CryptoSecret = "reasoning-tag-test-secret"
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		common.CryptoSecret = oldSecret
+		constant.StreamingTimeout = oldTimeout
+	})
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+
+	_, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+
+	requireChatToolItemsTagged(t, nonReasoningItemsInSSE(t, recorder.Body.String()))
+}
