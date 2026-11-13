@@ -8,27 +8,23 @@ import (
 	"github.com/MoeForge/moego/ojson"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/gin-gonic/gin"
 )
 
-func shouldStripSmartRouteReasoning(c *gin.Context, channelID int) bool {
-	result, ok := smartroute.GetRouteResult(c)
-	if !ok || result.Session == nil {
-		return false
-	}
-	return result.Session.LastChannelID != channelID
-}
-
-// 思考条目的加密内容和服务端 id 只在签发它的账号里有效：带摘要的条目去掉 id 和 encrypted_content 保留摘要，没有摘要的整条丢弃。
-func stripEncryptedReasoningInput(input json.RawMessage) (json.RawMessage, int) {
+// 思考记录的 id、签名和加密内容只在签发它的渠道里有效：标记指向目标渠道的还原成原值，其余的清理。
+// 清理后带摘要的条目保留摘要，没有摘要的整条丢弃。
+func filterResponsesReasoningInput(input json.RawMessage, channelID int) (json.RawMessage, int, bool) {
 	var items []json.RawMessage
 	if err := common.Unmarshal(input, &items); err != nil {
-		return input, 0
+		return input, 0, false
 	}
 	kept := make([]json.RawMessage, 0, len(items))
 	stripped := 0
+	changed := false
 	for _, item := range items {
 		var fields map[string]json.RawMessage
 		if err := common.Unmarshal(item, &fields); err != nil {
@@ -40,62 +36,102 @@ func stripEncryptedReasoningInput(input json.RawMessage) (json.RawMessage, int) 
 			kept = append(kept, item)
 			continue
 		}
-		stripped++
+		var id string
+		_ = common.Unmarshal(fields["id"], &id)
+		if tagChannel, original, ok := service.DecodeReasoningTag(id); ok && tagChannel == channelID {
+			fields["id"], _ = common.Marshal(original)
+			restored, err := common.Marshal(fields)
+			if err != nil {
+				kept = append(kept, item)
+				continue
+			}
+			kept = append(kept, restored)
+			changed = true
+			continue
+		}
 		var summary []json.RawMessage
 		if common.Unmarshal(fields["summary"], &summary) != nil || len(summary) == 0 {
+			stripped++
+			changed = true
 			continue
+		}
+		if _, hasID := fields["id"]; !hasID {
+			if _, hasEnc := fields["encrypted_content"]; !hasEnc {
+				kept = append(kept, item)
+				continue
+			}
 		}
 		delete(fields, "id")
 		delete(fields, "encrypted_content")
 		cleaned, err := common.Marshal(fields)
 		if err != nil {
 			kept = append(kept, item)
-			stripped--
 			continue
 		}
 		kept = append(kept, cleaned)
+		stripped++
+		changed = true
 	}
-	if stripped == 0 {
-		return input, 0
+	if !changed {
+		return input, 0, false
 	}
 	out, err := common.Marshal(kept)
 	if err != nil {
-		return input, 0
+		return input, 0, false
 	}
-	return out, stripped
+	return out, stripped, true
 }
 
-// 带签名的思考块只在签发它的账号里有效，换渠道后转发会被上游拒绝。去空的 assistant 消息整条删除，上游会合并相邻同角色消息。
-func stripClaudeThinkingBlocks(request *dto.ClaudeRequest) int {
+// 思考块的签名只在签发它的渠道里有效：标记指向目标渠道的还原成原值，其余的去掉。去空的 assistant 消息整条删除，上游会合并相邻同角色消息。
+// 返回清理的块数，以及这一轮第一条 assistant 消息是否丢了思考块。
+func filterClaudeThinkingBlocks(request *dto.ClaudeRequest, channelID int) (int, bool) {
+	turnAssistant := claudeTurnFirstAssistant(len(request.Messages),
+		func(i int) string { return request.Messages[i].Role },
+		func(i int) []string { return claudeBlockTypes(request.Messages[i].Content) })
 	stripped := 0
+	lostFirst := false
 	messages := make([]dto.ClaudeMessage, 0, len(request.Messages))
-	for _, message := range request.Messages {
+	for i, message := range request.Messages {
 		blocks, ok := message.Content.([]any)
 		if !ok || message.Role != "assistant" {
 			messages = append(messages, message)
 			continue
 		}
 		kept := make([]any, 0, len(blocks))
+		removed := 0
 		for _, raw := range blocks {
 			block, _ := raw.(map[string]any)
-			if isClaudeThinkingBlock(block["type"]) {
-				stripped++
+			blockType, _ := block["type"].(string)
+			if !isClaudeThinkingBlock(blockType) {
+				kept = append(kept, raw)
 				continue
 			}
-			kept = append(kept, raw)
+			field := "signature"
+			if blockType == "redacted_thinking" {
+				field = "data"
+			}
+			tag, _ := block[field].(string)
+			if tagChannel, original, ok := service.DecodeReasoningTag(tag); ok && tagChannel == channelID {
+				block[field] = original
+				kept = append(kept, raw)
+				continue
+			}
+			removed++
 		}
-		if len(kept) == len(blocks) {
-			messages = append(messages, message)
-			continue
+		stripped += removed
+		if removed > 0 && i == turnAssistant {
+			lostFirst = true
 		}
 		if len(kept) == 0 {
 			continue
 		}
-		message.Content = kept
+		if removed > 0 {
+			message.Content = kept
+		}
 		messages = append(messages, message)
 	}
 	request.Messages = messages
-	return stripped
+	return stripped, lostFirst
 }
 
 func isClaudeThinkingBlock(blockType any) bool {
@@ -138,14 +174,6 @@ func claudeBlockTypes(content any) []string {
 	return types
 }
 
-func claudeTurnLostThinking(request *dto.ClaudeRequest) bool {
-	messages := request.Messages
-	idx := claudeTurnFirstAssistant(len(messages),
-		func(i int) string { return messages[i].Role },
-		func(i int) []string { return claudeBlockTypes(messages[i].Content) })
-	return idx >= 0 && slices.ContainsFunc(claudeBlockTypes(messages[idx].Content), func(t string) bool { return isClaudeThinkingBlock(t) })
-}
-
 // 关思考时把这次请求整体退回到客户端没设力度的状态，避免档位力度跟着一个已经关掉思考的请求一起发出去。
 func disableClaudeThinking(request *dto.ClaudeRequest) error {
 	if request.Thinking == nil || request.Thinking.Type != "enabled" {
@@ -163,9 +191,10 @@ func disableClaudeThinking(request *dto.ClaudeRequest) error {
 	return nil
 }
 
-func stripClaudeThinkingBlocksInBody(raw []byte) ([]byte, int, error) {
+func filterClaudeThinkingBlocksInBody(raw []byte, channelID int) ([]byte, int, bool, error) {
 	messages := ojson.GetBytes(raw, "messages").Array()
 	stripped := 0
+	changed := false
 	lastTurnLost := false
 	turnAssistant := claudeTurnFirstAssistant(len(messages),
 		func(i int) string { return messages[i].Get("role").String() },
@@ -182,43 +211,60 @@ func stripClaudeThinkingBlocksInBody(raw []byte) ([]byte, int, error) {
 		if messages[i].Get("role").String() != "assistant" {
 			continue
 		}
-		blocks := messages[i].Get("content").Array()
-		var thinking []int
-		for j, block := range blocks {
-			if t := block.Get("type").String(); t == "thinking" || t == "redacted_thinking" {
-				thinking = append(thinking, j)
-			}
-		}
-		if len(thinking) == 0 {
-			continue
-		}
-		lastTurnLost = lastTurnLost || i == turnAssistant
-		stripped += len(thinking)
 		messagePath := "messages." + strconv.Itoa(i)
-		if len(thinking) == len(blocks) {
+		blocks := messages[i].Get("content").Array()
+		var removed []int
+		for j, block := range blocks {
+			blockType := block.Get("type").String()
+			if !isClaudeThinkingBlock(blockType) {
+				continue
+			}
+			field := "signature"
+			if blockType == "redacted_thinking" {
+				field = "data"
+			}
+			if tagChannel, original, ok := service.DecodeReasoningTag(block.Get(field).String()); ok && tagChannel == channelID {
+				if raw, err = ojson.SetBytes(raw, messagePath+".content."+strconv.Itoa(j)+"."+field, original); err != nil {
+					return nil, 0, false, err
+				}
+				changed = true
+				continue
+			}
+			removed = append(removed, j)
+		}
+		if len(removed) == 0 {
+			continue
+		}
+		changed = true
+		lastTurnLost = lastTurnLost || i == turnAssistant
+		stripped += len(removed)
+		if len(removed) == len(blocks) {
 			if raw, err = ojson.DeleteBytes(raw, messagePath); err != nil {
-				return nil, 0, err
+				return nil, 0, false, err
 			}
 			continue
 		}
-		for k := len(thinking) - 1; k >= 0; k-- {
-			if raw, err = ojson.DeleteBytes(raw, messagePath+".content."+strconv.Itoa(thinking[k])); err != nil {
-				return nil, 0, err
+		for k := len(removed) - 1; k >= 0; k-- {
+			if raw, err = ojson.DeleteBytes(raw, messagePath+".content."+strconv.Itoa(removed[k])); err != nil {
+				return nil, 0, false, err
 			}
 		}
 	}
 	if lastTurnLost && ojson.GetBytes(raw, "thinking.type").String() == "enabled" {
 		if raw, err = ojson.SetRawBytes(raw, "thinking", []byte(`{"type":"disabled"}`)); err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		if raw, err = ojson.DeleteBytes(raw, "output_config.effort"); err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 	}
-	return raw, stripped, nil
+	return raw, stripped, changed, nil
 }
 
 func recordStrippedReasoning(c *gin.Context, count int) {
+	if count > 0 {
+		logger.LogInfo(c, common.LogText("stripped %d reasoning segments not issued by this channel", count))
+	}
 	result, ok := smartroute.GetRouteResult(c)
 	if !ok || result.StrippedReasoningCount == count {
 		return

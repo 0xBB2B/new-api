@@ -18,7 +18,6 @@ const (
 type SessionState struct {
 	CurrentRoute   string `json:"current_route"`
 	LastNonAdvisor string `json:"last_non_advisor"`
-	LastChannelID  int    `json:"last_channel_id"`
 	Effort         string `json:"effort,omitempty"`
 	EffortSource   string `json:"effort_source,omitempty"`
 }
@@ -63,7 +62,7 @@ func LoadSession(sessionKey string) (SessionState, bool) {
 	return state, true
 }
 
-func SaveSessionAfterSuccess(sessionKey string, isUserTurn bool, route string, channelID int, effort EffortDecision) {
+func SaveSessionAfterSuccess(sessionKey string, isUserTurn bool, route string, effort EffortDecision) {
 	if sessionKey == "" {
 		return
 	}
@@ -72,7 +71,6 @@ func SaveSessionAfterSuccess(sessionKey string, isUserTurn bool, route string, c
 		common.SysError(common.LogText("smart routing session load failed, skipping save: %s", err.Error()))
 		return
 	}
-	state.LastChannelID = channelID
 	if isUserTurn {
 		state.CurrentRoute = route
 		if route != RouteAdvisor {

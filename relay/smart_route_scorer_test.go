@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	newapidto "github.com/QuantumNous/new-api/dto"
@@ -629,116 +630,246 @@ func TestRunSmartRouteScorer_HistoryFollowsConfiguredN(t *testing.T) {
 	assert.NotContains(t, user, "one")
 }
 
-func TestStripEncryptedReasoningInput(t *testing.T) {
-	const mixedInput = `[
-		{"type":"message","role":"user","content":"hi","id":"msg_1"},
-		{"type":"reasoning","id":"rs_1","encrypted_content":"enc1","summary":[{"type":"summary_text","text":"a"}]},
-		{"type":"reasoning","id":"rs_2","encrypted_content":"enc2"},
-		{"type":"function_call","call_id":"c1","name":"f","arguments":"{}","id":"fc_1"},
-		{"type":"reasoning","id":"rs_3","encrypted_content":"enc3","summary":[{"type":"summary_text","text":"b"}]}
-	]`
-	const mixedWant = `[
-		{"type":"message","role":"user","content":"hi","id":"msg_1"},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"a"}]},
-		{"type":"function_call","call_id":"c1","name":"f","arguments":"{}","id":"fc_1"},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"b"}]}
-	]`
-
-	tests := []struct {
-		name      string
-		input     string
-		want      string
-		wantCount int
-	}{
-		{"mixed entries", mixedInput, mixedWant, 3},
-		{"empty summary array drops entry", `[{"type":"reasoning","id":"rs_1","encrypted_content":"e","summary":[]},{"type":"message","content":"x"}]`, `[{"type":"message","content":"x"}]`, 1},
-		{"extra fields on summarized reasoning kept", `[{"type":"reasoning","id":"rs_1","encrypted_content":"e","status":"completed","summary":[{"type":"summary_text","text":"a"}]}]`, `[{"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"a"}]}]`, 1},
-		{"no reasoning entries untouched", `[{"type":"message","content":"x","id":"m"}]`, `[{"type":"message","content":"x","id":"m"}]`, 0},
-		{"string input untouched", `"hello"`, `"hello"`, 0},
-		{"stored reasoning id with summary loses its id", `[{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"a"}]}]`, `[{"type":"reasoning","summary":[{"type":"summary_text","text":"a"}]}]`, 1},
-		{"stored reasoning id without summary is dropped", `[{"type":"reasoning","id":"rs_1"},{"type":"message","content":"x"}]`, `[{"type":"message","content":"x"}]`, 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, count := stripEncryptedReasoningInput([]byte(tt.input))
-			assert.Equal(t, tt.wantCount, count)
-			assert.JSONEq(t, tt.want, string(got))
-		})
-	}
-}
-
-func TestShouldStripSmartRouteReasoning(t *testing.T) {
-	tests := []struct {
-		name   string
-		result *smartroute.RouteResult
-		want   bool
-	}{
-		{"no route result", nil, false},
-		{"session has no record", &smartroute.RouteResult{}, false},
-		{"same channel as last", &smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 5}}, false},
-		{"different channel from last", &smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 9}}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			if tt.result != nil {
-				smartroute.SetRouteResult(c, *tt.result)
-			}
-			assert.Equal(t, tt.want, shouldStripSmartRouteReasoning(c, 5))
-		})
-	}
-}
-
-func TestPrepareResponsesRequestPassthroughStripsReasoningOnWire(t *testing.T) {
-	raw := []byte(`{"model":"gpt-4o","input":[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"},{"type":"message","role":"user","content":"hi"}]}`)
+func prepareResponsesSent(t *testing.T, raw string, channelID int, setting dto.ChannelSettings, result *smartroute.RouteResult) ([]byte, *gin.Context) {
+	t.Helper()
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	storage, err := common.CreateBodyStorage(raw)
+	storage, err := common.CreateBodyStorage([]byte(raw))
 	require.NoError(t, err)
-	defer storage.Close()
+	t.Cleanup(func() { storage.Close() })
 	c.Set(common.KeyBodyStorage, storage)
 	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
 	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
-	common.SetContextKey(c, constant.ContextKeyChannelId, 9)
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: true})
-	smartroute.SetRouteResult(c, smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 5}})
+	common.SetContextKey(c, constant.ContextKeyChannelId, channelID)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, setting)
+	if result != nil {
+		smartroute.SetRouteResult(c, *result)
+	}
 
-	request := &dto.OpenAIResponsesRequest{Model: "gpt-4o", Input: []byte(`[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"},{"type":"message","role":"user","content":"hi"}]`)}
+	request := &dto.OpenAIResponsesRequest{}
+	require.NoError(t, common.UnmarshalJsonStr(raw, request))
 	info := relaycommon.GenRelayInfoResponses(c, request)
 	_, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
 	require.Nil(t, apiErr)
 	defer closer.Close()
-
 	sent, err := io.ReadAll(body)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"model":"gpt-4o","input":[{"type":"message","role":"user","content":"hi"}]}`, string(sent))
-	cached, err := common.GetBodyStorage(c)
-	require.NoError(t, err)
-	cachedBytes, err := cached.Bytes()
-	require.NoError(t, err)
-	assert.JSONEq(t, string(raw), string(cachedBytes))
+	return sent, c
+}
+
+func responsesInput(items ...string) string {
+	return `{"model":"gpt-4o","input":[` + strings.Join(items, ",") + `]}`
+}
+
+func reasoningItem(id, rest string) string {
+	return `{"type":"reasoning","id":"` + id + `"` + rest + `}`
+}
+
+const (
+	summaryEnc  = `,"encrypted_content":"enc","summary":[{"type":"summary_text","text":"s"}]`
+	summaryOnly = `{"type":"reasoning","summary":[{"type":"summary_text","text":"s"}]}`
+	userMessage = `{"type":"message","role":"user","content":"hi"}`
+)
+
+func TestPrepareResponsesRequestDecidesReasoningByItsOwnChannelTag(t *testing.T) {
+	modes := []struct {
+		name    string
+		setting dto.ChannelSettings
+	}{
+		{"converted", dto.ChannelSettings{}},
+		{"passthrough", dto.ChannelSettings{PassThroughBodyEnabled: true}},
+	}
+	tag := func(channelID int, id string) string { return service.EncodeReasoningTag(channelID, id) }
+	sentInput := func(sent []byte) string { return string(ojson.GetBytes(sent, "input").Raw) }
+
+	for _, mode := range modes {
+		t.Run(mode.name+" same channel restores ids and keeps every other field", func(t *testing.T) {
+			var tagged, original []string
+			for _, id := range []string{"rs_a", "rs_b", "rs_c", "rs_d"} {
+				tagged = append(tagged, reasoningItem(tag(5, id), summaryEnc+`,"status":"completed"`))
+				original = append(original, reasoningItem(id, summaryEnc+`,"status":"completed"`))
+			}
+			raw := responsesInput(append(tagged, userMessage)...)
+
+			sent, c := prepareResponsesSent(t, raw, 5, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, "["+strings.Join(append(original, userMessage), ",")+"]", sentInput(sent))
+			result, _ := smartroute.GetRouteResult(c)
+			assert.Equal(t, 0, result.StrippedReasoningCount)
+		})
+
+		t.Run(mode.name+" other channel keeps only summaries and drops entries without one", func(t *testing.T) {
+			items := []string{
+				userMessage,
+				reasoningItem(tag(8, "rs_1"), summaryEnc),
+				reasoningItem(tag(8, "rs_2"), summaryEnc),
+				reasoningItem(tag(8, "rs_3"), `,"encrypted_content":"enc","summary":[]`),
+				reasoningItem(tag(8, "rs_4"), `,"content":[{"type":"reasoning_text","text":"t1"}],"summary":[]`),
+				reasoningItem(tag(8, "rs_5"), `,"content":[{"type":"reasoning_text","text":"t2"}],"summary":[]`),
+				reasoningItem(tag(8, "rs_6"), `,"content":[{"type":"reasoning_text","text":"t3"}],"summary":[]`),
+				userMessage,
+			}
+
+			sent, c := prepareResponsesSent(t, responsesInput(items...), 9, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, "["+strings.Join([]string{userMessage, summaryOnly, summaryOnly, userMessage}, ",")+"]", sentInput(sent))
+			result, _ := smartroute.GetRouteResult(c)
+			assert.Equal(t, 6, result.StrippedReasoningCount)
+			fields, ok := common.GetContextKey(c, constant.ContextKeySmartRouteLog)
+			require.True(t, ok)
+			assert.Equal(t, 6, fields.(map[string]any)["cleaned_reasoning"])
+		})
+
+		t.Run(mode.name+" untagged and tampered ids are cleaned", func(t *testing.T) {
+			valid := tag(9, "rs_x")
+			middle := len(valid) / 2
+			flipped := byte('A')
+			if valid[middle] == 'A' {
+				flipped = 'B'
+			}
+			tampered := valid[:middle] + string(flipped) + valid[middle+1:]
+			raw := responsesInput(
+				reasoningItem("msg_f836e1c0-0b4b-47c7-b1f0-3f05f59b2880", `,"summary":[]`),
+				reasoningItem(tampered, summaryEnc),
+				userMessage,
+			)
+
+			sent, _ := prepareResponsesSent(t, raw, 9, mode.setting, &smartroute.RouteResult{})
+
+			assert.JSONEq(t, "["+summaryOnly+","+userMessage+"]", sentInput(sent))
+		})
+	}
+}
+
+func TestPrepareResponsesRequestDecidesByTagWithOrWithoutRouteResult(t *testing.T) {
+	tests := []struct {
+		name        string
+		tagChannel  int
+		result      *smartroute.RouteResult
+		wantCleaned bool
+	}{
+		{"auto route and tag differs", 8, &smartroute.RouteResult{}, true},
+		{"auto route and tag equals target", 9, &smartroute.RouteResult{}, false},
+		{"no route result and tag equals target", 9, nil, false},
+		{"no route result and tag differs", 8, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := responsesInput(reasoningItem(service.EncodeReasoningTag(tt.tagChannel, "rs_1"), summaryEnc), userMessage)
+			want := "[" + summaryOnly + "," + userMessage + "]"
+			if !tt.wantCleaned {
+				want = "[" + reasoningItem("rs_1", summaryEnc) + "," + userMessage + "]"
+			}
+
+			sent, _ := prepareResponsesSent(t, raw, 9, dto.ChannelSettings{}, tt.result)
+
+			assert.JSONEq(t, want, string(ojson.GetBytes(sent, "input").Raw))
+		})
+	}
+}
+
+func TestPrepareResponsesRequestCountsOnlyChangedReasoningItems(t *testing.T) {
+	const bare = `{"type":"reasoning","summary":[{"type":"summary_text","text":"residue"}]}`
+	foreign := reasoningItem(service.EncodeReasoningTag(8, "rs_1"), summaryEnc)
+	raw := responsesInput(bare, foreign, userMessage)
+
+	sent, c := prepareResponsesSent(t, raw, 9, dto.ChannelSettings{}, &smartroute.RouteResult{})
+
+	assert.JSONEq(t, "["+bare+","+summaryOnly+","+userMessage+"]", string(ojson.GetBytes(sent, "input").Raw))
 	result, ok := smartroute.GetRouteResult(c)
 	require.True(t, ok)
 	assert.Equal(t, 1, result.StrippedReasoningCount)
+	fields, ok := common.GetContextKey(c, constant.ContextKeySmartRouteLog)
+	require.True(t, ok)
+	assert.Equal(t, 1, fields.(map[string]any)["cleaned_reasoning"])
 }
 
-func TestPrepareResponsesRequestRetryOnLastChannelDropsStaleCleanedReasoningCount(t *testing.T) {
-	const input = `[{"type":"reasoning","id":"rs_1","encrypted_content":"e1"},{"type":"reasoning","id":"rs_2","encrypted_content":"e2"},{"type":"message","role":"user","content":"hi"}]`
-	raw := []byte(`{"model":"gpt-4o","input":` + input + `}`)
+func TestPrepareResponsesRequestServerLogsStrippedCount(t *testing.T) {
+	capture := func(t *testing.T, raw string) string {
+		var buf bytes.Buffer
+		common.LogWriterMu.Lock()
+		origOut, origErr := gin.DefaultWriter, gin.DefaultErrorWriter
+		gin.DefaultWriter, gin.DefaultErrorWriter = &buf, &buf
+		common.LogWriterMu.Unlock()
+		t.Cleanup(func() {
+			common.LogWriterMu.Lock()
+			gin.DefaultWriter, gin.DefaultErrorWriter = origOut, origErr
+			common.LogWriterMu.Unlock()
+		})
+		prepareResponsesSent(t, raw, 9, dto.ChannelSettings{}, &smartroute.RouteResult{})
+		common.LogWriterMu.RLock()
+		defer common.LogWriterMu.RUnlock()
+		return buf.String()
+	}
+	foreign := reasoningItem(service.EncodeReasoningTag(8, "rs_1"), summaryEnc)
+
+	t.Run("stripped segments are logged", func(t *testing.T) {
+		out := capture(t, responsesInput(foreign, foreign, userMessage))
+
+		assert.Contains(t, out, "stripped 2 reasoning segments not issued by this channel")
+	})
+
+	t.Run("nothing stripped logs nothing", func(t *testing.T) {
+		own := reasoningItem(service.EncodeReasoningTag(9, "rs_1"), summaryEnc)
+
+		out := capture(t, responsesInput(own, userMessage))
+
+		assert.NotContains(t, out, "stripped")
+	})
+}
+
+func TestPrepareResponsesRequestPassthroughReasoningOnTheWire(t *testing.T) {
+	passthrough := dto.ChannelSettings{PassThroughBodyEnabled: true}
+
+	t.Run("no reasoning sends the client body byte for byte", func(t *testing.T) {
+		const raw = `{ "model":"gpt-4o",  "big":12345678901234567890,"input":[{"type":"message","role":"user","content":"hi"}]}`
+
+		sent, _ := prepareResponsesSent(t, raw, 6, passthrough, &smartroute.RouteResult{})
+
+		assert.Equal(t, raw, string(sent))
+	})
+
+	raw := responsesInput(reasoningItem(service.EncodeReasoningTag(5, "rs_1"), summaryEnc), userMessage)
+
+	t.Run("issuing channel restores the id", func(t *testing.T) {
+		sent, _ := prepareResponsesSent(t, raw, 5, passthrough, &smartroute.RouteResult{})
+
+		assert.JSONEq(t, responsesInput(reasoningItem("rs_1", summaryEnc), userMessage), string(sent))
+	})
+
+	t.Run("other channel cleans and leaves the cached body alone", func(t *testing.T) {
+		sent, c := prepareResponsesSent(t, raw, 6, passthrough, &smartroute.RouteResult{})
+
+		assert.JSONEq(t, responsesInput(summaryOnly, userMessage), string(sent))
+		cached, err := common.GetBodyStorage(c)
+		require.NoError(t, err)
+		cachedBytes, err := cached.Bytes()
+		require.NoError(t, err)
+		assert.Equal(t, raw, string(cachedBytes))
+	})
+}
+
+func TestPrepareResponsesRequestRetryAcrossChannelsRecomputesCleanedCount(t *testing.T) {
+	raw := responsesInput(
+		reasoningItem(service.EncodeReasoningTag(5, "rs_1"), summaryEnc),
+		reasoningItem(service.EncodeReasoningTag(5, "rs_2"), summaryEnc),
+		userMessage,
+	)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	storage, err := common.CreateBodyStorage(raw)
+	storage, err := common.CreateBodyStorage([]byte(raw))
 	require.NoError(t, err)
 	defer storage.Close()
 	c.Set(common.KeyBodyStorage, storage)
 	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
 	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
 	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: true})
-	smartroute.SetRouteResult(c, smartroute.RouteResult{Session: &smartroute.SessionRecord{LastChannelID: 5}})
+	smartroute.SetRouteResult(c, smartroute.RouteResult{})
 
 	attempt := func(channelID int) {
 		common.SetContextKey(c, constant.ContextKeyChannelId, channelID)
-		request := &dto.OpenAIResponsesRequest{Model: "gpt-4o", Input: []byte(input)}
+		request := &dto.OpenAIResponsesRequest{}
+		require.NoError(t, common.UnmarshalJsonStr(raw, request))
 		info := relaycommon.GenRelayInfoResponses(c, request)
 		_, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
 		require.Nil(t, apiErr)
@@ -751,11 +882,15 @@ func TestPrepareResponsesRequestRetryOnLastChannelDropsStaleCleanedReasoningCoun
 	logFields, ok := common.GetContextKey(c, constant.ContextKeySmartRouteLog)
 	require.True(t, ok)
 	assert.Equal(t, 2, logFields.(map[string]any)["cleaned_reasoning"])
+	result, _ := smartroute.GetRouteResult(c)
+	assert.Equal(t, 2, result.StrippedReasoningCount)
 
 	attempt(5)
 	logFields, ok = common.GetContextKey(c, constant.ContextKeySmartRouteLog)
 	require.True(t, ok)
 	assert.NotContains(t, logFields.(map[string]any), "cleaned_reasoning")
+	result, _ = smartroute.GetRouteResult(c)
+	assert.Equal(t, 0, result.StrippedReasoningCount)
 }
 
 func TestRunSmartRouteScorer_IgnoresTheMainRequestFormatFilter(t *testing.T) {

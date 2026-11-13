@@ -34,16 +34,14 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(fmt.Errorf("failed to copy request to ClaudeRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
-	if shouldStripSmartRouteReasoning(c, info.ChannelId) {
-		lastTurnHadThinking := claudeTurnLostThinking(request)
-		recordStrippedReasoning(c, stripClaudeThinkingBlocks(request))
-		if lastTurnHadThinking {
+	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled {
+		stripped, lostFirst := filterClaudeThinkingBlocks(request, info.ChannelId)
+		recordStrippedReasoning(c, stripped)
+		if lostFirst {
 			if err := disableClaudeThinking(request); err != nil {
 				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 			}
 		}
-	} else {
-		recordStrippedReasoning(c, 0)
 	}
 
 	err = helper.ModelMappedHelper(c, info, request)
@@ -104,25 +102,21 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		requestBody = common.NewReplayableBodyReader(storage)
-		stripped := 0
-		if shouldStripSmartRouteReasoning(c, info.ChannelId) {
-			raw, err := storage.Bytes()
-			if err != nil {
-				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-			}
-			cleaned, count, err := stripClaudeThinkingBlocksInBody(raw)
+		raw, err := storage.Bytes()
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		cleaned, stripped, changed, err := filterClaudeThinkingBlocksInBody(raw, info.ChannelId)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		if changed {
+			body, closer, err := relaycommon.NewOutboundJSONBody(cleaned)
 			if err != nil {
 				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 			}
-			if count > 0 {
-				body, closer, err := relaycommon.NewOutboundJSONBody(cleaned)
-				if err != nil {
-					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-				}
-				defer closer.Close()
-				requestBody = body
-				stripped = count
-			}
+			defer closer.Close()
+			requestBody = body
 		}
 		recordStrippedReasoning(c, stripped)
 	} else {

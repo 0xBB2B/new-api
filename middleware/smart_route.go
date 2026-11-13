@@ -99,7 +99,7 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	var session *smartroute.SessionRecord
 	state, found := smartroute.LoadSession(sessionKey)
 	if found {
-		session = &smartroute.SessionRecord{CurrentRoute: state.CurrentRoute, LastNonAdvisor: state.LastNonAdvisor, LastChannelID: state.LastChannelID}
+		session = &smartroute.SessionRecord{CurrentRoute: state.CurrentRoute, LastNonAdvisor: state.LastNonAdvisor}
 	}
 
 	isUserTurn := inspection.IsUserTurn && !compact
@@ -218,7 +218,6 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 		ScorerBilled: scorerBilled,
 		IsUserTurn:   isUserTurn,
 		SessionKey:   sessionKey,
-		Session:      session,
 		Effort:       effort,
 	})
 
@@ -427,5 +426,5 @@ func saveSmartRouteSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	smartroute.SaveSessionAfterSuccess(result.SessionKey, result.IsUserTurn, result.Tier, common.GetContextKeyInt(c, constant.ContextKeyChannelId), result.Effort)
+	smartroute.SaveSessionAfterSuccess(result.SessionKey, result.IsUserTurn, result.Tier, result.Effort)
 }
