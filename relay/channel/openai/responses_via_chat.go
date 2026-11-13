@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -59,6 +60,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
+	responseBody = service.TagResponsesReasoningBody(responseBody, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
 }

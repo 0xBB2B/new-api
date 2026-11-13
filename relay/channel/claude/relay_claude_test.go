@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -501,4 +502,39 @@ func TestClaudeResponsePassesInputTransformationsThrough(t *testing.T) {
 		transformations + `,"usage":{"input_tokens":5,"output_tokens":1}}}`
 	require.Nil(t, HandleStreamResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, event))
 	assert.Contains(t, w.Body.String(), "data: "+event+"\n")
+}
+
+func TestHandleClaudeResponseDataResponsesTagsReasoningID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+	}
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[{"type":"thinking","thinking":"hmm","signature":"sig_1"},{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`
+
+	require.Nil(t, HandleClaudeResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, nil, []byte(body)))
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	var reasoningIDs []string
+	for _, item := range got.Output {
+		if item.Type == "reasoning" {
+			reasoningIDs = append(reasoningIDs, item.ID)
+		}
+	}
+	require.NotEmpty(t, reasoningIDs, "body=%s", w.Body.String())
+	for _, id := range reasoningIDs {
+		channelID, _, ok := service.DecodeReasoningTag(id)
+		require.True(t, ok, "id=%q", id)
+		assert.Equal(t, 7, channelID)
+	}
 }

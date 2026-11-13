@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -228,6 +230,7 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 	if err := event.Render(c.Writer); err != nil {
 		return err
 	}
+	data = string(service.TagResponsesReasoningEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
 	event.Data = fmt.Sprintf("data: %s", data)
 	if err := event.Render(c.Writer); err != nil {
 		return err

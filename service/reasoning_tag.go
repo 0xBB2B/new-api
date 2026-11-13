@@ -1,14 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"strconv"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 )
 
@@ -51,7 +54,7 @@ func DecodeReasoningTag(tag string) (int, string, bool) {
 	if !ok {
 		return 0, "", false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(payload)
 	if err != nil {
 		return 0, "", false
 	}
@@ -68,4 +71,54 @@ func DecodeReasoningTag(tag string) (int, string, bool) {
 		return 0, "", false
 	}
 	return channelID, string(plain[8:]), true
+}
+
+func tagReasoningIDAt(data []byte, path string, channelID int) []byte {
+	id := ojson.GetBytes(data, path)
+	if id.Type != ojson.String || id.String() == "" {
+		return data
+	}
+	out, err := ojson.SetBytes(data, path, EncodeReasoningTag(channelID, id.String()))
+	if err != nil {
+		return data
+	}
+	return out
+}
+
+func tagReasoningOutput(data []byte, outputPath string, channelID int) []byte {
+	for i, item := range ojson.GetBytes(data, outputPath).Array() {
+		if item.Get("type").String() != "reasoning" {
+			continue
+		}
+		data = tagReasoningIDAt(data, outputPath+"."+strconv.Itoa(i)+".id", channelID)
+	}
+	return data
+}
+
+func TagResponsesReasoningBody(body []byte, channelID int) []byte {
+	if channelID <= 0 || !bytes.Contains(body, []byte(`"reasoning"`)) || !ojson.ValidBytes(body) {
+		return body
+	}
+	return tagReasoningOutput(body, "output", channelID)
+}
+
+func TagResponsesReasoningEvent(data []byte, channelID int) []byte {
+	if channelID <= 0 || !bytes.Contains(data, []byte("reasoning")) || !ojson.ValidBytes(data) {
+		return data
+	}
+	eventType := ojson.GetBytes(data, "type").String()
+	switch {
+	case eventType == "response.output_item.added" || eventType == "response.output_item.done":
+		if ojson.GetBytes(data, "item.type").String() != "reasoning" {
+			return data
+		}
+		return tagReasoningIDAt(data, "item.id", channelID)
+	case strings.HasPrefix(eventType, "response.reasoning_"):
+		return tagReasoningIDAt(data, "item_id", channelID)
+	case eventType == "response.created", eventType == "response.in_progress",
+		eventType == "response.completed", eventType == "response.incomplete", eventType == "response.failed",
+		eventType == "response.done", eventType == "response.cancelled", eventType == "response.canceled":
+		return tagReasoningOutput(data, "response.output", channelID)
+	}
+	return data
 }

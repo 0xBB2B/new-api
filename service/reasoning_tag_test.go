@@ -112,3 +112,101 @@ func TestReasoningTag_InvalidTagRejected(t *testing.T) {
 		})
 	}
 }
+
+func decodeTaggedID(t *testing.T, tag string, wantChannel int, wantOriginal string) {
+	t.Helper()
+	channelID, original, ok := DecodeReasoningTag(tag)
+	require.True(t, ok, "tag=%q", tag)
+	assert.Equal(t, wantChannel, channelID)
+	assert.Equal(t, wantOriginal, original)
+}
+
+func TestTagResponsesReasoningBody(t *testing.T) {
+	swapCryptoSecret(t, "tag-body-secret")
+	body := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_y","summary":[]},{"type":"message","id":"msg_1","content":[]}]}`
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(TagResponsesReasoningBody([]byte(body), 5), &got))
+	output := got["output"].([]any)
+	reasoning := output[0].(map[string]any)
+	decodeTaggedID(t, reasoning["id"].(string), 5, "rs_y")
+	assert.Equal(t, "msg_1", output[1].(map[string]any)["id"])
+
+	reasoning["id"] = "rs_y"
+	expected := map[string]any{}
+	require.NoError(t, common.Unmarshal([]byte(body), &expected))
+	assert.Equal(t, expected, got)
+}
+
+func TestTagResponsesReasoningEventSequence(t *testing.T) {
+	swapCryptoSecret(t, "tag-event-secret")
+	events := []string{
+		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_y"}}`,
+		`{"type":"response.reasoning_summary_text.delta","item_id":"rs_y","delta":"x"}`,
+		`{"type":"response.output_text.delta","item_id":"msg_1","delta":"hi"}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_y"}}`,
+		`{"type":"response.completed","response":{"output":[{"type":"reasoning","id":"rs_y"},{"type":"message","id":"msg_1"}]}}`,
+	}
+	var parsed []map[string]any
+	for _, event := range events {
+		var m map[string]any
+		require.NoError(t, common.Unmarshal(TagResponsesReasoningEvent([]byte(event), 5), &m))
+		parsed = append(parsed, m)
+	}
+
+	tags := []string{
+		parsed[0]["item"].(map[string]any)["id"].(string),
+		parsed[1]["item_id"].(string),
+		parsed[3]["item"].(map[string]any)["id"].(string),
+		parsed[4]["response"].(map[string]any)["output"].([]any)[0].(map[string]any)["id"].(string),
+	}
+	for _, tag := range tags {
+		assert.Equal(t, tags[0], tag)
+	}
+	decodeTaggedID(t, tags[0], 5, "rs_y")
+
+	assert.Equal(t, "msg_1", parsed[2]["item_id"])
+	assert.Equal(t, "msg_1", parsed[4]["response"].(map[string]any)["output"].([]any)[1].(map[string]any)["id"])
+}
+
+func TestTagResponsesReasoningEventLeavesBytesUntouched(t *testing.T) {
+	swapCryptoSecret(t, "tag-untouched-secret")
+	for _, tc := range []struct{ name, data string }{
+		{"no reasoning", `{"type":"response.output_text.delta",  "item_id":"msg_1","delta":"hi"}`},
+		{"not json", `data: not json {`},
+		{"empty reasoning id", `{"type":"response.output_item.added", "item":{"type":"reasoning","id":""}}`},
+		{"message item", `{"type":"response.output_item.added", "item":{"type":"message","id":"msg_1"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, []byte(tc.data), TagResponsesReasoningEvent([]byte(tc.data), 5))
+		})
+	}
+	body := `{"output":[ {"type":"reasoning","id":""} ]}`
+	assert.Equal(t, []byte(body), TagResponsesReasoningBody([]byte(body), 5))
+	assert.Equal(t, []byte("nope"), TagResponsesReasoningBody([]byte("nope"), 5))
+}
+
+func TestTagResponsesReasoningZeroChannelLeavesBytesUntouched(t *testing.T) {
+	swapCryptoSecret(t, "tag-zero-secret")
+	event := `{"type":"response.completed",  "response":{"output":[ {"type":"reasoning","id":"rs_y"} ]}}`
+	item := `{"type":"response.output_item.added", "item":{"type":"reasoning","id":"rs_y"}}`
+	body := `{"output":[ {"type":"reasoning","id":"rs_y"} ]}`
+
+	assert.Equal(t, []byte(event), TagResponsesReasoningEvent([]byte(event), 0))
+	assert.Equal(t, []byte(item), TagResponsesReasoningEvent([]byte(item), 0))
+	assert.Equal(t, []byte(body), TagResponsesReasoningBody([]byte(body), 0))
+}
+
+func TestTagResponsesReasoningEventDoneAndCancelled(t *testing.T) {
+	swapCryptoSecret(t, "tag-terminal-secret")
+	for _, eventType := range []string{"response.done", "response.cancelled", "response.canceled"} {
+		t.Run(eventType, func(t *testing.T) {
+			event := `{"type":"` + eventType + `","response":{"output":[{"type":"reasoning","id":"rs_y"},{"type":"message","id":"msg_1"}]}}`
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(TagResponsesReasoningEvent([]byte(event), 5), &got))
+			output := got["response"].(map[string]any)["output"].([]any)
+			decodeTaggedID(t, output[0].(map[string]any)["id"].(string), 5, "rs_y")
+			assert.Equal(t, "msg_1", output[1].(map[string]any)["id"])
+		})
+	}
+}

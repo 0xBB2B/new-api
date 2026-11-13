@@ -14,6 +14,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -165,6 +166,7 @@ func runCodexDoResponseWithInfo(t *testing.T, info *relaycommon.RelayInfo, body 
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Set(common.RequestIdKey, "codex-test")
+	common.SetContextKey(c, constant.ContextKeyChannelId, 7)
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(strings.NewReader(body)),
@@ -225,7 +227,17 @@ func TestDoResponseNonStreamSupplementsEmptyOutputInIndexOrder(t *testing.T) {
 	require.Nil(t, apiErr)
 
 	got := decodeJSONObject(t, recorder.Body.String())
-	assert.Equal(t, []any{decodeJSONObject(t, reasoning), decodeJSONObject(t, call)}, got["output"])
+	output, ok := got["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+	taggedReasoning, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	channelID, originalID, ok := service.DecodeReasoningTag(taggedReasoning["id"].(string))
+	require.True(t, ok)
+	assert.Equal(t, 7, channelID)
+	assert.Equal(t, "rs_1", originalID)
+	taggedReasoning["id"] = "rs_1"
+	assert.Equal(t, []any{decodeJSONObject(t, reasoning), decodeJSONObject(t, call)}, output)
 }
 
 func TestDoResponseNonStreamBillingMatchesStreamPath(t *testing.T) {
