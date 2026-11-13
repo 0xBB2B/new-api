@@ -36,3 +36,5 @@
 | tool-result continuation | 最后一条输入是工具调用结果的请求，客户端在同一轮里接着发；不打分，沿用本轮选定的模型 | 简体「工具结果续跑」 |
 | downgrade guard | 本次请求的输入 token 达到降档上限时，不换到更低档位的规则 | 简体「降档保护」 |
 | routing session | new-api 认定属于同一段对话的一组请求，用"密钥 + prompt_cache_key"或"密钥 + 第一条用户消息"识别；与登录会话、渠道亲和的会话无关 | 简体「会话」（仅在智能路由内） |
+| reasoning item | 请求历史里记录模型上一轮思考过程的条目：Responses 格式是 `type` 为 `reasoning` 的条目，Claude 格式是 assistant 消息里的 `thinking`、`redacted_thinking` 块 | 简体「思考记录」 |
+| channel tag | 中台返回思考记录时写进它编号（Claude 格式是签名或 data）里的加密信息，记着生成它的渠道和上游原值；读不出来时按没有标记处理 | 简体「渠道标记」 |

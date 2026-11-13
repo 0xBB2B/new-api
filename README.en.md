@@ -239,7 +239,7 @@ docker compose logs -f new-api
 | `LOG_SQL_DSN` | Optional separate log database connection |
 | `REDIS_CONN_STRING` | Redis connection string |
 | `SESSION_SECRET` | Persistent authentication secret; all nodes must use the same value |
-| `CRYPTO_SECRET` | Defaults to `SESSION_SECRET`; nodes sharing Redis must use the same effective value |
+| `CRYPTO_SECRET` | Defaults to `SESSION_SECRET`; keep the effective value fixed across restarts and identical on all nodes |
 | `SESSION_COOKIE_SECURE` | Set to `true` for an HTTPS console; enables Secure refresh cookies and strict refresh/logout origin checks |
 | `SESSION_COOKIE_TRUSTED_URL` | Required in Secure mode: comma-separated exact HTTPS origins, without paths or wildcards; leave unset for local HTTP |
 | `TRUSTED_PROXIES` | Trusted reverse-proxy IPs/CIDRs, or `none`; explicitly configure for your network |

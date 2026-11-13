@@ -8,10 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -193,10 +196,15 @@ func SetEventStreamHeaders(c *gin.Context) {
 	c.Writer = &streamResponseWriter{ResponseWriter: c.Writer}
 }
 
+func MarkOutputSent(c *gin.Context) {
+	common.SetContextKey(c, constant.ContextKeyStreamOutputSent, true)
+}
+
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	if requestContextDone(c) {
 		return nil
 	}
+	MarkOutputSent(c)
 
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
@@ -209,14 +217,49 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	return nil
 }
 
+const claudeSignatureBufferKey = "claude_signature_buffer"
+
+func writeClaudeEvent(c *gin.Context, eventType string, data string) {
+	MarkOutputSent(c)
+	data = string(service.TagClaudeThinkingEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventType)})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
+	_ = FlushWriter(c)
+}
+
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 	if requestContextDone(c) {
 		return
 	}
 
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
-	_ = FlushWriter(c)
+	// 上游可能把同一块的签名拆成多条 signature_delta，客户端只认完整签名，故按 index 暂存、在块结束时合并成一条。
+	switch resp.Type {
+	case "message_start":
+		c.Set(claudeSignatureBufferKey, nil)
+	case "content_block_delta":
+		if ojson.Get(data, "delta.type").String() == "signature_delta" {
+			buffer, _ := c.Get(claudeSignatureBufferKey)
+			signatures, _ := buffer.(map[int64]string)
+			if signatures == nil {
+				signatures = map[int64]string{}
+				c.Set(claudeSignatureBufferKey, signatures)
+			}
+			index := ojson.Get(data, "index").Int()
+			signatures[index] += ojson.Get(data, "delta.signature").String()
+			return
+		}
+	case "content_block_stop":
+		buffer, _ := c.Get(claudeSignatureBufferKey)
+		signatures, _ := buffer.(map[int64]string)
+		index := ojson.Get(data, "index").Int()
+		if signature, ok := signatures[index]; ok {
+			merged, _ := ojson.Set(`{"type":"content_block_delta","delta":{"type":"signature_delta"}}`, "delta.signature", signature)
+			merged, _ = ojson.Set(merged, "index", index)
+			writeClaudeEvent(c, "content_block_delta", merged)
+			delete(signatures, index)
+		}
+	}
+	writeClaudeEvent(c, resp.Type, data)
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
@@ -224,10 +267,12 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
+	MarkOutputSent(c)
 	event := common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)}
 	if err := event.Render(c.Writer); err != nil {
 		return err
 	}
+	data = string(service.TagResponsesReasoningEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
 	event.Data = fmt.Sprintf("data: %s", data)
 	if err := event.Render(c.Writer); err != nil {
 		return err
@@ -244,6 +289,7 @@ func StringData(c *gin.Context, str string) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
+	MarkOutputSent(c)
 	c.Render(-1, common.CustomEvent{Data: "data: " + str})
 	return FlushWriter(c)
 }

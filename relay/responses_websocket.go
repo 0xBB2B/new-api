@@ -114,8 +114,9 @@ type responsesWSSession struct {
 
 	// These fields belong to the serial request worker and describe the actual
 	// established connection. Per-request token/user data is never stored here.
-	lastResponseID    string
-	lockedModel       string
+	lastResponseID string
+	lockedModel    string
+	// lockedChannelID 还会被客户端写入路径读取，写入须持 clientWriteMu。
 	lockedChannelID   int
 	lockedGroup       string
 	lockedAffinityKey string
@@ -207,6 +208,9 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		s.clientWriteMu.Lock()
 		s.stateMu.Lock()
 		if outgoing != nil {
+			if outgoing.kind == websocket.TextMessage {
+				outgoing.body = service.TagResponsesReasoningEvent(outgoing.body, s.lockedChannelID)
+			}
 			if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(outgoing.body))); err != nil {
 				state.closeCode = websocket.CloseInternalServerErr
 			} else if err := s.client.WriteMessage(outgoing.kind, outgoing.body); err != nil {
@@ -358,7 +362,10 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				state.closeCode = websocket.CloseInternalServerErr
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
-			s.lockedModel, s.lockedChannelID, s.lockedGroup = modelName, channel.Id, info.UsingGroup
+			s.clientWriteMu.Lock()
+			s.lockedChannelID = channel.Id
+			s.clientWriteMu.Unlock()
+			s.lockedModel, s.lockedGroup = modelName, info.UsingGroup
 			s.lockedAffinityKey = service.ChannelAffinityCacheKey(c)
 			s.lockedKey, s.lockedKeyIndex = info.ApiKey, info.ChannelMultiKeyIndex
 			s.lockedRoute, _ = channel.GetOtherSettings().AdvancedCustom.MatchPathForModel(c.Request.URL.Path, modelName)
@@ -735,6 +742,9 @@ func (s *responsesWSSession) writeTarget(kind int, message []byte) error {
 func (s *responsesWSSession) writeClient(kind int, message []byte) error {
 	s.clientWriteMu.Lock()
 	defer s.clientWriteMu.Unlock()
+	if kind == websocket.TextMessage {
+		message = service.TagResponsesReasoningEvent(message, s.lockedChannelID)
+	}
 	if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(message))); err != nil {
 		return err
 	}

@@ -216,6 +216,7 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
+		helper.MarkOutputSent(c)
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
 		_ = helper.FlushWriter(c)
 	}
@@ -408,8 +409,9 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
+		responseData = service.TagResponsesReasoningBody(responseData, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	case types.RelayFormatClaude:
-		responseData = data
+		responseData = service.TagClaudeThinkingBody(data, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	case types.RelayFormatGemini:
 		{
 			convertResult, convertErr := service.ConvertResponse(c, info, types.RelayFormatGemini, &claudeResponse)

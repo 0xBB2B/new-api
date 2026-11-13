@@ -916,7 +916,7 @@ func TestSessionStore(t *testing.T) {
 	common.RedisEnabled = false
 
 	t.Run("empty key is never stored", func(t *testing.T) {
-		smartroute.SaveSessionAfterSuccess("", true, "hard", 7, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess("", true, "hard", smartroute.EffortDecision{})
 		_, ok := smartroute.LoadSession("")
 		assert.False(t, ok)
 	})
@@ -926,69 +926,61 @@ func TestSessionStore(t *testing.T) {
 		assert.False(t, ok)
 	})
 
-	t.Run("user turn writes all three fields", func(t *testing.T) {
+	t.Run("user turn writes both route fields", func(t *testing.T) {
 		for _, route := range []string{"simple", "normal", "hard"} {
 			key := "session-store-user-turn-" + route
-			smartroute.SaveSessionAfterSuccess(key, true, route, 11, smartroute.EffortDecision{})
+			smartroute.SaveSessionAfterSuccess(key, true, route, smartroute.EffortDecision{})
 			got, ok := smartroute.LoadSession(key)
 			require.True(t, ok)
-			assert.Equal(t, smartroute.SessionState{CurrentRoute: route, LastNonAdvisor: route, LastChannelID: 11}, got)
+			assert.Equal(t, smartroute.SessionState{CurrentRoute: route, LastNonAdvisor: route}, got)
 		}
 	})
 
 	t.Run("later user turn overwrites earlier one", func(t *testing.T) {
 		key := "session-store-overwrite"
-		smartroute.SaveSessionAfterSuccess(key, true, "simple", 1, smartroute.EffortDecision{})
-		smartroute.SaveSessionAfterSuccess(key, true, "hard", 2, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "simple", smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
-		assert.Equal(t, smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "hard", LastChannelID: 2}, got)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "hard"}, got)
 	})
 
 	t.Run("advisor turn keeps last non-advisor tier", func(t *testing.T) {
 		key := "session-store-advisor"
-		smartroute.SaveSessionAfterSuccess(key, true, "normal", 3, smartroute.EffortDecision{})
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 4, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "normal", smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
-		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "normal", LastChannelID: 4}, got)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "normal"}, got)
 	})
 
 	t.Run("advisor turn without prior record leaves last non-advisor empty", func(t *testing.T) {
 		key := "session-store-advisor-first"
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 5, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
-		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "", LastChannelID: 5}, got)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: ""}, got)
 	})
 
-	t.Run("tool result continuation only updates channel", func(t *testing.T) {
+	t.Run("tool result continuation keeps the stored routes", func(t *testing.T) {
 		key := "session-store-tool-result"
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6, smartroute.EffortDecision{})
-		smartroute.SaveSessionAfterSuccess(key, true, "hard", 6, smartroute.EffortDecision{})
-		smartroute.SaveSessionAfterSuccess(key, true, "advisor", 6, smartroute.EffortDecision{})
-		smartroute.SaveSessionAfterSuccess(key, false, "hard", 9, smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "hard", smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, true, "advisor", smartroute.EffortDecision{})
+		smartroute.SaveSessionAfterSuccess(key, false, "hard", smartroute.EffortDecision{})
 		got, ok := smartroute.LoadSession(key)
 		require.True(t, ok)
-		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "hard", LastChannelID: 9}, got)
-	})
-
-	t.Run("tool result continuation without record writes channel only", func(t *testing.T) {
-		key := "session-store-tool-result-first"
-		smartroute.SaveSessionAfterSuccess(key, false, "normal", 8, smartroute.EffortDecision{})
-		got, ok := smartroute.LoadSession(key)
-		require.True(t, ok)
-		assert.Equal(t, smartroute.SessionState{LastChannelID: 8}, got)
+		assert.Equal(t, smartroute.SessionState{CurrentRoute: "advisor", LastNonAdvisor: "hard"}, got)
 	})
 
 	t.Run("json tags match the stored contract", func(t *testing.T) {
-		raw, err := common.Marshal(smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "normal", LastChannelID: 3})
+		raw, err := common.Marshal(smartroute.SessionState{CurrentRoute: "hard", LastNonAdvisor: "normal"})
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"current_route":"hard","last_non_advisor":"normal","last_channel_id":3}`, string(raw))
+		assert.JSONEq(t, `{"current_route":"hard","last_non_advisor":"normal"}`, string(raw))
 	})
 }
 
-func TestDecideRoute_ToolContinuationWithChannelOnlyRecord(t *testing.T) {
+func TestDecideRoute_ToolContinuationWithEmptyRecord(t *testing.T) {
 	got := smartroute.DecideRoute(smartroute.DecideInput{
 		Cfg:        smartRouteCfg(),
 		IsUserTurn: false,

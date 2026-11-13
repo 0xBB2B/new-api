@@ -706,3 +706,253 @@ func TestAzureHostedWebSearch(t *testing.T) {
 		})
 	}
 }
+
+func newReasoningTagContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	oldSecret, oldTimeout := common.CryptoSecret, constant.StreamingTimeout
+	common.CryptoSecret = "reasoning-tag-test-secret"
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		common.CryptoSecret = oldSecret
+		constant.StreamingTimeout = oldTimeout
+	})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "reasoning-tag-test")
+	common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+	return c, w
+}
+
+func requireTaggedReasoningID(t *testing.T, tag, wantOriginal string) {
+	t.Helper()
+	channelID, original, ok := service.DecodeReasoningTag(tag)
+	require.True(t, ok, "tag=%q", tag)
+	assert.Equal(t, 5, channelID)
+	if wantOriginal != "" {
+		assert.Equal(t, wantOriginal, original)
+	}
+}
+
+func reasoningIDsInSSE(t *testing.T, body string) []string {
+	t.Helper()
+	var ids []string
+	collect := func(item any) {
+		m, _ := item.(map[string]any)
+		if m != nil && m["type"] == "reasoning" {
+			ids = append(ids, m["id"].(string))
+		}
+	}
+	for line := range strings.SplitSeq(body, "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		var event map[string]any
+		require.NoError(t, common.Unmarshal([]byte(data), &event))
+		collect(event["item"])
+		if response, ok := event["response"].(map[string]any); ok {
+			output, _ := response["output"].([]any)
+			for _, item := range output {
+				collect(item)
+			}
+		}
+	}
+	return ids
+}
+
+func TestOaiResponsesHandlerTagsReasoningID(t *testing.T) {
+	c, w := newReasoningTagContext(t)
+	upstream := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_y","summary":[]},{"type":"message","id":"msg_1","content":[]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(upstream)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+
+	_, apiErr := OaiResponsesHandler(c, &relaycommon.RelayInfo{OriginModelName: "gpt-5.1"}, resp)
+	require.Nil(t, apiErr)
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Output, 2)
+	requireTaggedReasoningID(t, got.Output[0].ID, "rs_y")
+	assert.Equal(t, "msg_1", got.Output[1].ID)
+}
+
+func TestOaiResponsesStreamHandlerTagsReasoningID(t *testing.T) {
+	c, w := newReasoningTagContext(t)
+	body := "data: " + `{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_y"}}` + "\n\n" +
+		"data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"reasoning","id":"rs_y"},{"type":"message","id":"msg_1"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.1",
+		DisablePing:     true,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+	}
+
+	_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+
+	ids := reasoningIDsInSSE(t, w.Body.String())
+	require.Len(t, ids, 2)
+	assert.Equal(t, ids[0], ids[1])
+	requireTaggedReasoningID(t, ids[0], "rs_y")
+	assert.Contains(t, w.Body.String(), `"id":"msg_1"`)
+}
+
+func TestOaiChatToResponsesStreamHandlerTagsReasoningID(t *testing.T) {
+	c, recorder, resp, info := newResponsesChatTestContext(t, strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"thinking"},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+		`data: [DONE]`,
+		``,
+	}, "\n"), true)
+	gin.SetMode(gin.TestMode)
+	oldSecret, oldTimeout := common.CryptoSecret, constant.StreamingTimeout
+	common.CryptoSecret = "reasoning-tag-test-secret"
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		common.CryptoSecret = oldSecret
+		constant.StreamingTimeout = oldTimeout
+	})
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+
+	_, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+
+	ids := reasoningIDsInSSE(t, recorder.Body.String())
+	require.NotEmpty(t, ids)
+	for _, id := range ids {
+		requireTaggedReasoningID(t, id, "")
+	}
+}
+
+func TestOaiResponsesBufferedStreamHandlerTagsReasoningID(t *testing.T) {
+	c, w := newReasoningTagContext(t)
+	body := "data: " + `{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_b","summary":[]}}` + "\n\n" +
+		"data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+
+	_, apiErr := OaiResponsesBufferedStreamHandler(c, &relaycommon.RelayInfo{OriginModelName: "gpt-5.1"}, resp)
+	require.Nil(t, apiErr)
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Output, 1)
+	requireTaggedReasoningID(t, got.Output[0].ID, "rs_b")
+}
+
+func TestOaiChatToResponsesHandlerTagsReasoningID(t *testing.T) {
+	c, w := newReasoningTagContext(t)
+	upstream := `{"id":"chatcmpl_1","object":"chat.completion","created":1710000000,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"hello","reasoning_content":"thinking"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(upstream)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-test"},
+		RelayFormat: types.RelayFormatOpenAIResponses,
+	}
+
+	_, apiErr := OaiChatToResponsesHandler(c, info, resp)
+	require.Nil(t, apiErr)
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	var reasoningIDs []string
+	for _, item := range got.Output {
+		if item.Type == "reasoning" {
+			reasoningIDs = append(reasoningIDs, item.ID)
+		}
+	}
+	require.NotEmpty(t, reasoningIDs, "body=%s", w.Body.String())
+	for _, id := range reasoningIDs {
+		requireTaggedReasoningID(t, id, "")
+	}
+}
+
+func TestResponsesHandlersTagReasoningWithRetriedChannel(t *testing.T) {
+	retriedContext := func(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
+		c, w := newReasoningTagContext(t)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 3)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+		return c, w
+	}
+
+	t.Run("non-stream", func(t *testing.T) {
+		c, w := retriedContext(t)
+		upstream := `{"id":"resp_1","output":[{"type":"reasoning","id":"rs_r","summary":[]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(upstream)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+
+		_, apiErr := OaiResponsesHandler(c, &relaycommon.RelayInfo{OriginModelName: "gpt-5.1"}, resp)
+		require.Nil(t, apiErr)
+
+		var got struct {
+			Output []struct {
+				ID string `json:"id"`
+			} `json:"output"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+		require.Len(t, got.Output, 1)
+		requireTaggedReasoningID(t, got.Output[0].ID, "rs_r")
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		c, w := retriedContext(t)
+		body := "data: " + `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"reasoning","id":"rs_r"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n" +
+			"data: [DONE]\n\n"
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}
+		info := &relaycommon.RelayInfo{
+			OriginModelName: "gpt-5.1",
+			DisablePing:     true,
+			ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+		}
+
+		_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+		require.Nil(t, apiErr)
+
+		ids := reasoningIDsInSSE(t, w.Body.String())
+		require.NotEmpty(t, ids)
+		for _, id := range ids {
+			requireTaggedReasoningID(t, id, "rs_r")
+		}
+	})
+}

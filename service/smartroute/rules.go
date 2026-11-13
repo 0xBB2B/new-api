@@ -52,7 +52,6 @@ type TierChoice struct {
 type SessionRecord struct {
 	CurrentRoute   string
 	LastNonAdvisor string
-	LastChannelID  int
 }
 
 type DecideInput struct {

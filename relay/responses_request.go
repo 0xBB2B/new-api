@@ -45,12 +45,6 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
 	}
 
-	strip := shouldStripSmartRouteReasoning(c, info.ChannelId)
-	strippedCount := 0
-	if strip {
-		request.Input, strippedCount = stripEncryptedReasoningInput(request.Input)
-	}
-
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
 		return nil, nil, nil, types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
@@ -61,29 +55,28 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		if err != nil {
 			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
-		if strip {
-			raw, err := storage.Bytes()
-			if err != nil {
-				return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-			}
-			var fields map[string]json.RawMessage
-			if common.Unmarshal(raw, &fields) == nil {
-				if input, ok := fields["input"]; ok {
-					cleaned, count := stripEncryptedReasoningInput(input)
-					if count > 0 {
-						fields["input"] = cleaned
-						if raw, err = common.Marshal(fields); err != nil {
-							return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-						}
-						strippedCount = count
-						recordStrippedReasoning(c, strippedCount)
-						body, closer, err := relaycommon.NewOutboundJSONBody(raw)
-						if err != nil {
-							return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-						}
-						return adaptor, body, closer, nil
+		raw, err := storage.Bytes()
+		if err != nil {
+			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		}
+		var fields map[string]json.RawMessage
+		if common.Unmarshal(raw, &fields) == nil {
+			if input, ok := fields["input"]; ok {
+				cleaned, count, changed := filterResponsesReasoningInput(input, info.ChannelId)
+				recordStrippedReasoning(c, count)
+				if changed {
+					fields["input"] = cleaned
+					if raw, err = common.Marshal(fields); err != nil {
+						return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 					}
+					body, closer, err := relaycommon.NewOutboundJSONBody(raw)
+					if err != nil {
+						return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+					}
+					return adaptor, body, closer, nil
 				}
+				body := common.NewReplayableBodyReader(storage)
+				return adaptor, body, io.NopCloser(body), nil
 			}
 		}
 		recordStrippedReasoning(c, 0)
@@ -91,6 +84,8 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		return adaptor, body, io.NopCloser(body), nil
 	}
 
+	var strippedCount int
+	request.Input, strippedCount, _ = filterResponsesReasoningInput(request.Input, info.ChannelId)
 	convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 	if err != nil {
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)

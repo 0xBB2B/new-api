@@ -220,7 +220,7 @@ docker compose logs -f new-api
 | `LOG_SQL_DSN` | 任意の独立ログデータベースへの接続 |
 | `REDIS_CONN_STRING` | Redis 接続文字列 |
 | `SESSION_SECRET` | 永続的な認証用シークレット。全ノードで同じ値を使用 |
-| `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。Redis を共有するノードは同じ実効値を使用 |
+| `CRYPTO_SECRET` | 既定は `SESSION_SECRET`。実効値は再起動後も変えず、全ノードで同じ値を使用 |
 | `SESSION_COOKIE_SECURE` | HTTPS の管理画面では `true`。Secure な更新用 Cookie と、更新・ログアウト時の厳格なオリジン検証を有効化 |
 | `SESSION_COOKIE_TRUSTED_URL` | Secure モードでは必須。パスやワイルドカードを含まない正確な HTTPS オリジンをカンマ区切りで指定。ローカル HTTP では未設定にする |
 | `TRUSTED_PROXIES` | 信頼するリバースプロキシの IP/CIDR、または `none`。実際のネットワークに合わせて明示的に設定 |

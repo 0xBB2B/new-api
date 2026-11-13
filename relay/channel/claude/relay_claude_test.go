@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -501,4 +502,254 @@ func TestClaudeResponsePassesInputTransformationsThrough(t *testing.T) {
 		transformations + `,"usage":{"input_tokens":5,"output_tokens":1}}}`
 	require.Nil(t, HandleStreamResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, event))
 	assert.Contains(t, w.Body.String(), "data: "+event+"\n")
+}
+
+func TestHandleClaudeResponseDataResponsesTagsReasoningID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+	}
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[{"type":"thinking","thinking":"hmm","signature":"sig_1"},{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`
+
+	require.Nil(t, HandleClaudeResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, nil, []byte(body)))
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+	var reasoningIDs []string
+	for _, item := range got.Output {
+		if item.Type == "reasoning" {
+			reasoningIDs = append(reasoningIDs, item.ID)
+		}
+	}
+	require.NotEmpty(t, reasoningIDs, "body=%s", w.Body.String())
+	for _, id := range reasoningIDs {
+		channelID, _, ok := service.DecodeReasoningTag(id)
+		require.True(t, ok, "id=%q", id)
+		assert.Equal(t, 7, channelID)
+	}
+}
+
+func TestClaudeNativeResponseTagsThinkingSignature(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newCtx := func() (*gin.Context, *httptest.ResponseRecorder, *relaycommon.RelayInfo) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+		info := &relaycommon.RelayInfo{
+			RelayFormat: types.RelayFormatClaude,
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+		}
+		return c, w, info
+	}
+
+	t.Run("non-stream", func(t *testing.T) {
+		c, w, info := newCtx()
+		body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[{"type":"thinking","thinking":"hmm","signature":"sig_z"},{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`
+		require.Nil(t, HandleClaudeResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, nil, []byte(body)))
+
+		var got struct {
+			Content []map[string]any `json:"content"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
+		require.NotEmpty(t, got.Content, "body=%s", w.Body.String())
+		channelID, original, ok := service.DecodeReasoningTag(got.Content[0]["signature"].(string))
+		require.True(t, ok)
+		assert.Equal(t, 7, channelID)
+		assert.Equal(t, "sig_z", original)
+		assert.Equal(t, "hmm", got.Content[0]["thinking"])
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		c, w, info := newCtx()
+		claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+		thinkingDelta := `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}`
+		signatureDelta := `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_z"}}`
+		require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, thinkingDelta))
+		require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, signatureDelta))
+		require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, `{"type":"content_block_stop","index":0}`))
+
+		out := w.Body.String()
+		assert.Contains(t, out, "data: "+thinkingDelta+"\n")
+		assert.NotContains(t, out, `"signature":"sig_z"`)
+		var signature string
+		for line := range strings.SplitSeq(out, "\n") {
+			payload, found := strings.CutPrefix(line, "data: ")
+			if !found || !strings.Contains(payload, "signature_delta") {
+				continue
+			}
+			var event struct {
+				Delta struct {
+					Signature string `json:"signature"`
+				} `json:"delta"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(payload, &event))
+			signature = event.Delta.Signature
+		}
+		channelID, original, ok := service.DecodeReasoningTag(signature)
+		require.True(t, ok, "out=%s", out)
+		assert.Equal(t, 7, channelID)
+		assert.Equal(t, "sig_z", original)
+	})
+}
+
+func TestClaudeStreamMergesSplitSignatureDeltas(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	start := `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"usage":{"input_tokens":5,"output_tokens":1}}}`
+	blockStart := func(i int) string {
+		return fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":"","signature":""}}`, i)
+	}
+	thinking := func(i int, s string) string {
+		return fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":"%s"}}`, i, s)
+	}
+	signature := func(i int, s string) string {
+		return fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"signature_delta","signature":"%s"}}`, i, s)
+	}
+	stop := func(i int) string { return fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, i) }
+	end := []string{`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`, `{"type":"message_stop"}`}
+
+	tests := []struct {
+		name   string
+		events []string
+		want   map[int]string
+	}{
+		{
+			name:   "one block split in two",
+			events: append([]string{start, blockStart(0), thinking(0, "T"), signature(0, "sig_"), signature(0, "z"), stop(0)}, end...),
+			want:   map[int]string{0: "sig_z"},
+		},
+		{
+			name:   "single signature delta",
+			events: append([]string{start, blockStart(0), thinking(0, "T"), signature(0, "sig_z"), stop(0)}, end...),
+			want:   map[int]string{0: "sig_z"},
+		},
+		{
+			name: "two blocks each split in two",
+			events: append([]string{
+				start, blockStart(0), thinking(0, "T"), signature(0, "a1"), signature(0, "a2"), stop(0),
+				blockStart(1), thinking(1, "U"), signature(1, "b1"), signature(1, "b2"), stop(1),
+			}, end...),
+			want: map[int]string{0: "a1a2", 1: "b1b2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+			info := &relaycommon.RelayInfo{
+				RelayFormat: types.RelayFormatClaude,
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+			}
+			claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+			for _, event := range tt.events {
+				require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, event))
+			}
+
+			type outEvent struct {
+				Type  string `json:"type"`
+				Index int    `json:"index"`
+				Delta struct {
+					Type      string `json:"type"`
+					Thinking  string `json:"thinking"`
+					Signature string `json:"signature"`
+				} `json:"delta"`
+			}
+			var events []outEvent
+			for line := range strings.SplitSeq(w.Body.String(), "\n") {
+				payload, found := strings.CutPrefix(line, "data: ")
+				if !found {
+					continue
+				}
+				var event outEvent
+				require.NoError(t, common.UnmarshalJsonStr(payload, &event))
+				events = append(events, event)
+			}
+
+			got := map[int]string{}
+			signatureCount := map[int]int{}
+			signatureAt := map[int]int{}
+			stopAt := map[int]int{}
+			for pos, event := range events {
+				switch {
+				case event.Type == "content_block_delta" && event.Delta.Type == "signature_delta":
+					signatureCount[event.Index]++
+					signatureAt[event.Index] = pos
+					channelID, original, ok := service.DecodeReasoningTag(event.Delta.Signature)
+					require.True(t, ok, "out=%s", w.Body.String())
+					assert.Equal(t, 7, channelID)
+					got[event.Index] = original
+				case event.Type == "content_block_stop":
+					stopAt[event.Index] = pos
+				}
+			}
+			assert.Equal(t, tt.want, got)
+			for index := range tt.want {
+				assert.Equal(t, 1, signatureCount[index], "index=%d out=%s", index, w.Body.String())
+				assert.Less(t, signatureAt[index], stopAt[index], "index=%d", index)
+			}
+			var thinkingTexts []string
+			for _, event := range events {
+				if event.Delta.Type == "thinking_delta" {
+					thinkingTexts = append(thinkingTexts, event.Delta.Thinking)
+				}
+			}
+			assert.Len(t, thinkingTexts, len(tt.want))
+		})
+	}
+
+	t.Run("retry on another channel drops the previous attempt's pending signature", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+		info := &relaycommon.RelayInfo{
+			RelayFormat: types.RelayFormatClaude,
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"},
+		}
+		claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+		for _, event := range []string{start, blockStart(0), signature(0, "old_")} {
+			require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, event))
+		}
+		common.SetContextKey(c, constant.ContextKeyChannelId, 9)
+		for _, event := range []string{start, blockStart(0), signature(0, "new"), stop(0)} {
+			require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, event))
+		}
+
+		var tags []string
+		for line := range strings.SplitSeq(w.Body.String(), "\n") {
+			payload, found := strings.CutPrefix(line, "data: ")
+			if !found {
+				continue
+			}
+			var event struct {
+				Type  string `json:"type"`
+				Index int    `json:"index"`
+				Delta struct {
+					Type      string `json:"type"`
+					Signature string `json:"signature"`
+				} `json:"delta"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(payload, &event))
+			if event.Type == "content_block_delta" && event.Delta.Type == "signature_delta" && event.Index == 0 {
+				tags = append(tags, event.Delta.Signature)
+			}
+		}
+		require.Len(t, tags, 1, "out=%s", w.Body.String())
+		channelID, original, ok := service.DecodeReasoningTag(tags[0])
+		require.True(t, ok)
+		assert.Equal(t, 9, channelID)
+		assert.Equal(t, "new", original)
+	})
 }

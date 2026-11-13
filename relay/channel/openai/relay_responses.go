@@ -42,6 +42,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
 
 	// 写入新的 response body
+	responseBody = service.TagResponsesReasoningBody(responseBody, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage
@@ -222,6 +223,7 @@ func OaiResponsesBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 
 	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 	resp.Header.Set("Content-Type", "application/json")
+	body = service.TagResponsesReasoningBody(body, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	service.IOCopyBytesGracefully(c, resp, body)
 	return usage, nil
 }

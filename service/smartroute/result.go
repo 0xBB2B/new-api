@@ -17,7 +17,6 @@ type RouteResult struct {
 	ScorerBilled           bool
 	IsUserTurn             bool
 	SessionKey             string
-	Session                *SessionRecord
 	StrippedReasoningCount int
 	Effort                 EffortDecision
 }

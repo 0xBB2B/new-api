@@ -798,3 +798,124 @@ func TestResponsesWSRunCallRejectsVirtualModel(t *testing.T) {
 	assert.Contains(t, apiErr.Error(), "Virtual model auto-gpt only supports HTTP requests")
 	assert.Zero(t, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 }
+
+func readReasoningIDsFromWSFrame(t *testing.T, conn *websocket.Conn) []string {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, frame, err := conn.ReadMessage()
+	require.NoError(t, err)
+	var event struct {
+		Response struct {
+			Output []struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+			} `json:"output"`
+		} `json:"response"`
+	}
+	require.NoError(t, common.Unmarshal(frame, &event))
+	var ids []string
+	for _, item := range event.Response.Output {
+		if item.Type == "reasoning" {
+			ids = append(ids, item.ID)
+		}
+	}
+	return ids
+}
+
+func TestResponsesWSWriteClientTagsReasoningID(t *testing.T) {
+	frame := `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"reasoning","id":"rs_w","summary":[]}]}}`
+	for _, tc := range []struct {
+		name      string
+		channelID int
+	}{{"locked channel", 9}, {"no locked channel", 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader, server, cleanup := newTestWebSocketPair(t)
+			defer cleanup()
+			s := &responsesWSSession{client: server, lockedChannelID: tc.channelID}
+
+			require.NoError(t, s.writeClient(websocket.TextMessage, []byte(frame)))
+
+			if tc.channelID == 0 {
+				require.NoError(t, reader.SetReadDeadline(time.Now().Add(5*time.Second)))
+				_, got, err := reader.ReadMessage()
+				require.NoError(t, err)
+				assert.Equal(t, frame, string(got))
+				return
+			}
+			ids := readReasoningIDsFromWSFrame(t, reader)
+			require.Len(t, ids, 1)
+			channelID, original, ok := service.DecodeReasoningTag(ids[0])
+			require.True(t, ok, "id=%q", ids[0])
+			assert.Equal(t, 9, channelID)
+			assert.Equal(t, "rs_w", original)
+		})
+	}
+}
+
+func TestResponsesWSRunRequestTerminalFrameTagsReasoningID(t *testing.T) {
+	reader, server, cleanup := newTestWebSocketPair(t)
+	defer cleanup()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &responsesWSSession{
+		ctx:     ctx,
+		cancel:  cancel,
+		client:  server,
+		request: httptest.NewRequest(http.MethodGet, "/v1/responses", nil),
+		runner: func(*http.Request, string, func(*gin.Context) *types.NewAPIError) *types.NewAPIError {
+			return nil
+		},
+		lockedChannelID: 9,
+	}
+	terminal := `{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"reasoning","id":"rs_t","summary":[]}]}}`
+	state := &responsesWSCallState{
+		inbox:    make(chan responsesWSMessage),
+		controls: make(chan responsesWSControl, 1),
+		done:     make(chan struct{}),
+		terminal: &responsesWSMessage{kind: websocket.TextMessage, body: []byte(terminal)},
+	}
+	s.current = state
+	create := `{"type":"response.create","model":"m"}`
+
+	s.runRequest(state, []byte(create), responsesWSCreateEvent{Type: responsesWSEventTypeResponseCreate}, "", "req-1")
+
+	ids := readReasoningIDsFromWSFrame(t, reader)
+	require.Len(t, ids, 1)
+	channelID, original, ok := service.DecodeReasoningTag(ids[0])
+	require.True(t, ok, "id=%q", ids[0])
+	assert.Equal(t, 9, channelID)
+	assert.Equal(t, "rs_t", original)
+}
+
+func TestResponsesWSCreatePayloadRestoresOrStripsReasoningByChannel(t *testing.T) {
+	oldSecret := common.CryptoSecret
+	common.CryptoSecret = "reasoning-tag-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = oldSecret })
+	own := service.EncodeReasoningTag(5, "rs_a")
+	other := service.EncodeReasoningTag(9, "rs_b")
+	message := fmt.Sprintf(`{"type":"response.create","response":{"model":"gpt-5.1","stream":true,"input":[`+
+		`{"type":"reasoning","id":%q,"encrypted_content":"enc_a","summary":[]},`+
+		`{"type":"reasoning","id":%q,"encrypted_content":"enc_b","summary":[{"type":"summary_text","text":"kept"}]}]}}`, own, other)
+	create, _, err := normalizeResponsesWSTestMessage([]byte(message))
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(create.Body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, create.Request.Model)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 5)
+	info := relaycommon.GenRelayInfoResponses(c, &create.Request)
+
+	payload, apiErr := buildResponsesWSCreatePayload(c, info, create.Request, create.Generate, create.StreamID)
+	require.Nil(t, apiErr)
+
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
+	require.NoError(t, common.Unmarshal(payload, &got))
+	require.Len(t, got.Input, 2)
+	assert.Equal(t, "rs_a", got.Input[0]["id"])
+	assert.NotContains(t, got.Input[1], "id")
+	assert.NotContains(t, got.Input[1], "encrypted_content")
+	assert.NotEmpty(t, got.Input[1]["summary"])
+}

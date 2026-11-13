@@ -15,6 +15,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,55 @@ func TestGeminiResponsesHandlerReturnsOpenAIResponsesJSON(t *testing.T) {
 	assert.Contains(t, got, `"output_tokens":3`)
 	assert.NotContains(t, got, `"choices"`)
 	assert.NotContains(t, got, `"candidates"`)
+}
+
+func TestGeminiResponsesHandlerTagsReasoningID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "gemini-reasoning-tag-test")
+	common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+
+	payload := dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			Content: dto.GeminiChatContent{
+				Role: "model",
+				Parts: []dto.GeminiPart{
+					{Text: "pondering", Thought: true},
+					{Text: "hello"},
+				},
+			},
+		}},
+		UsageMetadata: dto.GeminiUsageMetadata{PromptTokenCount: 2, CandidatesTokenCount: 3, TotalTokenCount: 5},
+	}
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+
+	_, newAPIError := GeminiResponsesHandler(c, newGeminiResponsesRelayInfo(false), &http.Response{
+		Body: io.NopCloser(bytes.NewReader(body)),
+	})
+	require.Nil(t, newAPIError)
+
+	var got struct {
+		Output []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"output"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &got))
+	var reasoningIDs []string
+	for _, item := range got.Output {
+		if item.Type == "reasoning" {
+			reasoningIDs = append(reasoningIDs, item.ID)
+		}
+	}
+	require.NotEmpty(t, reasoningIDs, "body=%s", recorder.Body.String())
+	for _, id := range reasoningIDs {
+		channelID, _, ok := service.DecodeReasoningTag(id)
+		require.True(t, ok, "id=%q", id)
+		assert.Equal(t, 7, channelID)
+	}
 }
 
 func TestGeminiResponsesHandlerClosesBodyOnReadError(t *testing.T) {

@@ -220,7 +220,7 @@ docker compose logs -f new-api
 | `LOG_SQL_DSN` | Connexion facultative à une base de journaux distincte |
 | `REDIS_CONN_STRING` | Chaîne de connexion Redis |
 | `SESSION_SECRET` | Secret d'authentification persistant, identique sur tous les nœuds |
-| `CRYPTO_SECRET` | Vaut `SESSION_SECRET` par défaut ; même valeur effective pour les nœuds partageant Redis |
+| `CRYPTO_SECRET` | Vaut `SESSION_SECRET` par défaut ; valeur effective fixe entre les redémarrages et identique sur tous les nœuds |
 | `SESSION_COOKIE_SECURE` | `true` pour une console HTTPS ; active les cookies de renouvellement Secure et les contrôles stricts d'origine du renouvellement et de la déconnexion |
 | `SESSION_COOKIE_TRUSTED_URL` | Obligatoire en mode Secure : origines HTTPS exactes séparées par des virgules, sans chemin ni joker ; à laisser non définie en HTTP local |
 | `TRUSTED_PROXIES` | IP/CIDR des proxys de confiance, ou `none` ; à configurer selon votre réseau |

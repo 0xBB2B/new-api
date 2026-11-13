@@ -223,6 +223,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 			return false
 		}
+		helper.MarkOutputSent(c)
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
 		_ = helper.FlushWriter(c)
 		return true

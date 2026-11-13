@@ -796,7 +796,7 @@ func TestSmartRouteDistributeToolResultContinuationSkipsScorer(t *testing.T) {
 			inspection, err := smartroute.InspectRequest(endpoint, []byte(tc.body))
 			require.NoError(t, err)
 			require.False(t, inspection.IsUserTurn)
-			smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, "hard", smartHardChannelID, smartroute.EffortDecision{})
+			smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, "hard", smartroute.EffortDecision{})
 
 			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, body: tc.body, auto: true, tokenID: tokenID})
 
@@ -835,7 +835,6 @@ func TestSmartRouteDistributeSavesSessionOnlyAfterSuccess(t *testing.T) {
 			if tc.saved {
 				assert.Equal(t, "hard", state.CurrentRoute)
 				assert.Equal(t, "hard", state.LastNonAdvisor)
-				assert.Equal(t, smartHardChannelID, state.LastChannelID)
 			}
 		})
 	}
@@ -878,8 +877,8 @@ func TestSmartRouteDistributeContinuationWithDeadAdvisorUsesLastNonAdvisorTier(t
 	inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
 	require.NoError(t, err)
 	key := smartroute.SessionKey(tokenID, inspection)
-	smartroute.SaveSessionAfterSuccess(key, true, "hard", smartHardChannelID, smartroute.EffortDecision{})
-	smartroute.SaveSessionAfterSuccess(key, true, smartroute.RouteAdvisor, smartAdvisorChannelID, smartroute.EffortDecision{})
+	smartroute.SaveSessionAfterSuccess(key, true, "hard", smartroute.EffortDecision{})
+	smartroute.SaveSessionAfterSuccess(key, true, smartroute.RouteAdvisor, smartroute.EffortDecision{})
 
 	recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses", body: body, auto: true, tokenID: tokenID})
 
@@ -955,7 +954,7 @@ func TestSmartRouteDistributeCompactEndpointNeverScores(t *testing.T) {
 			if tc.sessionTier != "" {
 				inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
 				require.NoError(t, err)
-				smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, tc.sessionTier, smartHardChannelID, smartroute.EffortDecision{})
+				smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, tc.sessionTier, smartroute.EffortDecision{})
 			}
 
 			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses/compact", body: body, auto: true, tokenID: tokenID})
