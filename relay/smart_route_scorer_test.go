@@ -1135,3 +1135,46 @@ func TestRunSmartRouteScorer_BuiltInNoThinkingModelGetsNoEffort(t *testing.T) {
 	assert.Equal(t, "gpt-4o", fields["model"])
 	assert.NotContains(t, fields, "reasoning_effort")
 }
+
+func TestPrepareResponsesRequestItemReferenceFollowsChannelTag(t *testing.T) {
+	reference := func(id string) string { return `{"type":"item_reference","id":"` + id + `"}` }
+	valid := service.EncodeReasoningTag(5, "rs_r")
+	flipped := byte('A')
+	if valid[len(valid)/2] == 'A' {
+		flipped = 'B'
+	}
+	tampered := valid[:len(valid)/2] + string(flipped) + valid[len(valid)/2+1:]
+
+	tests := []struct {
+		name        string
+		id          string
+		channelID   int
+		want        []string
+		wantCleaned int
+	}{
+		{"same channel restores the id", valid, 5, []string{reference("rs_r"), userMessage}, 0},
+		{"other channel drops the reference", valid, 6, []string{userMessage}, 1},
+		{"untagged id is kept", "msg_1", 5, []string{reference("msg_1"), userMessage}, 0},
+		{"tampered tag drops the reference", tampered, 5, []string{userMessage}, 1},
+	}
+	modes := []struct {
+		name    string
+		setting dto.ChannelSettings
+	}{
+		{"converted", dto.ChannelSettings{}},
+		{"passthrough", dto.ChannelSettings{PassThroughBodyEnabled: true}},
+	}
+	for _, mode := range modes {
+		for _, tt := range tests {
+			t.Run(mode.name+" "+tt.name, func(t *testing.T) {
+				raw := responsesInput(reference(tt.id), userMessage)
+
+				sent, c := prepareResponsesSent(t, raw, tt.channelID, mode.setting, &smartroute.RouteResult{})
+
+				assert.JSONEq(t, "["+strings.Join(tt.want, ",")+"]", string(ojson.GetBytes(sent, "input").Raw))
+				result, _ := smartroute.GetRouteResult(c)
+				assert.Equal(t, tt.wantCleaned, result.StrippedReasoningCount)
+			})
+		}
+	}
+}

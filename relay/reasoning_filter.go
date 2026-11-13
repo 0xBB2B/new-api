@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/MoeForge/moego/ojson"
 
@@ -32,12 +33,16 @@ func filterResponsesReasoningInput(input json.RawMessage, channelID int) (json.R
 			continue
 		}
 		var itemType string
-		if common.Unmarshal(fields["type"], &itemType) != nil || itemType != "reasoning" {
+		if common.Unmarshal(fields["type"], &itemType) != nil || (itemType != "reasoning" && itemType != "item_reference") {
 			kept = append(kept, item)
 			continue
 		}
 		var id string
 		_ = common.Unmarshal(fields["id"], &id)
+		if itemType == "item_reference" && !strings.HasPrefix(id, service.ReasoningTagPrefix) {
+			kept = append(kept, item)
+			continue
+		}
 		if tagChannel, original, ok := service.DecodeReasoningTag(id); ok && tagChannel == channelID {
 			fields["id"], _ = common.Marshal(original)
 			restored, err := common.Marshal(fields)
@@ -46,6 +51,11 @@ func filterResponsesReasoningInput(input json.RawMessage, channelID int) (json.R
 				continue
 			}
 			kept = append(kept, restored)
+			changed = true
+			continue
+		}
+		if itemType == "item_reference" {
+			stripped++
 			changed = true
 			continue
 		}

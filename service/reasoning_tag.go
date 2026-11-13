@@ -15,7 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const reasoningTagPrefix = "rtag_"
+const ReasoningTagPrefix = "rtag_"
 
 func reasoningTagKey(purpose string) []byte {
 	mac := hmac.New(sha256.New, []byte(common.CryptoSecret))
@@ -46,11 +46,11 @@ func EncodeReasoningTag(channelID int, original string) string {
 	nonce := mac.Sum(nil)[:gcm.NonceSize()]
 
 	sealed := gcm.Seal(nonce, nonce, plain, nil)
-	return reasoningTagPrefix + base64.RawURLEncoding.EncodeToString(sealed)
+	return ReasoningTagPrefix + base64.RawURLEncoding.EncodeToString(sealed)
 }
 
 func DecodeReasoningTag(tag string) (int, string, bool) {
-	payload, ok := strings.CutPrefix(tag, reasoningTagPrefix)
+	payload, ok := strings.CutPrefix(tag, ReasoningTagPrefix)
 	if !ok {
 		return 0, "", false
 	}
