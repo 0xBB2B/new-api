@@ -544,3 +544,174 @@ func mustRawMessage(t *testing.T, value any) []byte {
 	require.NoError(t, err)
 	return raw
 }
+
+func TestResponsesRequestToChatCompletionsRequestReasoningItems(t *testing.T) {
+	reasoning := func(id string, summary, content string) map[string]any {
+		item := map[string]any{"type": "reasoning", "summary": []map[string]any{}}
+		if id != "" {
+			item["id"] = id
+		}
+		if summary != "" {
+			item["summary"] = []map[string]any{{"type": "summary_text", "text": summary}}
+		}
+		if content != "" {
+			item["content"] = []map[string]any{{"type": "reasoning_text", "text": content}}
+		}
+		return item
+	}
+	userMsg := func(text string) map[string]any { return map[string]any{"role": "user", "content": text} }
+	assistantMsg := func(text string) map[string]any { return map[string]any{"role": "assistant", "content": text} }
+
+	tests := []struct {
+		name          string
+		input         []map[string]any
+		wantRoles     []string
+		wantReasoning map[int]string
+		check         func(t *testing.T, msgs []dto.Message)
+	}{
+		{
+			name: "content before function call goes to assistant tool_calls message",
+			input: []map[string]any{
+				userMsg("问"),
+				reasoning("r1", "", "先看看目录结构"),
+				{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+			},
+			wantRoles:     []string{"user", "assistant", "tool"},
+			wantReasoning: map[int]string{1: "先看看目录结构"},
+		},
+		{
+			name:          "content wins over summary",
+			input:         []map[string]any{reasoning("r1", "B", "A"), assistantMsg("答")},
+			wantRoles:     []string{"assistant"},
+			wantReasoning: map[int]string{0: "A"},
+		},
+		{
+			name:          "summary used when content empty",
+			input:         []map[string]any{reasoning("r1", "B", ""), assistantMsg("答")},
+			wantRoles:     []string{"assistant"},
+			wantReasoning: map[int]string{0: "B"},
+		},
+		{
+			name:          "multiple reasoning items join with blank line",
+			input:         []map[string]any{reasoning("r1", "", "A"), reasoning("r2", "", "B"), assistantMsg("答")},
+			wantRoles:     []string{"assistant"},
+			wantReasoning: map[int]string{0: "A\n\nB"},
+		},
+		{
+			name:      "reasoning followed by user is dropped",
+			input:     []map[string]any{userMsg("问"), reasoning("r1", "", "A"), userMsg("再问")},
+			wantRoles: []string{"user", "user"},
+		},
+		{
+			name:      "reasoning at end of input is dropped",
+			input:     []map[string]any{userMsg("问"), reasoning("r1", "", "A")},
+			wantRoles: []string{"user"},
+		},
+		{
+			name:      "encrypted-only reasoning yields nil",
+			input:     []map[string]any{reasoning("r1", "", ""), assistantMsg("答")},
+			wantRoles: []string{"assistant"},
+		},
+		{
+			name:      "reasoning without id is dropped",
+			input:     []map[string]any{reasoning("", "S", ""), reasoning("", "", "T"), assistantMsg("答")},
+			wantRoles: []string{"assistant"},
+		},
+		{
+			name: "reasoning after assistant text merges into that assistant with tool_calls",
+			input: []map[string]any{
+				userMsg("问"),
+				{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": "答"}}},
+				reasoning("r1", "", "A"),
+				{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+			},
+			wantRoles:     []string{"user", "assistant"},
+			wantReasoning: map[int]string{1: "A"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				assert.Equal(t, "答", msgs[1].StringContent())
+				calls := msgs[1].ParseToolCalls()
+				require.Len(t, calls, 1)
+				assert.Equal(t, "call_1", calls[0].ID)
+			},
+		},
+		{
+			name: "reasoning around assistant text joins in order on one assistant",
+			input: []map[string]any{
+				userMsg("问"),
+				reasoning("r1", "", "A"),
+				assistantMsg("答"),
+				reasoning("r2", "", "B"),
+				{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+			},
+			wantRoles:     []string{"user", "assistant"},
+			wantReasoning: map[int]string{1: "A\n\nB"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				assert.Equal(t, "答", msgs[1].StringContent())
+				calls := msgs[1].ParseToolCalls()
+				require.Len(t, calls, 1)
+				assert.Equal(t, "call_1", calls[0].ID)
+			},
+		},
+		{
+			name: "reasoning before custom_tool_call goes to its assistant",
+			input: []map[string]any{
+				reasoning("r1", "", "A"),
+				{"type": "custom_tool_call", "call_id": "c1", "name": "apply_patch", "input": "x"},
+			},
+			wantRoles:     []string{"assistant"},
+			wantReasoning: map[int]string{0: "A"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				calls := msgs[0].ParseToolCalls()
+				require.Len(t, calls, 1)
+				assert.Equal(t, "c1", calls[0].ID)
+			},
+		},
+		{
+			name: "reasoning after tool output with image does not create a reasoning user message",
+			input: []map[string]any{
+				userMsg("问"),
+				{"type": "function_call", "call_id": "call_1", "name": "screenshot", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "call_1", "output": []map[string]any{{"type": "input_image", "image_url": "https://example.com/a.png"}}},
+				reasoning("r1", "", "A"),
+				assistantMsg("答"),
+			},
+			wantRoles:     []string{"user", "assistant", "tool", "user", "assistant"},
+			wantReasoning: map[int]string{4: "A"},
+			check: func(t *testing.T, msgs []dto.Message) {
+				assert.Equal(t, "[image]", msgs[2].StringContent())
+				parts := msgs[3].ParseContent()
+				require.Len(t, parts, 1)
+				require.NotNil(t, parts[0].GetImageMedia())
+				assert.Equal(t, "https://example.com/a.png", parts[0].GetImageMedia().Url)
+				assert.Equal(t, "答", msgs[4].StringContent())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
+				Model: "gpt-test",
+				Input: mustRawMessage(t, tt.input),
+			})
+			require.NoError(t, err)
+
+			roles := make([]string, 0, len(got.Messages))
+			for i, msg := range got.Messages {
+				roles = append(roles, msg.Role)
+				want, ok := tt.wantReasoning[i]
+				if !ok {
+					assert.Nil(t, msg.ReasoningContent, "message %d", i)
+					continue
+				}
+				require.NotNil(t, msg.ReasoningContent, "message %d", i)
+				assert.Equal(t, want, *msg.ReasoningContent)
+			}
+			assert.Equal(t, tt.wantRoles, roles)
+			if tt.check != nil {
+				tt.check(t, got.Messages)
+			}
+		})
+	}
+}

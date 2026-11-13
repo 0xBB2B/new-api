@@ -22,6 +22,7 @@ const (
 	responsesInputTypeFunctionCallOutput = "function_call_output"
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
 	responsesInputTypeCustomToolOutput   = "custom_tool_call_output"
+	responsesInputTypeReasoning          = "reasoning"
 )
 
 const (
@@ -176,17 +177,35 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 		// batch to stay contiguous, so media hoisted out of tool output items is
 		// held back and emitted as a single user message once the batch ends.
 		var pendingMedia []any
+		var pendingReasoning []string
 		for _, item := range items {
 			itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
 				messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
 				pendingMedia = nil
 			}
+			if itemType == responsesInputTypeReasoning {
+				if text := responsesReasoningItemText(item); text != "" {
+					pendingReasoning = append(pendingReasoning, text)
+				}
+				continue
+			}
 			nextMessages, media, err := responsesInputItemToChatMessages(ctx, item, messages)
 			if err != nil {
 				return nil, err
 			}
 			messages = nextMessages
+			if len(pendingReasoning) > 0 {
+				last := &messages[len(messages)-1]
+				if last.Role == "assistant" {
+					joined := strings.Join(pendingReasoning, "\n\n")
+					if last.ReasoningContent != nil {
+						joined = *last.ReasoningContent + "\n\n" + joined
+					}
+					last.ReasoningContent = &joined
+				}
+				pendingReasoning = nil
+			}
 			pendingMedia = append(pendingMedia, media...)
 		}
 		if len(pendingMedia) > 0 {
@@ -231,6 +250,31 @@ func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, 
 		return nil, nil, err
 	}
 	return append(messages, dto.Message{Role: role, Content: content}), nil, nil
+}
+
+// responsesReasoningItemText 取思考条目的可读文字。宿主发出前会去掉别的渠道生成的思考条目的 id，没有 id 的不采用。
+func responsesReasoningItemText(item map[string]any) string {
+	if strings.TrimSpace(kitutil.Interface2String(item["id"])) == "" {
+		return ""
+	}
+	for _, key := range []string{"content", "summary"} {
+		parts, _ := item[key].([]any)
+		var text strings.Builder
+		for _, rawPart := range parts {
+			part, ok := rawPart.(map[string]any)
+			if !ok {
+				continue
+			}
+			if key == "content" && kitutil.Interface2String(part["type"]) != "reasoning_text" {
+				continue
+			}
+			text.WriteString(kitutil.Interface2String(part["text"]))
+		}
+		if text.Len() > 0 {
+			return text.String()
+		}
+	}
+	return ""
 }
 
 func responsesInputContentToChatContent(ctx context.Context, content any) (any, error) {
