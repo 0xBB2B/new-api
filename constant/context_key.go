@@ -90,4 +90,7 @@ const (
 	ContextKeySmartRouteLog ContextKey = "smart_route_log"
 	// ContextKeySmartRouteResult holds the smartroute.RouteResult of a virtual-model request.
 	ContextKeySmartRouteResult ContextKey = "smart_route_result"
+
+	// ContextKeyStreamOutputSent marks that upstream body has been written to the client; keep-alive pings do not set it.
+	ContextKeyStreamOutputSent ContextKey = "stream_output_sent"
 )

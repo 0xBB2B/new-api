@@ -11,6 +11,7 @@ import (
 
 	"github.com/MoeForge/moego/base64"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -271,6 +272,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 			continue
 		case MsgTypeAudioOnlyServer:
 			if len(msg.Payload) > 0 {
+				helper.MarkOutputSent(c)
 				if _, writeErr := c.Writer.Write(msg.Payload); writeErr != nil {
 					return nil, types.NewErrorWithStatusCode(
 						fmt.Errorf("failed to write audio data: %w", writeErr),

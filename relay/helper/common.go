@@ -196,10 +196,15 @@ func SetEventStreamHeaders(c *gin.Context) {
 	c.Writer = &streamResponseWriter{ResponseWriter: c.Writer}
 }
 
+func MarkOutputSent(c *gin.Context) {
+	common.SetContextKey(c, constant.ContextKeyStreamOutputSent, true)
+}
+
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	if requestContextDone(c) {
 		return nil
 	}
+	MarkOutputSent(c)
 
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
@@ -215,6 +220,7 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 const claudeSignatureBufferKey = "claude_signature_buffer"
 
 func writeClaudeEvent(c *gin.Context, eventType string, data string) {
+	MarkOutputSent(c)
 	data = string(service.TagClaudeThinkingEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventType)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
@@ -261,6 +267,7 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
+	MarkOutputSent(c)
 	event := common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)}
 	if err := event.Render(c.Writer); err != nil {
 		return err
@@ -282,6 +289,7 @@ func StringData(c *gin.Context, str string) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
+	MarkOutputSent(c)
 	c.Render(-1, common.CustomEvent{Data: "data: " + str})
 	return FlushWriter(c)
 }

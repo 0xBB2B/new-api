@@ -16,6 +16,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -24,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -322,4 +325,71 @@ func TestStreamKeepAliveCancellation(t *testing.T) {
 	_, err := c.Writer.WriteString("data: done\n\n")
 	require.NoError(t, err)
 	require.True(t, strings.HasSuffix(recorder.Body.String(), "data: done\n\n"))
+}
+
+func TestRelayStreamErrorAfterOutputDoesNotRetry(t *testing.T) {
+	claudeFirst := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-x\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"A\"}}\n\n" +
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"x\"}}\n\n"
+	claudeSecond := strings.Replace(claudeFirst, "\"text\":\"A\"", "\"text\":\"B\"", 1)
+	claudeSecond = claudeSecond[:strings.Index(claudeSecond, "event: error")] +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	responsesFirst := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"A\"}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"x\"}}}\n\n"
+	responsesSecond := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_2\",\"status\":\"in_progress\"}}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"B\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
+
+	for _, tc := range []struct {
+		name, path, first, second, body, startMarker string
+	}{
+		{"claude overloaded error frame", "/v1/messages", claudeFirst, claudeSecond, `{"model":"ws-billing","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`, `"type":"message_start"`},
+		{"responses response.failed", "/v1/responses", responsesFirst, responsesSecond, `{"model":"ws-billing","input":"hi","stream":true}`, `"type":"response.created"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousRetry := common.RetryTimes
+			common.RetryTimes = 1
+			t.Cleanup(func() { common.RetryTimes = previousRetry })
+			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
+			var attempts atomic.Int32
+			fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				payload := tc.second
+				if attempts.Add(1) == 1 {
+					payload = tc.first
+				}
+				_, _ = io.WriteString(w, payload)
+				w.(http.Flusher).Flush()
+			}
+			path := tc.path
+			if tc.path == "/v1/messages" {
+				require.NoError(t, model.DB.Model(fixture.channel).Updates(map[string]any{"type": constant.ChannelTypeAnthropic, "model_mapping": ""}).Error)
+				engine := gin.New()
+				engine.POST(path, middleware.TokenAuth(), middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
+					c.Set(common.RequestIdKey, "stream-retry-claude")
+					Relay(c, types.RelayFormatClaude)
+				})
+				gateway := httptest.NewServer(engine)
+				t.Cleanup(gateway.Close)
+				fixture.gatewayURL = gateway.URL
+			}
+			request, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+path, strings.NewReader(tc.body))
+			require.NoError(t, err)
+			request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+			request.Header.Set("x-api-key", "sk-"+fixture.token.Key)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+			require.NoError(t, err)
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			t.Logf("attempts=%d status=%d body=%q", attempts.Load(), response.StatusCode, string(body))
+			assert.Equal(t, int32(1), attempts.Load(), "no second upstream attempt once output reached the client")
+			assert.Equal(t, 1, strings.Count(string(body), tc.startMarker), "client must not receive two concatenated streams")
+		})
+	}
 }

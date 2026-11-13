@@ -148,6 +148,7 @@ func xunfeiStreamHandler(c *gin.Context, textRequest dto.GeneralOpenAIRequest, a
 				common.SysLog(common.LogText("error marshalling stream response: %s", err.Error()))
 				return true
 			}
+			helper.MarkOutputSent(c)
 			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonResponse)})
 			return true
 		case <-stopChan:
