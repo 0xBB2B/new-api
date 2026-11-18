@@ -224,6 +224,27 @@ describe('model capabilities section in the model drawer', () => {
     }
   )
 
+  it.each(['e.g. 1050000', 'e.g. 128000'])(
+    'blocks saving when the browser reports unparsable input in the %s box',
+    async (placeholder) => {
+      const { put, user } = setup()
+      const s = await section()
+      const input = s.getByPlaceholderText(placeholder)
+      await user.type(input, '5')
+      Object.defineProperty(input, 'validity', {
+        configurable: true,
+        value: { badInput: true, valid: false },
+      })
+      fireEvent.change(input, { target: { value: '' } })
+      await user.click(save())
+      expect(put).not.toHaveBeenCalled()
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(
+        s.getByText('Enter an integer greater than 0')
+      ).toBeInTheDocument()
+    }
+  )
+
   it('loads existing capabilities into the form', async () => {
     setup({
       ...model,

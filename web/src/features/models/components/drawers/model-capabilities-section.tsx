@@ -47,6 +47,9 @@ import {
 } from '../../lib/model-capabilities'
 import type { ModelFormValues } from '../../lib/model-form'
 
+// type=number 的输入框对 "abc"、"1e" 这类内容返回空串并置 badInput，用无法解析的占位值与"未填"区分，才能标红并拦住保存
+const BAD_NUMBER_INPUT = 'NaN'
+
 const EMPTY_VALUES = capabilityToFormValues({})
 
 const MODALITY_LABELS: Record<string, string> = {
@@ -277,9 +280,19 @@ export function ModelCapabilitiesSection() {
                 id='capabilities-context-length'
                 type='number'
                 placeholder={t('e.g. 1050000')}
-                value={values.context_length}
+                value={
+                  values.context_length === BAD_NUMBER_INPUT
+                    ? ''
+                    : values.context_length
+                }
                 aria-invalid={errorsAt('context_length').length > 0}
-                onChange={(e) => update({ context_length: e.target.value })}
+                onChange={(e) =>
+                  update({
+                    context_length: e.target.validity.badInput
+                      ? BAD_NUMBER_INPUT
+                      : e.target.value,
+                  })
+                }
               />
               <p className='text-muted-foreground text-sm'>
                 {t('In tokens. Leave empty to keep this unset.')}
@@ -294,12 +307,20 @@ export function ModelCapabilitiesSection() {
                 id='capabilities-max-output'
                 type='number'
                 placeholder={t('e.g. 128000')}
-                value={values.max_completion_tokens}
+                value={
+                  values.max_completion_tokens === BAD_NUMBER_INPUT
+                    ? ''
+                    : values.max_completion_tokens
+                }
                 aria-invalid={
                   errorsAt('top_provider.max_completion_tokens').length > 0
                 }
                 onChange={(e) =>
-                  update({ max_completion_tokens: e.target.value })
+                  update({
+                    max_completion_tokens: e.target.validity.badInput
+                      ? BAD_NUMBER_INPUT
+                      : e.target.value,
+                  })
                 }
               />
               <p className='text-muted-foreground text-sm'>
