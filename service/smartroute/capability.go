@@ -31,6 +31,9 @@ type ThinkingCapability struct {
 //   - Gemini 发布日期: https://aistudio.google.com/docs/changelog
 //   - GLM 档位: https://docs.bigmodel.cn/cn/guide/capabilities/thinking（GLM-5.3 系列仅支持 max、high、low；GLM-5.2 的 low/medium 映射为 high，xhigh 映射为 max）
 //   - GLM 发布日期: https://docs.bigmodel.cn/cn/update/new-releases
+//   - Kimi 档位: https://platform.kimi.com/docs/guide/use-reasoning-effort（kimi-k3.1-pro 始终思考，只有 low、high、max）
+//   - Qwen 档位: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions（none 关闭思考，其余值映射到下列档位）
+//   - Qwen 发布日期: https://www.alibabacloud.com/blog/qwen3-8-max-a-new-bar-for-coding-and-cowork_603421 、https://www.alibabacloud.com/blog/alibaba-unveils-qwen4-max-new-ai-teammate-for-work-creativity-and-discovery_603783
 //
 // 依据（OpenAI 型号文档为 https://developers.openai.com/api/docs/models/<型号>）：
 //   - gpt-4.1 不支持思考: https://developers.openai.com/api/docs/models/gpt-4.1
@@ -53,43 +56,51 @@ type ThinkingCapability struct {
 //   - gpt-6.1-terra none/low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6.1-terra
 //   - gpt-6-astra low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6-astra
 //   - gpt-6.1-sol low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6.1-sol
-//   - gpt-6.2-sol、gpt-6.2-astra low/medium/high/xhigh/max：官方型号页只写明拒绝 none，其余档位按 gpt-6.1-sol、gpt-6-astra 推定，未实测:
+//   - gpt-6.2-sol、gpt-6.2-astra low/medium/high/xhigh/max：官方型号页只写明拒绝 none；2026-11-18 经 Codex 渠道实测这五档都被接受（该渠道也接受 none，与公开 API 不同）:
 //     https://developers.openai.com/api/docs/models/gpt-6.2-sol 、https://developers.openai.com/api/docs/models/gpt-6.2-astra
 //   - glm-5.3、glm-5.3-flash、glm-5.3-flashx low/high/max: https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 //   - glm-5.2 none/high/max: https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 //   - deepseek-v4-pro none/low/high/max，thinking 可关闭: https://api-docs.deepseek.com/guides/thinking_mode
 //   - deepseek-v4-flash none/low/high/max: https://api-docs.deepseek.com/updates（2026-08-13）
+//   - deepseek-v4.1-flash none/low/high/max: https://api-docs.deepseek.com/updates（2026-09-10）和 https://api-docs.deepseek.com/guides/thinking_mode
+//   - kimi-k3.1-pro low/high/max: https://platform.kimi.com/docs/guide/use-reasoning-effort
+//   - qwen3.8-max none/low/medium/xhigh（high、max 映射为 xhigh）: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions
+//   - qwen4-max none/low/high/xhigh（medium 映射为 high，max 映射为 xhigh）: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions
 //
 // 查表前先去掉结尾的日期快照后缀，再按完整型号名精确匹配，不做前缀匹配（gpt-5-pro 不能当成 gpt-5）。
 var builtinThinkingCapabilities = map[string]ThinkingCapability{
-	"gpt-4.1":           {Source: ThinkingSourceBuiltin, NoThinking: true, Efforts: []string{}},
-	"gpt-4o":            {Source: ThinkingSourceBuiltin, NoThinking: true, Efforts: []string{}},
-	"gpt-4.1-mini":      {Source: ThinkingSourceBuiltin, NoThinking: true, Efforts: []string{}},
-	"gpt-5.4":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
-	"gpt-5.4-mini":      {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
-	"gpt-5.4-nano":      {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
-	"gpt-5.5":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
-	"gpt-5.4-pro":       {Source: ThinkingSourceBuiltin, Efforts: []string{"medium", "high", "xhigh"}},
-	"gpt-5.5-pro":       {Source: ThinkingSourceBuiltin, Efforts: []string{"medium", "high", "xhigh"}},
-	"gpt-5.2-codex":     {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh"}},
-	"gpt-5.3-codex":     {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh"}},
-	"gpt-5.6":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-5.6-sol":       {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-5.6-terra":     {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-5.6-luna":      {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-6-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-6-luna":        {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.1-terra":     {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-6-astra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.1-sol":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.2-sol":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.2-astra":     {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"glm-5.3":           {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
-	"glm-5.3-flash":     {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
-	"glm-5.3-flashx":    {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
-	"glm-5.2":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "high", "max"}},
-	"deepseek-v4-pro":   {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
-	"deepseek-v4-flash": {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
+	"gpt-4.1":             {Source: ThinkingSourceBuiltin, NoThinking: true, Efforts: []string{}},
+	"gpt-4o":              {Source: ThinkingSourceBuiltin, NoThinking: true, Efforts: []string{}},
+	"gpt-4.1-mini":        {Source: ThinkingSourceBuiltin, NoThinking: true, Efforts: []string{}},
+	"gpt-5.4":             {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
+	"gpt-5.4-mini":        {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
+	"gpt-5.4-nano":        {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
+	"gpt-5.5":             {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
+	"gpt-5.4-pro":         {Source: ThinkingSourceBuiltin, Efforts: []string{"medium", "high", "xhigh"}},
+	"gpt-5.5-pro":         {Source: ThinkingSourceBuiltin, Efforts: []string{"medium", "high", "xhigh"}},
+	"gpt-5.2-codex":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh"}},
+	"gpt-5.3-codex":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh"}},
+	"gpt-5.6":             {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-5.6-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-5.6-terra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-5.6-luna":        {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6-sol":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6-luna":          {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.1-terra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6-astra":         {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.1-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.2-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.2-astra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"glm-5.3":             {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
+	"glm-5.3-flash":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
+	"glm-5.3-flashx":      {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
+	"glm-5.2":             {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "high", "max"}},
+	"deepseek-v4-pro":     {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
+	"deepseek-v4-flash":   {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
+	"deepseek-v4.1-flash": {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
+	"kimi-k3.1-pro":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
+	"qwen3.8-max":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "xhigh"}},
+	"qwen4-max":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "xhigh"}},
 }
 
 var dateSnapshotSuffix = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
