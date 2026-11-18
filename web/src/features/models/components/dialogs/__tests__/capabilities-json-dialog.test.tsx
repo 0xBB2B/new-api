@@ -166,16 +166,16 @@ async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
 
 function footerOf() {
   const preview = screen.getByRole('button', { name: 'Preview changes' })
-  let footer: HTMLElement | null = screen.getByRole('button', {
-    name: 'Download JSON file',
-  })
-  while (footer && !footer.contains(preview)) footer = footer.parentElement
-  return footer!
+  let footer = screen.getByRole('button', { name: 'Download JSON file' })
+  while (!footer.contains(preview) && footer.parentElement) {
+    footer = footer.parentElement
+  }
+  return footer
 }
 
 function blockOf(name: string, allNames: string[]) {
   const matches = screen.getAllByText(name, { exact: true })
-  let el = matches[matches.length - 1]
+  let el = matches.at(-1) ?? matches[0]
   const others = allNames.filter((n) => n !== name)
   while (el.parentElement) {
     const text = el.parentElement.textContent ?? ''
@@ -445,7 +445,7 @@ describe('step 1: view and edit', () => {
     expect(anchors[0].download).toMatch(
       /^model-capabilities-\d{4}-\d{2}-\d{2}\.json$/
     )
-    expect(await blob!.text()).toBe(edited)
+    expect(await blob?.text()).toBe(edited)
   })
 
   it('closes without saving', async () => {
@@ -489,7 +489,7 @@ describe('step 1: view and edit', () => {
       .getAllByRole('button', { name: 'Close' })
       .find((b) => !footer.contains(b))
     expect(topRight).toBeDefined()
-    await user.click(topRight!)
+    await user.click(topRight as HTMLElement)
     await waitFor(() =>
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     )

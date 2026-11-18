@@ -91,7 +91,7 @@ async function section() {
   const heading = await screen.findByRole('heading', {
     name: 'Model capabilities',
   })
-  return within(heading.closest('section, div')!.parentElement ?? heading)
+  return within(heading.closest('section, div')?.parentElement ?? heading)
 }
 
 const save = () => screen.getByRole('button', { name: /Update Model|Save metadata/ })

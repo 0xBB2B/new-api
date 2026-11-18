@@ -52,7 +52,7 @@ describe('isPositiveSafeInteger', () => {
   it.each([1, 128000, 9007199254740991])('accepts %s', (n) => {
     expect(isPositiveSafeInteger(n)).toBe(true)
   })
-  it.each([0, -5, 1.5, NaN, Infinity, 9007199254740992, '12', null])(
+  it.each([0, -5, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 9007199254740992, '12', null])(
     'rejects %s',
     (n) => {
       expect(isPositiveSafeInteger(n)).toBe(false)
