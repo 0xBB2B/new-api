@@ -27,7 +27,10 @@ import zh from '@/i18n/locales/zh.json'
 import zhTW from '@/i18n/locales/zh-TW.json'
 
 import {
+  formatModelCapabilityJson,
   isPositiveSafeInteger,
+  listDiscardedCapabilityValues,
+  recoverModelCapability,
   parseModelCapabilityJson,
   serializeModelCapability,
 } from '../model-capabilities'
@@ -166,6 +169,119 @@ describe('serializeModelCapability', () => {
   it('serializes unconfigured values as {}', () => {
     const result = parseModelCapabilityJson('{}')
     expect(result.ok && serializeModelCapability(result.value)).toBe('{}')
+  })
+})
+
+describe('formatModelCapabilityJson', () => {
+  it('writes two-space indented lines with each array on one line', () => {
+    expect(
+      formatModelCapabilityJson({
+        context_length: 1050000,
+        architecture: { input_modalities: ['text', 'image'] },
+        reasoning: { supported_efforts: [] },
+      })
+    ).toBe(
+      [
+        '{',
+        '  "context_length": 1050000,',
+        '  "architecture": {',
+        '    "input_modalities": ["text", "image"]',
+        '  },',
+        '  "reasoning": {',
+        '    "supported_efforts": []',
+        '  }',
+        '}',
+      ].join('\n')
+    )
+  })
+
+  it('writes an empty object as {} and stays parseable', () => {
+    expect(formatModelCapabilityJson({})).toBe('{}')
+    expect(JSON.parse(formatModelCapabilityJson(full))).toEqual(full)
+  })
+})
+
+describe('recoverModelCapability', () => {
+  it('keeps recognised fields and values and drops the rest', () => {
+    expect(
+      recoverModelCapability(
+        JSON.stringify({
+          context_length: 1050000,
+          top_provider: { max_completion_tokens: 128000, other: 1 },
+          architecture: {
+            input_modalities: ['text', 'video', 'image'],
+            output_modalities: ['video'],
+          },
+          reasoning: { supported_efforts: ['low', 'ultra'] },
+          unknown_field: true,
+        })
+      )
+    ).toEqual({
+      context_length: 1050000,
+      top_provider: { max_completion_tokens: 128000 },
+      architecture: { input_modalities: ['text', 'image'] },
+      reasoning: { supported_efforts: ['low'] },
+    })
+  })
+
+  it('drops numbers that are not positive safe integers', () => {
+    expect(
+      recoverModelCapability(
+        '{"context_length":-1,"top_provider":{"max_completion_tokens":1.5}}'
+      )
+    ).toEqual({})
+  })
+
+  it('keeps an empty supported_efforts as "not supported"', () => {
+    expect(
+      recoverModelCapability('{"reasoning":{"supported_efforts":[]}}')
+    ).toEqual({ reasoning: { supported_efforts: [] } })
+  })
+
+  it.each(['{"context_length":', '[]', '"x"', 'null'])(
+    'returns null for %s',
+    (text) => {
+      expect(recoverModelCapability(text)).toBeNull()
+    }
+  )
+})
+
+describe('listDiscardedCapabilityValues', () => {
+  it('lists only the non-string item of a mixed array', () => {
+    expect(
+      listDiscardedCapabilityValues(
+        '{"architecture":{"input_modalities":[1,"text"]}}'
+      )
+    ).toEqual([
+      { path: 'architecture.input_modalities', value: '1', scope: 'item' },
+    ])
+  })
+
+  it('lists a repeated unknown item once', () => {
+    expect(
+      listDiscardedCapabilityValues(
+        '{"architecture":{"input_modalities":["video","video"]}}'
+      )
+    ).toEqual([
+      { path: 'architecture.input_modalities', value: 'video', scope: 'item' },
+    ])
+  })
+
+  it('lists whole fields with JSON-written values and single items by name', () => {
+    expect(
+      listDiscardedCapabilityValues(
+        '{"context_length":-1,"reasoning":{"supported_efforts":["low","ultra"]},"foo":"bar"}'
+      )
+    ).toEqual([
+      { path: 'context_length', value: '-1', scope: 'field' },
+      { path: 'reasoning.supported_efforts', value: 'ultra', scope: 'item' },
+      { path: 'foo', value: '"bar"', scope: 'field' },
+    ])
+  })
+
+  it('lists nothing for recognised values or invalid JSON', () => {
+    expect(listDiscardedCapabilityValues(JSON.stringify(full))).toEqual([])
+    expect(listDiscardedCapabilityValues('{"context_length":')).toEqual([])
   })
 })
 

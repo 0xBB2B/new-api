@@ -27,6 +27,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError } from 'axios'
+import i18next from 'i18next'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -50,7 +51,18 @@ const capabilities = {
     reasoning: { supported_efforts: ['none', 'low', 'high', 'xhigh'] },
   },
 }
-const formatted = JSON.stringify(capabilities, null, 2)
+const formatted = [
+  '{',
+  '  "gpt-6.2-sol": {',
+  '    "context_length": 1050000',
+  '  },',
+  '  "qwen4-max": {',
+  '    "reasoning": {',
+  '      "supported_efforts": ["none", "low", "high", "xhigh"]',
+  '    }',
+  '  }',
+  '}',
+].join('\n')
 
 const loaded = {
   capabilities,
@@ -173,20 +185,42 @@ function footerOf() {
   return footer
 }
 
-function blockOf(name: string, allNames: string[]) {
+function blockAncestors(name: string, allNames: string[]) {
   const matches = screen.getAllByText(name, { exact: true })
   let el = matches.at(-1) ?? matches[0]
+  const path = [el]
   const others = allNames.filter((n) => n !== name)
   while (el.parentElement) {
     const text = el.parentElement.textContent ?? ''
     if (others.some((n) => text.includes(n))) break
     el = el.parentElement
+    path.push(el)
   }
-  return within(el)
+  return path
+}
+
+function blockOf(name: string, allNames: string[]) {
+  return within(blockAncestors(name, allNames).at(-1) as HTMLElement)
+}
+
+const follows = (a: Element, b: Element) =>
+  Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+const RULES_TEXT =
+  "Saving replaces everything. After saving, each model's capabilities will be exactly what is written here. Fields that are omitted or set to null will be cleared. Removing a model from the JSON clears its capabilities but keeps the record. Models without a record in Model Management get a new exact-match record automatically."
+
+function previewWith(
+  items: Record<string, unknown>[],
+  errors: Record<string, unknown>[] = []
+) {
+  const summary = { create: 0, update: 0, clear: 0, unchanged: 0 }
+  for (const item of items) summary[item.action as keyof typeof summary]++
+  return { data: { success: true, data: { version: 'v-x', items, errors, summary } } }
 }
 
 afterEach(() => {
   cleanup()
+  i18next.addResource('en', 'translation', '、', '、')
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset()
 })
@@ -256,23 +290,139 @@ describe('step 1: view and edit', () => {
     ).toBeInTheDocument()
   })
 
-  it('lists non-exact and unconfigured records above the editor', async () => {
-    mountDialog()
+  it('states non-exact and unconfigured records as two sentences instead of tags', async () => {
+    i18next.addResource('en', 'translation', '、', ' / ')
+    mountDialog({
+      data: {
+        ...loaded,
+        non_exact: [
+          { model_name: 'gpt-6', name_rule: 1 },
+          { model_name: '-preview', name_rule: 3 },
+        ],
+      },
+    })
     await editor()
     expect(
-      screen.getByText('2 records are not listed below')
+      screen.getByText('3 records are not listed below')
     ).toBeInTheDocument()
-    const nonExact = screen.getByText('gpt-6')
-    expect(nonExact.parentElement).toHaveTextContent('Prefix')
     expect(
       screen.getByText(
-        'They are not specific model names. Edit them in the model drawer; saving here will not touch them.'
+        /2 records are not exact-match records: gpt-6 \(Prefix Match\) \/ -preview \(Suffix Match\)\./
       )
     ).toBeInTheDocument()
-    expect(screen.getByText('glm-5.2')).toBeInTheDocument()
     expect(
-      screen.getByText('To configure them, add their names below.')
+      screen.getByText(
+        /They are not specific model names\. Edit them in the model drawer; saving here will not touch them\./
+      )
     ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /1 records have no capabilities configured yet: glm-5\.2\./
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/To configure it, add its name below\./)
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/To configure them/)).not.toBeInTheDocument()
+    for (const name of ['gpt-6', '-preview', 'glm-5.2']) {
+      expect(screen.queryByText(name, { exact: true })).not.toBeInTheDocument()
+    }
+  })
+
+  it('uses the plural add-names sentence when two records are unconfigured', async () => {
+    i18next.addResource('en', 'translation', '、', ' / ')
+    mountDialog({
+      data: { ...loaded, non_exact: [], unconfigured: ['glm-5.2', 'glm-6'] },
+    })
+    await editor()
+    expect(
+      screen.getByText(
+        /2 records have no capabilities configured yet: glm-5\.2 \/ glm-6\./
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/To configure them, add their names below\./)
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/To configure it/)).not.toBeInTheDocument()
+  })
+
+  it('labels the editor above it with the field name', async () => {
+    mountDialog()
+    const textarea = await editor()
+    const label = screen.getByText('Capability configuration (JSON)')
+    expect(follows(label, textarea)).toBe(true)
+  })
+
+  it('shows the replace-everything note as plain text below the editor, outside a bordered alert', async () => {
+    mountDialog()
+    const textarea = await editor()
+    const note = screen.getByText(RULES_TEXT)
+    expect(note.closest('[data-slot="alert"]')).toBeNull()
+    expect(note.closest('[role="alert"]')).toBeNull()
+    expect(follows(textarea, note)).toBe(true)
+  })
+
+  it('shows the malformed-JSON message after the replace-everything note', async () => {
+    mountDialog()
+    await edit('{"gpt-6.2-sol":')
+    const note = screen.getByText(RULES_TEXT)
+    const error = screen.getByText(
+      'The JSON is malformed. Fix it before previewing.'
+    )
+    expect(follows(note, error)).toBe(true)
+  })
+
+  it('uses one complete sample entry as the empty-editor placeholder', async () => {
+    mountDialog({ data: { capabilities: {}, non_exact: [], unconfigured: [] } })
+    const placeholder = (await editor()).getAttribute('placeholder') ?? ''
+    const sample = JSON.parse(placeholder) as Record<string, unknown>
+    const entries = Object.values(sample)
+    expect(entries).toHaveLength(1)
+    expect(Object.keys(sample)).toEqual(['Model name'])
+    const entry = entries[0] as Record<string, Record<string, unknown>> & {
+      context_length: unknown
+    }
+    expect(Object.keys(entry).sort()).toEqual([
+      'architecture',
+      'context_length',
+      'reasoning',
+      'top_provider',
+    ])
+    expect(Object.keys(entry.architecture).sort()).toEqual([
+      'input_modalities',
+      'output_modalities',
+    ])
+    expect(Object.keys(entry.top_provider)).toEqual(['max_completion_tokens'])
+    expect(Object.keys(entry.reasoning)).toEqual(['supported_efforts'])
+  })
+
+  it('hides the step bar while loading and after a load error', async () => {
+    vi.spyOn(api, 'get').mockReturnValue(new Promise(() => {}))
+    const view = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ModelsProvider>
+          <CapabilitiesJsonDialog open onOpenChange={() => {}} />
+        </ModelsProvider>
+      </QueryClientProvider>
+    )
+    await screen.findByText('Loading...')
+    expect(screen.queryByText('1. Review and edit')).not.toBeInTheDocument()
+    expect(screen.queryByText('2. Preview and save')).not.toBeInTheDocument()
+    view.unmount()
+    vi.restoreAllMocks()
+
+    mountDialog({ getError: true })
+    await screen.findByText('Oops! Something went wrong')
+    expect(screen.queryByText('1. Review and edit')).not.toBeInTheDocument()
+    expect(screen.queryByText('2. Preview and save')).not.toBeInTheDocument()
+  })
+
+  it('opens at 768px wide', async () => {
+    mountDialog()
+    await editor()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className).toContain('sm:max-w-3xl')
+    expect(dialog.className).not.toContain('sm:max-w-4xl')
   })
 
   it('hides the notice when every record is listed', async () => {
@@ -341,9 +491,7 @@ describe('step 1: view and edit', () => {
       data: { capabilities: {}, non_exact: [], unconfigured: ['glm-5.2'] },
     })
     await editor()
-    expect(
-      screen.queryByText('To configure them, add their names below.')
-    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/To configure (them|it)/)).not.toBeInTheDocument()
     expect(
       screen.getByText(
         'No model has capabilities configured yet. You can paste JSON directly.'
@@ -614,6 +762,7 @@ describe('step 2: preview', () => {
 
   it('shows the interpolated validation sentence for structured server messages', async () => {
     const { user, post } = mountDialog()
+    i18next.addResource('en', 'translation', '、', ' / ')
     post.mockResolvedValue({
       data: {
         success: true,
@@ -627,7 +776,7 @@ describe('step 2: preview', () => {
                 params: {
                   path: 'reasoning.supported_efforts',
                   value: 'ultra',
-                  allowed: 'none, minimal, low, medium, high, xhigh, max',
+                  allowed: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
                 },
               },
             },
@@ -639,9 +788,274 @@ describe('step 2: preview', () => {
     await user.click(previewButton())
     expect(
       await screen.findByText(
-        'reasoning.supported_efforts contains an unknown value ultra. Allowed values: none, minimal, low, medium, high, xhigh, max'
+        'reasoning.supported_efforts contains an unknown value ultra. Allowed values: none / minimal / low / medium / high / xhigh / max'
       )
     ).toBeInTheDocument()
+  })
+
+  it('names the compared fields in readable words', async () => {
+    const { user, post } = mountDialog()
+    post.mockResolvedValue(
+      previewWith([
+        {
+          model_name: 'full-model',
+          action: 'create',
+          before: null,
+          after: {
+            context_length: 2000000,
+            top_provider: { max_completion_tokens: 256000 },
+            architecture: {
+              input_modalities: ['text', 'image'],
+              output_modalities: ['text'],
+            },
+            reasoning: { supported_efforts: ['low', 'high'] },
+          },
+        },
+      ])
+    )
+    await goToStep2(user)
+    const block = blockOf('full-model', ['full-model'])
+    for (const label of [
+      'Context length',
+      'Max output tokens',
+      'Input modalities',
+      'Output modalities',
+      'Thinking levels',
+    ]) {
+      expect(block.getByText(label)).toBeInTheDocument()
+    }
+    for (const path of [
+      'context_length',
+      'top_provider.max_completion_tokens',
+      'architecture.input_modalities',
+      'architecture.output_modalities',
+      'reasoning.supported_efforts',
+    ]) {
+      expect(block.queryByText(path)).not.toBeInTheDocument()
+    }
+  })
+
+  it('lists every existing field of a cleared model as current value to cleared', async () => {
+    const { user, post } = mountDialog()
+    post.mockResolvedValue(
+      previewWith([
+        {
+          model_name: 'old-model',
+          action: 'clear',
+          before: {
+            context_length: 8192,
+            architecture: { input_modalities: ['text'] },
+            reasoning: { supported_efforts: [] },
+          },
+          after: null,
+        },
+        {
+          model_name: 'same-model',
+          action: 'unchanged',
+          before: { context_length: 1 },
+          after: { context_length: 1 },
+        },
+      ])
+    )
+    await goToStep2(user)
+    const block = blockOf('old-model', ['old-model', 'same-model'])
+    expect(block.getByText('Field')).toBeInTheDocument()
+    expect(block.getByText('Current value')).toBeInTheDocument()
+    expect(block.getByText('Change to')).toBeInTheDocument()
+    expect(block.getByText('Context length')).toBeInTheDocument()
+    expect(block.getByText('8,192')).toBeInTheDocument()
+    expect(block.getByText('Input modalities')).toBeInTheDocument()
+    expect(block.getByText('text')).toBeInTheDocument()
+    expect(block.getByText('Thinking levels')).toBeInTheDocument()
+    expect(block.getByText('No thinking support')).toBeInTheDocument()
+    expect(block.getAllByText('Cleared (not configured)')).toHaveLength(3)
+  })
+
+  it('orders model blocks as create, update, clear, unchanged, by name within each kind', async () => {
+    const { user, post } = mountDialog()
+    const item = (model_name: string, action: string) => ({
+      model_name,
+      action,
+      before: action === 'create' ? null : { context_length: 1 },
+      after: action === 'clear' ? null : { context_length: 2 },
+    })
+    post.mockResolvedValue(
+      previewWith([
+        item('z-clear', 'clear'),
+        item('b-same', 'unchanged'),
+        item('y-update', 'update'),
+        item('m-new', 'create'),
+        item('a-update', 'update'),
+        item('c-new', 'create'),
+      ])
+    )
+    await goToStep2(user)
+    const order = ['c-new', 'm-new', 'a-update', 'y-update', 'z-clear', 'b-same']
+    const elements = order.map((name) =>
+      screen.getByText(name, { exact: true })
+    )
+    for (let i = 1; i < elements.length; i++) {
+      expect(follows(elements[i - 1], elements[i])).toBe(true)
+    }
+  })
+
+  it('puts the create explanation below the comparison table', async () => {
+    const { user } = mountDialog()
+    await goToStep2(user)
+    const created = blockOf('new-model', [
+      'new-model',
+      'gpt-6.2-sol',
+      'old-model',
+      'qwen4-max',
+    ])
+    const table = created.getByRole('table')
+    const note = created.getByText(
+      'This model has no record in Model Management yet. An exact-match record will be created.'
+    )
+    expect(follows(table, note)).toBe(true)
+  })
+
+  it('shows the clear warning in the plain alert style', async () => {
+    const { user } = mountDialog()
+    await goToStep2(user)
+    const alert = screen
+      .getByText('Capabilities of 1 models will be cleared')
+      .closest('[data-slot="alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.className).not.toMatch(/destructive/)
+  })
+
+  it('draws model blocks without a bordered card', async () => {
+    const { user } = mountDialog()
+    await goToStep2(user)
+    const names = ['new-model', 'gpt-6.2-sol', 'old-model', 'qwen4-max']
+    for (const name of names) {
+      for (const el of blockAncestors(name, names)) {
+        expect(el.getAttribute('data-slot')).not.toBe('card')
+        expect(
+          [...el.classList].filter((c) => /^(border|rounded-lg|rounded-xl)$/.test(c))
+        ).toEqual([])
+      }
+    }
+  })
+
+  it('counts validation failures per model and groups a model\'s problems in one row', async () => {
+    const { user, post } = mountDialog()
+    post.mockResolvedValue(
+      previewWith(
+        [],
+        [
+          {
+            model_name: 'bad-a',
+            message: {
+              key: '{{path}} must be an integer from 1 to 9007199254740991',
+              params: { path: 'context_length' },
+            },
+          },
+          {
+            model_name: 'bad-b',
+            message: {
+              key: '{{path}} is not a capability field',
+              params: { path: 'foo' },
+            },
+          },
+          {
+            model_name: 'bad-a',
+            message: {
+              key: '{{path}} is not a capability field',
+              params: { path: 'bar' },
+            },
+          },
+        ]
+      )
+    )
+    await edit('{"bad-a":{},"bad-b":{}}')
+    await user.click(previewButton())
+    expect(await screen.findByText('Validation failed 2')).toBeInTheDocument()
+    expect(
+      screen.getByText('2 entries failed validation and cannot be saved now')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Entries that failed validation (2)')
+    ).toBeInTheDocument()
+    const row = screen.getByText('bad-a').closest('tr') as HTMLElement
+    expect(row).toHaveTextContent(
+      'context_length must be an integer from 1 to 9007199254740991'
+    )
+    expect(row).toHaveTextContent('bar is not a capability field')
+    const table = row.closest('table') as HTMLElement
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
+  })
+
+  it('lets long problem sentences wrap inside the cell', async () => {
+    const { user, post } = mountDialog()
+    post.mockResolvedValue({ data: { success: true, data: previewWithErrors } })
+    await edit('{"bad-model":{"context_length":-1}}')
+    await user.click(previewButton())
+    const cell = (await screen.findByText(
+      'context_length must be a positive integer'
+    )).closest('td') as HTMLElement
+    expect(cell.className).toMatch(/whitespace-normal|break-words/)
+    expect(cell.className).not.toContain('whitespace-nowrap')
+  })
+
+  it('orders the failed entries by where the model first appears in the submitted JSON', async () => {
+    const { user, post } = mountDialog()
+    const error = (model_name: string) => ({
+      model_name,
+      message: {
+        key: '{{path}} is not a capability field',
+        params: { path: 'foo' },
+      },
+    })
+    post.mockResolvedValue(
+      previewWith([], [error('gpt-x'), error('qwen4-max')])
+    )
+    await edit('{"qwen4-max":{"foo":1},"gpt-x":{"foo":1}}')
+    await user.click(previewButton())
+    const table = (await screen.findByText('gpt-x')).closest(
+      'table'
+    ) as HTMLElement
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows.map((row) => row.querySelector('td')?.textContent)).toEqual([
+      'qwen4-max',
+      'gpt-x',
+    ])
+  })
+
+  it('orders failed entries by model key even when another model name appears earlier as a value', async () => {
+    const { user, post } = mountDialog()
+    const error = (model_name: string) => ({
+      model_name,
+      message: {
+        key: '{{path}} is not a capability field',
+        params: { path: 'foo' },
+      },
+    })
+    post.mockResolvedValue(previewWith([], [error('text'), error('bravo')]))
+    await edit(
+      '{"alpha":{"architecture":{"input_modalities":["text"]}},"bravo":{"foo":1},"text":{"foo":1}}'
+    )
+    await user.click(previewButton())
+    const table = (await screen.findByText('bravo', { exact: true })).closest(
+      'table'
+    ) as HTMLElement
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows.map((row) => row.querySelector('td')?.textContent)).toEqual([
+      'bravo',
+      'text',
+    ])
+  })
+
+  it('shows the failed-entry count at the left of the footer', async () => {
+    const { user, post } = mountDialog()
+    post.mockResolvedValue({ data: { success: true, data: previewWithErrors } })
+    await edit('{"bad-model":{"context_length":-1}}')
+    await user.click(previewButton())
+    const back = await screen.findByRole('button', { name: 'Back to editing' })
+    const footer = back.parentElement as HTMLElement
+    expect(footer.firstElementChild).toHaveTextContent('1 entries failed validation')
+    expect(footer).not.toHaveTextContent('Will create')
   })
 
   it('returns to step 1 keeping the edited JSON', async () => {
@@ -727,6 +1141,19 @@ describe('saving', () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
   })
 
+  it('ends a non-409 save failure with a hint to try again later', async () => {
+    const { user, put } = mountDialog()
+    put.mockRejectedValueOnce(httpError(500, 'database busy'))
+    await goToStep2(user)
+    await user.click(screen.getByRole('button', { name: /Replace and save/ }))
+    const alert = (
+      await screen.findByText('Save failed. Nothing was changed.')
+    ).closest('[data-slot="alert"]')
+    expect(alert?.textContent).toMatch(
+      /database busy.*You can click save again later\.$/
+    )
+  })
+
   it('on 409 asks to preview again and re-runs the preview', async () => {
     const { user, put, post } = mountDialog()
     put.mockRejectedValueOnce(httpError(409, 'stale'))
@@ -742,6 +1169,9 @@ describe('saving', () => {
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /Replace and save/ })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/You can click save again later/)
     ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to editing' })).toBeEnabled()
     const previews = post.mock.calls.length
@@ -824,6 +1254,13 @@ describe('locales', () => {
     'Preview again',
     'Model capabilities saved',
     'Created {{create}}, updated {{update}}, cleared {{clear}} records',
+    'Capability configuration (JSON)',
+    '{{count}} records are not exact-match records: {{names}}.',
+    '{{count}} records have no capabilities configured yet: {{names}}.',
+    '{{name}} ({{rule}})',
+    '{{count}} entries failed validation',
+    'You can click save again later.',
+    'To configure it, add its name below.',
   ]
 
   it.each(locales)('%s defines every key of the dialog', async (locale) => {
@@ -847,5 +1284,36 @@ describe('locales', () => {
         'Created {{create}}, updated {{update}}, cleared {{clear}} records'
       ]
     ).not.toMatch(/[。.]$/)
+  })
+})
+
+describe('zh wording of the new dialog texts', () => {
+  it.each([
+    ['Capability configuration (JSON)', /^能力配置（JSON）$/],
+    [
+      '{{count}} records are not exact-match records: {{names}}.',
+      /^\{\{count\}\} ?条不是完全匹配的记录：\{\{names\}\}。$/,
+    ],
+    [
+      '{{count}} records have no capabilities configured yet: {{names}}.',
+      /^\{\{count\}\} ?条还没有配置任何能力的记录：\{\{names\}\}。$/,
+    ],
+    ['{{name}} ({{rule}})', /^\{\{name\}\}（\{\{rule\}\}）$/],
+    [
+      '{{count}} entries failed validation',
+      /^\{\{count\}\} ?个条目校验没通过$/,
+    ],
+    ['You can click save again later.', /^可以稍后再点一次保存。$/],
+    ['To configure it, add its name below.', /^要给它配置，可以在下面加上它的名字。$/],
+    ['To configure them, add their names below.', /^要给它们配置，可以在下面加上它们的名字。$/],
+    ['Prefix Match', /^前缀匹配$/],
+    ['Suffix Match', /^后缀匹配$/],
+  ])('%s', async (key, expected) => {
+    const mod = await import('../../../../../i18n/locales/zh.json')
+    const translation = (mod.default ?? mod).translation as Record<
+      string,
+      string
+    >
+    expect(translation[key]).toMatch(expected)
   })
 })

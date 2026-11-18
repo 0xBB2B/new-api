@@ -26,6 +26,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -53,6 +54,7 @@ const model = {
 
 afterEach(() => {
   cleanup()
+  i18next.addResource('en', 'translation', '、', '、')
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset()
 })
@@ -336,6 +338,7 @@ describe('model capabilities section in the model drawer', () => {
   })
 
   it('shows interpolated parameters of a server capability error', async () => {
+    i18next.addResource('en', 'translation', '、', ' / ')
     const { put, user } = setup()
     put.mockResolvedValueOnce({
       data: {
@@ -346,15 +349,254 @@ describe('model capabilities section in the model drawer', () => {
         message_params: {
           path: 'architecture.input_modalities',
           value: 'video',
-          allowed: 'text, image, file, audio',
+          allowed: ['text', 'image', 'file', 'audio'],
         },
       },
     })
     await section()
     await user.click(save())
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'architecture.input_modalities contains an unknown value video. Allowed values: text, image, file, audio'
+      'architecture.input_modalities contains an unknown value video. Allowed values: text / image / file / audio'
     )
     expect(screen.queryByText(/fallback message/)).not.toBeInTheDocument()
+  })
+
+  it('lays the seven thinking levels out in a four-column grid', async () => {
+    setup()
+    const s = await section()
+    const grid = s.getByRole('checkbox', { name: 'none' }).closest('div.grid')
+    expect(grid).not.toBeNull()
+    expect(grid?.className).toMatch(/(^|\s)(\w+:)?grid-cols-4(\s|$)/)
+    expect(within(grid as HTMLElement).getAllByRole('checkbox')).toHaveLength(7)
+  })
+
+  it('puts an icon in each mode switch button', async () => {
+    const { user } = setup()
+    const s = await section()
+    const toJson = s.getByRole('button', { name: /JSON mode/ })
+    expect(toJson.querySelector('svg')).not.toBeNull()
+    await user.click(toJson)
+    const toVisual = s.getByRole('button', { name: /Visual mode/ })
+    expect(toVisual.querySelector('svg')).not.toBeNull()
+  })
+
+  it('opens JSON mode with indented multi-line JSON and arrays on one line', async () => {
+    const { user } = setup({
+      ...model,
+      capabilities:
+        '{"context_length":1050000,"architecture":{"input_modalities":["text","image"]}}',
+    })
+    const s = await section()
+    await user.click(s.getByRole('button', { name: /JSON mode/ }))
+    const value = (s.getByRole('textbox') as HTMLTextAreaElement).value
+    expect(value.split('\n').length).toBeGreaterThan(1)
+    expect(value).toMatch(/\n {2}"context_length": 1050000/)
+    expect(value).toMatch(/\n {4}"input_modalities": \["text", ?"image"\]/)
+  })
+
+  it('keeps Visual mode clickable when the JSON is valid but a value is not recognised', async () => {
+    const { user } = setup()
+    const s = await section()
+    await user.click(s.getByRole('button', { name: /JSON mode/ }))
+    fireEvent.input(s.getByRole('textbox'), {
+      target: { value: '{"architecture":{"input_modalities":["video"]}}' },
+    })
+    await s.findByText(/architecture\.input_modalities.*video/)
+    expect(s.getByRole('button', { name: /Visual mode/ })).toBeEnabled()
+  })
+
+  it('joins the allowed values in the validation hint with the localised list separator', async () => {
+    i18next.addResource('en', 'translation', '、', ' / ')
+    const { user } = setup()
+    const s = await section()
+    await user.click(s.getByRole('button', { name: /JSON mode/ }))
+    fireEvent.input(s.getByRole('textbox'), {
+      target: {
+        value:
+          '{"architecture":{"input_modalities":["video"]},"reasoning":{"supported_efforts":["ultra"]}}',
+      },
+    })
+    expect(
+      await s.findByText(
+        'architecture.input_modalities contains an unknown value video. Allowed values: text / image / file / audio'
+      )
+    ).toBeInTheDocument()
+    expect(
+      s.getByText(
+        'reasoning.supported_efforts contains an unknown value ultra. Allowed values: none / minimal / low / medium / high / xhigh / max'
+      )
+    ).toBeInTheDocument()
+  })
+
+})
+
+const MIXED_JSON =
+  '{"context_length":-1,"top_provider":{"max_completion_tokens":128000},"architecture":{"input_modalities":["text","imgae","file"],"output_modalities":["text"]},"reasoning":{"supported_efforts":["low","ultra","medium"]},"foo":"bar"}'
+
+async function openDiscardDialog(json = MIXED_JSON) {
+  const { user } = setup()
+  const s = await section()
+  await user.click(s.getByRole('button', { name: /JSON mode/ }))
+  fireEvent.input(s.getByRole('textbox'), { target: { value: json } })
+  await s.findAllByText(/unknown value|not a capability field|must be/)
+  await user.click(s.getByRole('button', { name: /Visual mode/ }))
+  const dialog = await screen.findByRole('alertdialog')
+  return { user, s, dialog }
+}
+
+describe('switching to visual mode with values that cannot be shown', () => {
+  it('asks first and lists the values to discard in the order of the red hints', async () => {
+    const { dialog } = await openDiscardDialog()
+    const d = within(dialog)
+    expect(d.getByText('Switch to visual mode?')).toBeInTheDocument()
+    expect(
+      d.getByText(
+        'These values cannot be shown in visual mode and will be discarded after switching.'
+      )
+    ).toBeInTheDocument()
+    const items = d.getAllByRole('listitem')
+    expect(items.map((li) => li.textContent)).toEqual([
+      'context_length: -1',
+      'imgae in architecture.input_modalities',
+      'ultra in reasoning.supported_efforts',
+      'foo: "bar"',
+    ])
+    expect(d.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+    expect(
+      d.getByRole('button', { name: 'Discard and switch' })
+    ).toBeInTheDocument()
+  })
+
+  it('writes only the path and the value in monospace code elements', async () => {
+    const { dialog } = await openDiscardDialog()
+    const codes = within(dialog)
+      .getAllByRole('listitem')
+      .map((li) => [...li.querySelectorAll('code')].map((c) => c.textContent))
+    expect(codes).toEqual([
+      ['context_length', '-1'],
+      ['imgae', 'architecture.input_modalities'],
+      ['ultra', 'reasoning.supported_efforts'],
+      ['foo', '"bar"'],
+    ])
+  })
+
+  it('lists only the non-string item of a mixed array and keeps the string after discarding', async () => {
+    const { user, s, dialog } = await openDiscardDialog(
+      '{"architecture":{"input_modalities":[1,"text"]}}'
+    )
+    expect(
+      within(dialog)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent)
+    ).toEqual(['1 in architecture.input_modalities'])
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Discard and switch' })
+    )
+    const input = within(
+      (await s.findByText('Input modalities')).parentElement as HTMLElement
+    )
+    expect(input.getByRole('checkbox', { name: 'Text' })).toBeChecked()
+  })
+
+  it('lists a repeated unknown value once without duplicate-key warnings', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { dialog } = await openDiscardDialog(
+      '{"architecture":{"input_modalities":["video","video"]}}'
+    )
+    expect(
+      within(dialog)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent)
+    ).toEqual(['video in architecture.input_modalities'])
+    const logged = errors.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(logged).not.toMatch(/same key/)
+  })
+
+  it('stays in JSON mode with the content and hints unchanged after Cancel', async () => {
+    const { user, s, dialog } = await openDiscardDialog()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    )
+    expect((s.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
+      MIXED_JSON
+    )
+    expect(s.getByText(/foo is not a capability field/)).toBeInTheDocument()
+    expect(s.getByRole('button', { name: /Visual mode/ })).toBeInTheDocument()
+  })
+
+  it('keeps only the recognised parts after Discard and switch', async () => {
+    const { user, s, dialog } = await openDiscardDialog()
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Discard and switch' })
+    )
+    expect(await s.findByPlaceholderText('e.g. 1050000')).toHaveValue(null)
+    expect(s.getByPlaceholderText('e.g. 128000')).toHaveValue(128000)
+    const input = within(
+      s.getByText('Input modalities').parentElement as HTMLElement
+    )
+    expect(input.getByRole('checkbox', { name: 'Text' })).toBeChecked()
+    expect(input.getByRole('checkbox', { name: 'File' })).toBeChecked()
+    expect(input.getByRole('checkbox', { name: 'Image' })).not.toBeChecked()
+    expect(s.getByRole('checkbox', { name: 'low' })).toBeChecked()
+    expect(s.getByRole('checkbox', { name: 'medium' })).toBeChecked()
+    expect(s.getByRole('checkbox', { name: 'high' })).not.toBeChecked()
+    expect(s.queryByText(/foo is not a capability field/)).not.toBeInTheDocument()
+
+    await user.click(s.getByRole('button', { name: /JSON mode/ }))
+    const value = (s.getByRole('textbox') as HTMLTextAreaElement).value
+    for (const gone of ['context_length', 'foo', 'imgae', 'ultra']) {
+      expect(value).not.toContain(gone)
+    }
+  })
+
+  it('switches without asking when every value is recognised', async () => {
+    const { user } = setup()
+    const s = await section()
+    await user.click(s.getByRole('button', { name: /JSON mode/ }))
+    fireEvent.input(s.getByRole('textbox'), {
+      target: { value: '{"context_length":4096}' },
+    })
+    await user.click(s.getByRole('button', { name: /Visual mode/ }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(s.getByPlaceholderText('e.g. 1050000')).toHaveValue(4096)
+  })
+
+  it.each(['en', 'zh', 'zh-TW', 'fr', 'ru', 'ja', 'vi'])(
+    '%s defines the discard dialog keys',
+    async (locale) => {
+      const mod = await import(`../../../../../i18n/locales/${locale}.json`)
+      const translation = (mod.default ?? mod).translation as Record<
+        string,
+        string
+      >
+      const keys = [
+        'Switch to visual mode?',
+        'These values cannot be shown in visual mode and will be discarded after switching.',
+        '<path/>: <value/>',
+        '<value/> in <path/>',
+        'Discard and switch',
+      ]
+      expect(keys.filter((key) => !(key in translation))).toEqual([])
+      expect('{{path}}: {{value}}' in translation).toBe(false)
+      expect('{{value}} in {{path}}' in translation).toBe(false)
+    }
+  )
+
+  it('zh wording of the discard dialog', async () => {
+    const mod = await import('../../../../../i18n/locales/zh.json')
+    const translation = (mod.default ?? mod).translation as Record<
+      string,
+      string
+    >
+    expect(translation['Switch to visual mode?']).toBe('切换到可视模式？')
+    expect(
+      translation[
+        'These values cannot be shown in visual mode and will be discarded after switching.'
+      ]
+    ).toBe('下面这些值在可视模式里无法表示，切换后会丢弃。')
+    expect(translation['<path/>: <value/>']).toBe('<path/>：<value/>')
+    expect(translation['<value/> in <path/>']).toBe('<path/> 里的 <value/>')
+    expect(translation['Discard and switch']).toBe('丢弃并切换')
   })
 })

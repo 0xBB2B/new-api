@@ -193,7 +193,7 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 		}
 		oaiModel.Architecture = architecture
 	}
-	thinking := smartroute.EffectiveThinkingCapability(modelName)
+	thinking := smartroute.ThinkingCapabilityFromRecord(modelName, capability)
 	switch {
 	case thinking.Source == smartroute.ThinkingSourceUnconfirmed:
 	case thinking.NoThinking:

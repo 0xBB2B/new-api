@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 export const MODEL_INPUT_MODALITIES = [
   'text',
   'image',
@@ -129,7 +131,11 @@ function checkArray(
     errors.push({
       path,
       key: '{{path}} contains an unknown value {{value}}. Allowed values: {{allowed}}',
-      params: { path, value: unknown.join(', '), allowed: allowed.join(', ') },
+      params: {
+        path,
+        value: unknown.join(', '),
+        allowed: allowed.join(t('、')),
+      },
     })
   }
 }
@@ -229,6 +235,117 @@ export function parseModelCapabilityJson(
     ok: true,
     value: normalizeModelCapability(parsed as ModelCapability),
   }
+}
+
+export function formatModelCapabilityJson(value: unknown, indent = ''): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => JSON.stringify(item)).join(', ')}]`
+  }
+  if (!isPlainObject(value)) return JSON.stringify(value)
+  const entries = Object.entries(value)
+  if (entries.length === 0) return '{}'
+  const inner = `${indent}  `
+  const lines = entries.map(
+    ([key, child]) =>
+      `${inner}${JSON.stringify(key)}: ${formatModelCapabilityJson(child, inner)}`
+  )
+  return `{\n${lines.join(',\n')}\n${indent}}`
+}
+
+export type DiscardedCapabilityValue = {
+  path: string
+  value: string
+  scope: 'field' | 'item'
+}
+
+export function listDiscardedCapabilityValues(
+  text: string
+): DiscardedCapabilityValue[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return []
+  }
+  if (!isPlainObject(parsed)) return []
+  const discarded: DiscardedCapabilityValue[] = []
+  const dropField = (path: string, value: unknown) =>
+    discarded.push({ path, value: JSON.stringify(value), scope: 'field' })
+
+  for (const [name, value] of Object.entries(parsed)) {
+    if (!TOP_LEVEL_FIELDS.has(name)) {
+      dropField(name, value)
+    } else if (name === 'context_length') {
+      if (value != null && !isPositiveSafeInteger(value)) dropField(name, value)
+    } else if (value !== null && !isPlainObject(value)) {
+      dropField(name, value)
+    } else if (isPlainObject(value)) {
+      for (const [child, childValue] of Object.entries(value)) {
+        const path = `${name}.${child}`
+        if (!NESTED_FIELDS[name].includes(child)) {
+          dropField(path, childValue)
+        } else if (childValue == null) {
+          continue
+        } else if (name === 'top_provider') {
+          if (!isPositiveSafeInteger(childValue)) dropField(path, childValue)
+        } else if (!Array.isArray(childValue)) {
+          dropField(path, childValue)
+        } else {
+          for (const item of childValue) {
+            if (ARRAY_OPTIONS[path].includes(item)) continue
+            const value = typeof item === 'string' ? item : JSON.stringify(item)
+            if (!discarded.some((d) => d.path === path && d.value === value)) {
+              discarded.push({ path, value, scope: 'item' })
+            }
+          }
+        }
+      }
+    }
+  }
+  return discarded
+}
+
+export function recoverModelCapability(text: string): ModelCapability | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isPlainObject(parsed)) return null
+  const section = (name: string) =>
+    isPlainObject(parsed[name]) ? parsed[name] : {}
+  const pickNumber = (value: unknown) =>
+    isPositiveSafeInteger(value) ? value : undefined
+  const pickArray = (value: unknown, options: readonly string[]) => {
+    if (!Array.isArray(value)) return undefined
+    const known = value.filter((v) => options.includes(v))
+    return known.length > 0 || value.length === 0 ? known : undefined
+  }
+  const maxTokens = pickNumber(section('top_provider').max_completion_tokens)
+  return normalizeModelCapability({
+    context_length: pickNumber(parsed.context_length),
+    top_provider:
+      maxTokens === undefined
+        ? undefined
+        : { max_completion_tokens: maxTokens },
+    architecture: {
+      input_modalities: pickArray(
+        section('architecture').input_modalities,
+        MODEL_INPUT_MODALITIES
+      ),
+      output_modalities: pickArray(
+        section('architecture').output_modalities,
+        MODEL_OUTPUT_MODALITIES
+      ),
+    },
+    reasoning: {
+      supported_efforts: pickArray(
+        section('reasoning').supported_efforts,
+        MODEL_REASONING_EFFORTS
+      ),
+    },
+  })
 }
 
 export function serializeModelCapability(value: ModelCapability): string {

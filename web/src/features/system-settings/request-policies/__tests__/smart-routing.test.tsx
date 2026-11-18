@@ -17,7 +17,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { useState } from 'react'
-import { Toaster } from 'sonner'
+import { toast, Toaster } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import en from '@/i18n/locales/en.json'
@@ -212,6 +212,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  toast.dismiss()
+  await waitFor(() => expect(toastCount()).toBe(0))
   cleanup()
   client.clear()
   vi.restoreAllMocks()

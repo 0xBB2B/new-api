@@ -31,6 +31,7 @@ import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { invalidateModelPricing } from '@/features/model-pricing/api'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
@@ -39,6 +40,7 @@ import {
   getServerErrorMessage,
   getServerErrorStatus,
   requireServerSuccess,
+  translateMessageParams,
 } from '@/lib/server-error-message'
 
 import {
@@ -46,17 +48,38 @@ import {
   previewModelCapabilities,
   saveModelCapabilities,
 } from '../../api'
-import { getNameRuleConfig } from '../../constants'
+import { getNameRuleOptions } from '../../constants'
+import { formatModelCapabilityJson } from '../../lib/model-capabilities'
 import type {
   CapabilitiesMap,
   CapabilitiesPreviewAction,
   CapabilitiesPreviewItem as PreviewItem,
-  NameRule,
   PreviewModelCapabilitiesResponse,
 } from '../../types'
 
 const STEPS = ['1. Review and edit', '2. Preview and save']
-const PLACEHOLDER = '{\n  "gpt-6.2-sol": { "context_length": 1050000 }\n}'
+const SAMPLE_CAPABILITY = {
+  context_length: 1050000,
+  top_provider: { max_completion_tokens: 128000 },
+  architecture: {
+    input_modalities: ['text', 'image'],
+    output_modalities: ['text'],
+  },
+  reasoning: { supported_efforts: ['low', 'medium', 'high'] },
+}
+const FIELD_LABELS: Record<string, string> = {
+  context_length: 'Context length',
+  'top_provider.max_completion_tokens': 'Max output tokens',
+  'architecture.input_modalities': 'Input modalities',
+  'architecture.output_modalities': 'Output modalities',
+  'reasoning.supported_efforts': 'Thinking levels',
+}
+const ACTION_ORDER: CapabilitiesPreviewAction[] = [
+  'create',
+  'update',
+  'clear',
+  'unchanged',
+]
 const ACTION_LABELS: Record<CapabilitiesPreviewAction, string> = {
   create: 'Create',
   update: 'Update',
@@ -139,18 +162,7 @@ export function CapabilityPreviewItem(props: { item: PreviewItem }) {
   )
 
   let body = null
-  if (item.action === 'clear') {
-    body = (
-      <>
-        <p className='text-sm font-medium'>{t('Cleared (not configured)')}</p>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'The model is not in the JSON, so its capabilities will be cleared. The record itself is kept.'
-          )}
-        </p>
-      </>
-    )
-  } else if (item.action === 'unchanged') {
+  if (item.action === 'unchanged') {
     body = (
       <p className='text-muted-foreground text-sm'>
         {t('Same as the current configuration. Nothing will change.')}
@@ -159,21 +171,13 @@ export function CapabilityPreviewItem(props: { item: PreviewItem }) {
   } else {
     body = (
       <>
-        {item.action === 'create' && (
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'This model has no record in Model Management yet. An exact-match record will be created.'
-            )}
-          </p>
-        )}
         <StaticDataTable
           columns={[
             {
               id: 'field',
               header: t('Field'),
-              cell: (path: string) => (
-                <span className='font-mono text-xs'>{path}</span>
-              ),
+              cell: (path: string) =>
+                FIELD_LABELS[path] ? t(FIELD_LABELS[path]) : path,
             },
             {
               id: 'before',
@@ -195,12 +199,26 @@ export function CapabilityPreviewItem(props: { item: PreviewItem }) {
           data={changed}
           getRowKey={(path) => path}
         />
+        {item.action === 'create' && (
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'This model has no record in Model Management yet. An exact-match record will be created.'
+            )}
+          </p>
+        )}
+        {item.action === 'clear' && (
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'The model is not in the JSON, so its capabilities will be cleared. The record itself is kept.'
+            )}
+          </p>
+        )}
       </>
     )
   }
 
   return (
-    <div className='space-y-2 rounded-lg border p-3'>
+    <div className='space-y-2'>
       <div className='flex items-center gap-2'>
         <span className='font-mono text-sm font-medium'>{item.model_name}</span>
         <Badge variant={ACTION_VARIANTS[item.action]}>
@@ -217,7 +235,7 @@ function CapabilitiesJsonDialogContent(props: {
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const nameRules = getNameRuleConfig(t)
+  const nameRules = getNameRuleOptions(t)
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState<string | null>(null)
   const [preview, setPreview] = useState<PreviewState | null>(null)
@@ -267,7 +285,9 @@ function CapabilitiesJsonDialogContent(props: {
 
   const data = query.data
   const modelCount = Object.keys(data?.capabilities ?? {}).length
-  const baseline = modelCount ? JSON.stringify(data?.capabilities, null, 2) : ''
+  const baseline = modelCount
+    ? formatModelCapabilityJson(data?.capabilities)
+    : ''
   const text = draft ?? baseline
   const dirty = text !== baseline
   const parsed = parseCapabilities(text)
@@ -293,6 +313,34 @@ function CapabilitiesJsonDialogContent(props: {
   const changeCount = result
     ? result.summary.create + result.summary.update + result.summary.clear
     : 0
+  const failedGroups = new Map<string, string[]>()
+  for (const error of result?.errors ?? []) {
+    const message = t(
+      error.message.key,
+      error.message.params && translateMessageParams(error.message.params)
+    )
+    failedGroups.set(error.model_name, [
+      ...(failedGroups.get(error.model_name) ?? []),
+      message,
+    ])
+  }
+  const submittedOrder = Object.keys(preview?.capabilities ?? {})
+  const submittedPosition = (name: string) => {
+    const position = submittedOrder.indexOf(name)
+    return position === -1 ? Number.MAX_SAFE_INTEGER : position
+  }
+  const failedRows = [...failedGroups]
+    .map(([model, problems]) => ({ model, problems }))
+    .sort(
+      (a, b) =>
+        submittedPosition(a.model) - submittedPosition(b.model) ||
+        a.model.localeCompare(b.model)
+    )
+  const orderedItems = [...(result?.items ?? [])].sort(
+    (a, b) =>
+      ACTION_ORDER.indexOf(a.action) - ACTION_ORDER.indexOf(b.action) ||
+      a.model_name.localeCompare(b.model_name)
+  )
   const cleared = result?.items.filter((item) => item.action === 'clear') ?? []
   const n = (value: number | undefined) => formatNumber(value, locale)
   const summaryLabels = {
@@ -350,6 +398,13 @@ function CapabilitiesJsonDialogContent(props: {
   } else if (result && preview) {
     footer = (
       <>
+        {errorCount > 0 && (
+          <span className='text-muted-foreground mr-auto text-sm'>
+            {t('{{count}} entries failed validation', {
+              count: n(failedRows.length),
+            })}
+          </span>
+        )}
         {errorCount === 0 && (
           <span className='text-muted-foreground mr-auto text-sm'>
             {t(
@@ -412,58 +467,67 @@ function CapabilitiesJsonDialogContent(props: {
             </AlertTitle>
             <AlertDescription className='space-y-2'>
               {data.non_exact.length > 0 && (
-                <div className='space-y-1'>
-                  <div className='flex flex-wrap gap-1'>
-                    {data.non_exact.map((entry) => (
-                      <Badge key={entry.model_name} variant='outline'>
-                        <span>{entry.model_name}</span>
-                        <span className='text-muted-foreground'>
-                          {nameRules[entry.name_rule as NameRule]?.label}
-                        </span>
-                      </Badge>
-                    ))}
-                  </div>
-                  <p>
-                    {t(
-                      'They are not specific model names. Edit them in the model drawer; saving here will not touch them.'
-                    )}
-                  </p>
-                </div>
+                <p>
+                  {t(
+                    '{{count}} records are not exact-match records: {{names}}.',
+                    {
+                      count: n(data.non_exact.length),
+                      names: data.non_exact
+                        .map((entry) =>
+                          t('{{name}} ({{rule}})', {
+                            name: entry.model_name,
+                            rule: nameRules.find(
+                              (rule) => rule.value === entry.name_rule
+                            )?.label,
+                          })
+                        )
+                        .join(t('、')),
+                    }
+                  )}{' '}
+                  {t(
+                    'They are not specific model names. Edit them in the model drawer; saving here will not touch them.'
+                  )}
+                </p>
               )}
               {unconfigured.length > 0 && (
-                <div className='space-y-1'>
-                  <div className='flex flex-wrap gap-1'>
-                    {unconfigured.map((name) => (
-                      <Badge key={name} variant='outline'>
-                        {name}
-                      </Badge>
-                    ))}
-                  </div>
-                  <p>{t('To configure them, add their names below.')}</p>
-                </div>
+                <p>
+                  {t(
+                    '{{count}} records have no capabilities configured yet: {{names}}.',
+                    {
+                      count: n(unconfigured.length),
+                      names: unconfigured.join(t('、')),
+                    }
+                  )}{' '}
+                  {unconfigured.length === 1
+                    ? t('To configure it, add its name below.')
+                    : t('To configure them, add their names below.')}
+                </p>
               )}
             </AlertDescription>
           </Alert>
         )}
-        <JsonCodeEditor
-          value={text}
-          onChange={setDraft}
-          placeholder={PLACEHOLDER}
-          ariaLabel={t('Capabilities JSON')}
-          heightClassName='h-80 min-h-80 max-h-80'
-        />
-        {!parsed && (
-          <p className='text-destructive text-sm'>
-            {t('The JSON is malformed. Fix it before previewing.')}
-          </p>
-        )}
-        <Alert>
-          <AlertDescription>
+        <div className='space-y-2'>
+          <Label>{t('Capability configuration (JSON)')}</Label>
+          <JsonCodeEditor
+            value={text}
+            onChange={setDraft}
+            placeholder={formatModelCapabilityJson({
+              [t('Model name')]: SAMPLE_CAPABILITY,
+            })}
+            ariaLabel={t('Capabilities JSON')}
+            heightClassName='h-80 min-h-80 max-h-80'
+          />
+          <p className='text-muted-foreground text-sm'>
             {t(
               "Saving replaces everything. After saving, each model's capabilities will be exactly what is written here. Fields that are omitted or set to null will be cleared. Removing a model from the JSON clears its capabilities but keeps the record. Models without a record in Model Management get a new exact-match record automatically."
             )}
-          </AlertDescription>
-        </Alert>
+          </p>
+          {!parsed && (
+            <p className='text-destructive text-sm'>
+              {t('The JSON is malformed. Fix it before previewing.')}
+            </p>
+          )}
+        </div>
       </div>
     )
   } else if (result) {
@@ -480,7 +544,9 @@ function CapabilitiesJsonDialogContent(props: {
           )}
           {errorCount > 0 && (
             <Badge variant='destructive'>
-              {t('Validation failed {{count}}', { count: n(errorCount) })}
+              {t('Validation failed {{count}}', {
+                count: n(failedRows.length),
+              })}
             </Badge>
           )}
         </div>
@@ -497,7 +563,7 @@ function CapabilitiesJsonDialogContent(props: {
                 ? t(
                     'After the preview, some model data was changed, so the comparison below is out of date. Preview again, confirm the latest changes, then save.'
                   )
-                : saveIssue.message}
+                : `${saveIssue.message} ${t('You can click save again later.')}`}
             </AlertDescription>
           </Alert>
         )}
@@ -509,7 +575,7 @@ function CapabilitiesJsonDialogContent(props: {
                 {t(
                   '{{count}} entries failed validation and cannot be saved now',
                   {
-                    count: n(errorCount),
+                    count: n(failedRows.length),
                   }
                 )}
               </AlertTitle>
@@ -522,7 +588,7 @@ function CapabilitiesJsonDialogContent(props: {
             <div className='space-y-2'>
               <h3 className='text-sm font-medium'>
                 {t('Entries that failed validation ({{count}})', {
-                  count: n(errorCount),
+                  count: n(failedRows.length),
                 })}
               </h3>
               <StaticDataTable
@@ -531,25 +597,30 @@ function CapabilitiesJsonDialogContent(props: {
                     id: 'model',
                     header: t('Model'),
                     cell: (row) => (
-                      <span className='font-mono text-xs'>
-                        {row.model_name}
-                      </span>
+                      <span className='font-mono text-xs'>{row.model}</span>
                     ),
                   },
                   {
                     id: 'problem',
                     header: t('Problem'),
-                    cell: (row) => t(row.message.key, row.message.params),
+                    cellClassName: 'whitespace-normal break-words',
+                    cell: (row) => (
+                      <div className='space-y-1'>
+                        {row.problems.map((problem) => (
+                          <div key={problem}>{problem}</div>
+                        ))}
+                      </div>
+                    ),
                   },
                 ]}
-                data={result.errors}
-                getRowKey={(row, index) => `${row.model_name}-${index}`}
+                data={failedRows}
+                getRowKey={(row) => row.model}
               />
             </div>
           </>
         )}
         {cleared.length > 0 && (
-          <Alert variant='destructive'>
+          <Alert>
             <AlertTriangle aria-hidden='true' />
             <AlertTitle>
               {t('Capabilities of {{count}} models will be cleared', {
@@ -571,7 +642,7 @@ function CapabilitiesJsonDialogContent(props: {
           </Alert>
         )}
         <div className='space-y-3'>
-          {result.items.map((item) => (
+          {orderedItems.map((item) => (
             <CapabilityPreviewItem key={item.model_name} item={item} />
           ))}
         </div>
@@ -587,25 +658,27 @@ function CapabilitiesJsonDialogContent(props: {
       description={t(
         'These are the current capabilities of all models, organized by model name, in the same format as /v1/models. You can copy or download them, edit them directly, or paste new content and save.'
       )}
-      contentClassName='sm:max-w-4xl'
+      contentClassName='sm:max-w-3xl'
       contentHeight='min(75vh, 800px)'
       footer={footer}
     >
-      <ol className='mb-5 grid grid-cols-2 gap-2'>
-        {STEPS.map((label, index) => (
-          <li
-            key={label}
-            aria-current={step === index ? 'step' : undefined}
-            className={
-              step === index
-                ? 'border-primary bg-primary/5 rounded-lg border p-2 text-sm font-medium'
-                : 'text-muted-foreground rounded-lg border p-2 text-sm'
-            }
-          >
-            {t(label)}
-          </li>
-        ))}
-      </ol>
+      {data && !query.isError && (
+        <ol className='mb-5 grid grid-cols-2 gap-2'>
+          {STEPS.map((label, index) => (
+            <li
+              key={label}
+              aria-current={step === index ? 'step' : undefined}
+              className={
+                step === index
+                  ? 'border-primary bg-primary/5 rounded-lg border p-2 text-sm font-medium'
+                  : 'text-muted-foreground rounded-lg border p-2 text-sm'
+              }
+            >
+              {t(label)}
+            </li>
+          ))}
+        </ol>
+      )}
       {content}
     </Dialog>
   )

@@ -1,3 +1,4 @@
+import { Code, Table } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -18,8 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useRef, useState } from 'react'
 import { useController } from 'react-hook-form'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SideDrawerSection } from '@/components/drawer-layout'
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { Button } from '@/components/ui/button'
@@ -27,14 +29,18 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { translateMessageParams } from '@/lib/server-error-message'
 
 import {
   MODEL_INPUT_MODALITIES,
   MODEL_OUTPUT_MODALITIES,
   MODEL_REASONING_EFFORTS,
   capabilityToFormValues,
+  formatModelCapabilityJson,
   formValuesToCapability,
+  listDiscardedCapabilityValues,
   parseModelCapabilityJson,
+  recoverModelCapability,
   serializeModelCapability,
   type ModelCapabilityError,
   type ModelCapabilityFormValues,
@@ -60,12 +66,19 @@ function CheckboxGroup(props: {
   options: readonly string[]
   value: string[]
   disabled?: boolean
+  grid?: boolean
   translate?: boolean
   onChange: (value: string[]) => void
 }) {
   const { t } = useTranslation()
   return (
-    <div className='flex flex-wrap gap-x-4 gap-y-2'>
+    <div
+      className={
+        props.grid
+          ? 'grid grid-cols-4 gap-x-4 gap-y-2'
+          : 'flex flex-wrap gap-x-4 gap-y-2'
+      }
+    >
       {props.options.map((option) => (
         <Label key={option} className='flex items-center gap-2 font-normal'>
           <Checkbox
@@ -97,6 +110,8 @@ export function ModelCapabilitiesSection() {
   const [values, setValues] = useState<ModelCapabilityFormValues>(
     () => valuesFromText(field.value) ?? EMPTY_VALUES
   )
+  const [jsonText, setJsonText] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const written = useRef(field.value)
 
   useEffect(() => {
@@ -121,11 +136,13 @@ export function ModelCapabilitiesSection() {
   const errors: ModelCapabilityError[] =
     parsed?.ok === false ? parsed.errors : []
   const isSyntaxError = errors.some((e) => e.key === 'Invalid JSON')
+  const canLeaveJsonMode =
+    field.value.trim() === '' || recoverModelCapability(field.value) !== null
   const errorsAt = (path: string) => errors.filter((e) => e.path === path)
   const renderErrors = (list: ModelCapabilityError[]) =>
     list.map((e) => (
       <p key={`${e.path}:${e.key}`} className='text-destructive text-sm'>
-        {t(e.key, e.params)}
+        {t(e.key, e.params && translateMessageParams(e.params))}
       </p>
     ))
   const renderNumberErrors = (path: string) =>
@@ -135,14 +152,31 @@ export function ModelCapabilitiesSection() {
       </p>
     )
 
+  const discarded =
+    mode === 'json' ? listDiscardedCapabilityValues(field.value) : []
+
   const switchMode = () => {
     if (mode === 'form') {
+      const result = parseModelCapabilityJson(field.value)
+      setJsonText(
+        result.ok
+          ? formatModelCapabilityJson(result.value)
+          : field.value.trim() || '{}'
+      )
       setMode('json')
       return
     }
-    const next = valuesFromText(field.value)
-    if (!next) return
-    setValues(next)
+    const recovered = recoverModelCapability(field.value)
+    if (recovered) {
+      setValues(capabilityToFormValues(recovered))
+      if (errors.length > 0) {
+        write(serializeModelCapability(recovered))
+      }
+    } else if (field.value.trim() === '') {
+      setValues(EMPTY_VALUES)
+    } else {
+      return
+    }
     setMode('form')
   }
 
@@ -154,10 +188,22 @@ export function ModelCapabilitiesSection() {
           type='button'
           variant='outline'
           size='sm'
-          disabled={mode === 'json' && errors.length > 0}
-          onClick={switchMode}
+          disabled={mode === 'json' && !canLeaveJsonMode}
+          onClick={() =>
+            discarded.length > 0 ? setConfirmOpen(true) : switchMode()
+          }
         >
-          {mode === 'form' ? t('JSON mode') : t('Visual mode')}
+          {mode === 'form' ? (
+            <>
+              <Code className='mr-2 h-4 w-4' aria-hidden='true' />
+              {t('JSON mode')}
+            </>
+          ) : (
+            <>
+              <Table className='mr-2 h-4 w-4' aria-hidden='true' />
+              {t('Visual mode')}
+            </>
+          )}
         </Button>
       </div>
       <p className='text-muted-foreground text-sm'>
@@ -170,8 +216,11 @@ export function ModelCapabilitiesSection() {
         <div className='flex flex-col gap-2'>
           <Label>{t('Capability configuration')}</Label>
           <JsonCodeEditor
-            value={field.value.trim() === '' ? '{}' : field.value}
-            onChange={write}
+            value={jsonText}
+            onChange={(text) => {
+              setJsonText(text)
+              write(text)
+            }}
             ariaLabel={t('Capability configuration')}
           />
           <p className='text-muted-foreground text-sm'>
@@ -273,6 +322,7 @@ export function ModelCapabilitiesSection() {
               options={MODEL_REASONING_EFFORTS}
               value={values.supported_efforts}
               disabled={values.no_reasoning}
+              grid
               onChange={(value) => update({ supported_efforts: value })}
             />
             <p className='text-muted-foreground text-sm'>
@@ -284,6 +334,47 @@ export function ModelCapabilitiesSection() {
           </div>
         </>
       )}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={t('Switch to visual mode?')}
+        desc={
+          <>
+            <p>
+              {t(
+                'These values cannot be shown in visual mode and will be discarded after switching.'
+              )}
+            </p>
+            <ul className='text-muted-foreground mt-2 list-disc ps-5 text-sm'>
+              {discarded.map((item) => (
+                <li key={`${item.path}:${item.value}`}>
+                  <Trans
+                    t={t}
+                    i18nKey={
+                      item.scope === 'field'
+                        ? '<path/>: <value/>'
+                        : '<value/> in <path/>'
+                    }
+                    components={{
+                      path: (
+                        <code className='font-mono text-xs'>{item.path}</code>
+                      ),
+                      value: (
+                        <code className='font-mono text-xs'>{item.value}</code>
+                      ),
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
+        }
+        confirmText={t('Discard and switch')}
+        handleConfirm={() => {
+          setConfirmOpen(false)
+          switchMode()
+        }}
+      />
     </SideDrawerSection>
   )
 }

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 const maxCapabilityNumber = 9007199254740991
@@ -90,7 +91,7 @@ func parseCapabilityNumber(raw []byte, path string) (*int64, error) {
 func parseCapabilityList(raw []byte, path string, allowed []string) (*[]string, []error) {
 	unknownValue := func(value string) error {
 		return common.NewMessage("{{path}} contains an unknown value {{value}}. Allowed values: {{allowed}}", map[string]any{
-			"path": path, "value": value, "allowed": strings.Join(allowed, ", "),
+			"path": path, "value": value, "allowed": allowed,
 		})
 	}
 	var items []any
@@ -195,21 +196,11 @@ func (c ModelCapability) IsEmpty() bool {
 
 // MarshalCanonical 输出键顺序固定的规范 JSON，全部未配置时为空串。
 func (c ModelCapability) MarshalCanonical() string {
-	type topProvider struct {
-		MaxCompletionTokens int64 `json:"max_completion_tokens"`
-	}
-	type architecture struct {
-		InputModalities  []string `json:"input_modalities,omitempty"`
-		OutputModalities []string `json:"output_modalities,omitempty"`
-	}
-	type reasoning struct {
-		SupportedEfforts []string `json:"supported_efforts"`
-	}
 	type document struct {
-		ContextLength *int64        `json:"context_length,omitempty"`
-		TopProvider   *topProvider  `json:"top_provider,omitempty"`
-		Architecture  *architecture `json:"architecture,omitempty"`
-		Reasoning     *reasoning    `json:"reasoning,omitempty"`
+		ContextLength *int64                       `json:"context_length,omitempty"`
+		TopProvider   *dto.OpenAIModelTopProvider  `json:"top_provider,omitempty"`
+		Architecture  *dto.OpenAIModelArchitecture `json:"architecture,omitempty"`
+		Reasoning     *dto.OpenAIModelReasoning    `json:"reasoning,omitempty"`
 	}
 	c = c.Normalize()
 	if c.IsEmpty() {
@@ -217,10 +208,10 @@ func (c ModelCapability) MarshalCanonical() string {
 	}
 	doc := document{ContextLength: c.ContextLength}
 	if c.MaxCompletionTokens != nil {
-		doc.TopProvider = &topProvider{MaxCompletionTokens: *c.MaxCompletionTokens}
+		doc.TopProvider = &dto.OpenAIModelTopProvider{MaxCompletionTokens: c.MaxCompletionTokens}
 	}
 	if c.InputModalities != nil || c.OutputModalities != nil {
-		doc.Architecture = &architecture{}
+		doc.Architecture = &dto.OpenAIModelArchitecture{}
 		if c.InputModalities != nil {
 			doc.Architecture.InputModalities = *c.InputModalities
 		}
@@ -229,7 +220,7 @@ func (c ModelCapability) MarshalCanonical() string {
 		}
 	}
 	if c.Efforts != nil {
-		doc.Reasoning = &reasoning{SupportedEfforts: slices.Clone(*c.Efforts)}
+		doc.Reasoning = &dto.OpenAIModelReasoning{SupportedEfforts: slices.Clone(*c.Efforts)}
 	}
 	encoded, err := common.Marshal(doc)
 	if err != nil {

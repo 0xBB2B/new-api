@@ -46,7 +46,11 @@ func inferredThinkingCapability(name string) ThinkingCapability {
 }
 
 func EffectiveThinkingCapability(name string) ThinkingCapability {
-	if efforts, configured := model.ModelThinkingSupport(model.GetModelCapabilityByName(name)); configured {
+	return ThinkingCapabilityFromRecord(name, model.GetModelCapabilityByName(name))
+}
+
+func ThinkingCapabilityFromRecord(name string, capability model.ModelCapability) ThinkingCapability {
+	if efforts, configured := model.ModelThinkingSupport(capability); configured {
 		return ThinkingCapability{Source: ThinkingSourceRecord, NoThinking: len(efforts) == 0, Efforts: efforts}
 	}
 	return inferredThinkingCapability(name)

@@ -33,6 +33,7 @@ beforeAll(async () => {
     lng: 'en',
     fallbackLng: 'en',
     nsSeparator: false,
+    interpolation: { escapeValue: false },
     resources: {
       en: {
         translation: {},

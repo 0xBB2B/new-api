@@ -186,6 +186,42 @@ func TestUpdateOption_SmartRoutesValidation(t *testing.T) {
 	assert.Equal(t, smartRoutingBaseRoutes, operation_setting.SmartRoutingRoutesToString())
 }
 
+const removedThinkingCapabilitiesKey = "smart_routing_setting.thinking_capabilities"
+
+func countOptionRows(t *testing.T, key string) int64 {
+	t.Helper()
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Option{}).Where("key = ?", key).Count(&count).Error)
+	return count
+}
+
+func TestUpdateOption_RemovedThinkingCapabilitiesKeyRejected(t *testing.T) {
+	setupSmartRoutingControllerTest(t)
+
+	recorder := putQuotaResetOption(t, removedThinkingCapabilitiesKey, `{"gpt-6.2-sol":{"supported_efforts":["low"]}}`)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.False(t, decodeQuotaResetOptionResponse(t, recorder).Success)
+	assert.Zero(t, countOptionRows(t, removedThinkingCapabilitiesKey))
+}
+
+func TestUpdateRequestPolicy_RemovedThinkingCapabilitiesKeyRejected(t *testing.T) {
+	setupSmartRoutingControllerTest(t)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	body, err := common.Marshal(map[string]any{"options": map[string]string{removedThinkingCapabilitiesKey: `{}`}})
+	require.NoError(t, err)
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/api/option/request_policy", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateRequestPolicy(ctx)
+
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, false, response["success"])
+	assert.Zero(t, countOptionRows(t, removedThinkingCapabilitiesKey))
+}
+
 func addSmartRoutingModel(t *testing.T, id, channelType int, modelName string) {
 	t.Helper()
 	priority := int64(0)

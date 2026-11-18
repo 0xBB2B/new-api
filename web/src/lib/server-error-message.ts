@@ -154,21 +154,25 @@ function messageText(value: unknown): string | undefined {
   return value
 }
 
-function translateMessageParams(
+export function translateMessageParams(
   params: Record<string, unknown>
 ): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(params).map(([name, value]) => [
-      name,
-      isRecord(value) && typeof value.key === 'string' && value.key
-        ? i18next.t(
+    Object.entries(params).map(([name, value]) => {
+      if (Array.isArray(value)) return [name, value.join(i18next.t('、'))]
+      if (isRecord(value) && typeof value.key === 'string' && value.key) {
+        return [
+          name,
+          i18next.t(
             value.key,
             isRecord(value.params)
               ? translateMessageParams(value.params)
               : undefined
-          )
-        : value,
-    ])
+          ),
+        ]
+      }
+      return [name, value]
+    })
   )
 }
 

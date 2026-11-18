@@ -109,6 +109,27 @@ describe('server error message mapping', () => {
     }
   })
 
+  test.each([
+    ['zhCN', 'Allowed values: a、b'],
+    ['en', 'Allowed values: a, b'],
+  ])(
+    'joins an array message parameter with the list separator in the %s interface',
+    async (language, expected) => {
+      await i18next.changeLanguage(language)
+      try {
+        expect(
+          getServerMessage({
+            success: false,
+            message_key: 'Allowed values: {{allowed}}',
+            message_params: { allowed: ['a', 'b'] },
+          })
+        ).toBe(expected)
+      } finally {
+        await i18next.changeLanguage('en')
+      }
+    }
+  )
+
   test('renders an untranslated message_key as English text', () => {
     expect(
       getServerErrorMessage({

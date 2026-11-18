@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -110,11 +111,11 @@ func TestModelCapabilityErrorMessages(t *testing.T) {
 		params      map[string]any
 	}{
 		{"unknown_input_modality", `{"architecture":{"input_modalities":["video"]}}`, unknownKey,
-			map[string]any{"path": "architecture.input_modalities", "value": "video", "allowed": "text, image, file, audio"}},
+			map[string]any{"path": "architecture.input_modalities", "value": "video", "allowed": []string{"text", "image", "file", "audio"}}},
 		{"unknown_output_modality", `{"architecture":{"output_modalities":["file"]}}`, unknownKey,
-			map[string]any{"path": "architecture.output_modalities", "value": "file", "allowed": "text, image, audio"}},
+			map[string]any{"path": "architecture.output_modalities", "value": "file", "allowed": []string{"text", "image", "audio"}}},
 		{"unknown_effort", `{"reasoning":{"supported_efforts":["ultra"]}}`, unknownKey,
-			map[string]any{"path": "reasoning.supported_efforts", "value": "ultra", "allowed": "none, minimal, low, medium, high, xhigh, max"}},
+			map[string]any{"path": "reasoning.supported_efforts", "value": "ultra", "allowed": []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}}},
 		{"context_zero", `{"context_length":0}`, numberKey, map[string]any{"path": "context_length"}},
 		{"completion_fraction", `{"top_provider":{"max_completion_tokens":1.5}}`, numberKey, map[string]any{"path": "top_provider.max_completion_tokens"}},
 		{"extra_top_level_field", `{"foo":1}`, fieldKey, map[string]any{"path": "foo"}},
@@ -201,4 +202,11 @@ func TestModelCapabilityCacheIndependentOfAbilities(t *testing.T) {
 		assert.True(t, configured)
 		assert.Equal(t, []string{"low", "high"}, efforts)
 	})
+}
+
+func TestModelCapabilityUnknownValueErrorTextJoinsAllowed(t *testing.T) {
+	_, err := ParseModelCapability(`{"architecture":{"input_modalities":["video"]}}`)
+
+	require.Error(t, err)
+	assert.True(t, strings.HasSuffix(err.Error(), "Allowed values: text, image, file, audio"), err.Error())
 }
