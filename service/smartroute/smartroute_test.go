@@ -1906,6 +1906,8 @@ func TestBuiltinThinkingCapability(t *testing.T) {
 		{"gpt-6.1-terra", "gpt-6.1-terra", "builtin", false, []string{"none", "low", "medium", "high", "xhigh", "max"}},
 		{"gpt-6-astra", "gpt-6-astra", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
 		{"gpt-6.1-sol", "gpt-6.1-sol", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6.2-sol", "gpt-6.2-sol", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6.2-astra", "gpt-6.2-astra", "builtin", false, []string{"low", "medium", "high", "xhigh", "max"}},
 		{"deepseek-v4-flash", "deepseek-v4-flash", "builtin", false, []string{"none", "low", "high", "max"}},
 		{"2025 年及以前发布 gpt-5 未确认", "gpt-5", "unconfirmed", false, []string{"low", "medium", "high"}},
 		{"2025 年及以前发布 gpt-5.1 未确认", "gpt-5.1", "unconfirmed", false, []string{"low", "medium", "high"}},

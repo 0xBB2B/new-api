@@ -53,6 +53,8 @@ type ThinkingCapability struct {
 //   - gpt-6.1-terra none/low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6.1-terra
 //   - gpt-6-astra low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6-astra
 //   - gpt-6.1-sol low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6.1-sol
+//   - gpt-6.2-sol、gpt-6.2-astra low/medium/high/xhigh/max：官方型号页只写明拒绝 none，其余档位按 gpt-6.1-sol、gpt-6-astra 推定，未实测:
+//     https://developers.openai.com/api/docs/models/gpt-6.2-sol 、https://developers.openai.com/api/docs/models/gpt-6.2-astra
 //   - glm-5.3、glm-5.3-flash、glm-5.3-flashx low/high/max: https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 //   - glm-5.2 none/high/max: https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 //   - deepseek-v4-pro none/low/high/max，thinking 可关闭: https://api-docs.deepseek.com/guides/thinking_mode
@@ -80,6 +82,8 @@ var builtinThinkingCapabilities = map[string]ThinkingCapability{
 	"gpt-6.1-terra":     {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
 	"gpt-6-astra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
 	"gpt-6.1-sol":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.2-sol":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.2-astra":     {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
 	"glm-5.3":           {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
 	"glm-5.3-flash":     {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
 	"glm-5.3-flashx":    {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
