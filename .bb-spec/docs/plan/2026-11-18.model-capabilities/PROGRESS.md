@@ -2,7 +2,7 @@
 | 序号 | Plan | 状态 | 完成时间 |
 |---|---|---|---|
 | 01 | capability-on-model-record | done | 2026-11-18 |
-| 02 | v1-models-capabilities | pending | — |
+| 02 | v1-models-capabilities | done | 2026-11-18 |
 | 03 | smartroute-single-source | done | 2026-11-18 |
 | 04 | capability-migration | pending | — |
 | 05 | capabilities-json-api | pending | — |
@@ -10,7 +10,7 @@
 | 07 | capabilities-json-dialog | pending | — |
 | 08 | smart-routing-cleanup | pending | — |
 ## 当前
-准备执行 `02-v1-models-capabilities.md`。待办：三库（SQLite/MySQL/PostgreSQL）验证合并到 05 完成后统一跑；06 补前端 locale 时要包含后端 5 个能力错误 key。
+准备执行 `04-capability-migration.md`。待办：三库（SQLite/MySQL/PostgreSQL）验证合并到 05 完成后统一跑；06 补前端 locale 时要包含后端 5 个能力错误 key。
 ## 阻塞
 （无）
 ## 重试与自修（每次记一条）
@@ -20,3 +20,5 @@
 - 03 自修第 1 轮：能力缓存在 abilities 查询前写入、缓存建精确索引并预解析能力、删多余 nil 判断、补整条记录生效与推算 known 测试 — 结果：复查全部通过
 ## 无关发现（发现一条记一条）
 - controller/option.go:233 附近：PUT /api/option 仍可写入键 smart_routing_setting.thinking_capabilities，值不生效，只在 options 表留一行废数据；不处理会留脏数据；约 15 分钟（由 04 搬迁删除旧行后，可在写入处拒绝该键）
+- model/model_capability.go:200-213：MarshalCanonical 的局部结构体与 relaykit dto.OpenAIModelTopProvider/Architecture/Reasoning 重复；不处理两处形状可能走样；约 20 分钟
+- controller/model.go:181、:196：buildOpenAIModel 每个模型查两次能力索引（EffectiveThinkingCapability 内部再查一次）；模型多时多一倍开销；约 15 分钟

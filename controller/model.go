@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -176,6 +177,30 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 		oaiModel.OwnedBy = owner
 	}
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+
+	capability := model.GetModelCapabilityByName(modelName)
+	oaiModel.ContextLength = capability.ContextLength
+	if capability.MaxCompletionTokens != nil {
+		oaiModel.TopProvider = &dto.OpenAIModelTopProvider{MaxCompletionTokens: capability.MaxCompletionTokens}
+	}
+	if capability.InputModalities != nil || capability.OutputModalities != nil {
+		architecture := &dto.OpenAIModelArchitecture{}
+		if capability.InputModalities != nil {
+			architecture.InputModalities = *capability.InputModalities
+		}
+		if capability.OutputModalities != nil {
+			architecture.OutputModalities = *capability.OutputModalities
+		}
+		oaiModel.Architecture = architecture
+	}
+	thinking := smartroute.EffectiveThinkingCapability(modelName)
+	switch {
+	case thinking.Source == smartroute.ThinkingSourceUnconfirmed:
+	case thinking.NoThinking:
+		oaiModel.Reasoning = &dto.OpenAIModelReasoning{SupportedEfforts: []string{}}
+	default:
+		oaiModel.Reasoning = &dto.OpenAIModelReasoning{SupportedEfforts: thinking.Efforts}
+	}
 	return oaiModel
 }
 

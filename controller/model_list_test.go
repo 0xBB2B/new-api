@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -674,4 +676,189 @@ func TestGetUserModelsAppendsVirtualModels(t *testing.T) {
 			assert.Equal(t, tt.want, decodeUserModelsResponse(t, recorder))
 		})
 	}
+}
+
+const solCapabilities = `{"top_provider":{"max_completion_tokens":128000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"reasoning":{"supported_efforts":["none","low","medium","high","xhigh","max"]}}`
+
+var capabilityKeys = []string{"context_length", "top_provider", "architecture", "reasoning"}
+
+func setupCapabilityListTest(t *testing.T, names ...string) {
+	t.Helper()
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalRoutes := operation_setting.SmartRoutingRoutesToString()
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		operation_setting.LoadSmartRoutesFromJSONString(originalRoutes)
+		model.InvalidatePricingCache()
+	})
+
+	abilities := make([]model.Ability, 0, len(names))
+	for _, name := range names {
+		abilities = append(abilities, model.Ability{Group: "default", Model: name, ChannelId: 1, Enabled: true})
+	}
+	require.NoError(t, db.Create(&abilities).Error)
+	require.NoError(t, db.Create(&[]model.Model{
+		{ModelName: "gpt-6.2-sol", Status: 1, Capabilities: solCapabilities},
+		{ModelName: "qwen4-max", Status: 1, Capabilities: `{"reasoning":{"supported_efforts":["none","low","high","xhigh"]}}`},
+		{ModelName: "gpt-4o", Status: 1, Capabilities: `{"reasoning":{"supported_efforts":[]}}`},
+		{ModelName: "gpt-6", Status: 1, NameRule: model.NameRulePrefix, Capabilities: `{"context_length":1050000}`},
+	}).Error)
+	operation_setting.LoadSmartRoutesFromJSONString(`[]`)
+	model.RefreshPricing()
+}
+
+func requestCapabilityList(t *testing.T, modelType int) []byte {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, modelType)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	return recorder.Body.Bytes()
+}
+
+func rawModelObjects(t *testing.T, body []byte, key string) map[string]json.RawMessage {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(body, &payload))
+	var items []json.RawMessage
+	require.NoError(t, common.Unmarshal(payload[key], &items))
+	byID := make(map[string]json.RawMessage, len(items))
+	for _, item := range items {
+		var head struct {
+			Id   string `json:"id"`
+			Name string `json:"name"`
+		}
+		require.NoError(t, common.Unmarshal(item, &head))
+		id := head.Id
+		if id == "" {
+			id = head.Name
+		}
+		byID[id] = item
+	}
+	return byID
+}
+
+func objectKeys(t *testing.T, raw json.RawMessage) map[string]json.RawMessage {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(raw, &fields))
+	return fields
+}
+
+func TestListModelsCapabilities(t *testing.T) {
+	setupCapabilityListTest(t, "gpt-6.2-sol", "qwen4-max", "gpt-4o", "foo-model", "claude-opus-5", "gpt-6.2-luna")
+	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"auto","endpoints":["openai"],"tiers":{"simple":{"model":"gpt-4o","groups":["default"],"effort":""},"normal":{"model":"gpt-4o","groups":["default"],"effort":""},"hard":{"model":"gpt-4o","groups":["default"],"effort":""}},"default_tier":"normal","scorer":{"model":"gpt-4o","groups":["default"],"timeout_ms":2000},"advisor":{"model":"gpt-4o","groups":["default"],"after_dissatisfied":2},"downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`)
+
+	body := requestCapabilityList(t, constant.ChannelTypeOpenAI)
+	objects := rawModelObjects(t, body, "data")
+
+	t.Run("whole record applies: sol omits context_length despite prefix record, other fields kept", func(t *testing.T) {
+		raw := string(objects["gpt-6.2-sol"])
+		fields := objectKeys(t, objects["gpt-6.2-sol"])
+		for _, key := range []string{"id", "object", "created", "owned_by", "supported_endpoint_types"} {
+			require.Contains(t, fields, key)
+		}
+		last := strings.Index(raw, `"id"`)
+		for _, key := range []string{`"object"`, `"created"`, `"owned_by"`, `"supported_endpoint_types"`, `"top_provider"`} {
+			idx := strings.Index(raw, key)
+			require.Greater(t, idx, last, key)
+			last = idx
+		}
+		var want map[string]any
+		require.NoError(t, common.Unmarshal([]byte(solCapabilities), &want))
+		var all map[string]any
+		require.NoError(t, common.Unmarshal(objects["gpt-6.2-sol"], &all))
+		gotCaps := map[string]any{}
+		for k := range want {
+			gotCaps[k] = all[k]
+		}
+		assert.Equal(t, want, gotCaps)
+		assert.NotContains(t, fields, "context_length")
+	})
+
+	t.Run("effort-only record", func(t *testing.T) {
+		fields := objectKeys(t, objects["qwen4-max"])
+		assert.Contains(t, fields, "reasoning")
+		assert.NotContains(t, fields, "context_length")
+		assert.NotContains(t, fields, "top_provider")
+		assert.NotContains(t, fields, "architecture")
+		assert.JSONEq(t, `{"supported_efforts":["none","low","high","xhigh"]}`, string(fields["reasoning"]))
+	})
+
+	t.Run("confirmed no reasoning keeps empty array in raw JSON", func(t *testing.T) {
+		assert.Contains(t, string(objects["gpt-4o"]), `"supported_efforts":[]`)
+	})
+
+	t.Run("no record and virtual model carry no capability keys", func(t *testing.T) {
+		for _, id := range []string{"foo-model", "auto"} {
+			require.Contains(t, objects, id)
+			fields := objectKeys(t, objects[id])
+			for _, key := range capabilityKeys {
+				assert.NotContains(t, fields, key, id)
+			}
+		}
+	})
+
+	t.Run("claude 2026 model gets inferred reasoning only", func(t *testing.T) {
+		fields := objectKeys(t, objects["claude-opus-5"])
+		require.Contains(t, fields, "reasoning")
+		want := smartroute.EffectiveThinkingCapability("claude-opus-5")
+		require.NotEmpty(t, want.Efforts)
+		var reasoning dto.OpenAIModelReasoning
+		require.NoError(t, common.Unmarshal(fields["reasoning"], &reasoning))
+		assert.Equal(t, want.Efforts, reasoning.SupportedEfforts)
+		assert.NotContains(t, fields, "context_length")
+		assert.NotContains(t, fields, "top_provider")
+		assert.NotContains(t, fields, "architecture")
+	})
+
+	t.Run("prefix record applies to channel model", func(t *testing.T) {
+		fields := objectKeys(t, objects["gpt-6.2-luna"])
+		assert.JSONEq(t, `1050000`, string(fields["context_length"]))
+	})
+}
+
+func TestListModelsCapabilitiesAbsentInOtherFormats(t *testing.T) {
+	setupCapabilityListTest(t, "gpt-6.2-sol")
+
+	tests := []struct {
+		name      string
+		modelType int
+		key       string
+	}{
+		{name: "anthropic", modelType: constant.ChannelTypeAnthropic, key: "data"},
+		{name: "gemini", modelType: constant.ChannelTypeGemini, key: "models"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := rawModelObjects(t, requestCapabilityList(t, tt.modelType), tt.key)
+			require.Contains(t, objects, "gpt-6.2-sol")
+			fields := objectKeys(t, objects["gpt-6.2-sol"])
+			for _, key := range capabilityKeys {
+				assert.NotContains(t, fields, key)
+			}
+		})
+	}
+}
+
+func TestListModelsCapabilitiesReflectRecordUpdate(t *testing.T) {
+	setupCapabilityListTest(t, "gpt-6.2-sol")
+
+	before := objectKeys(t, rawModelObjects(t, requestCapabilityList(t, constant.ChannelTypeOpenAI), "data")["gpt-6.2-sol"])
+	assert.NotContains(t, before, "context_length")
+
+	require.NoError(t, model.DB.Model(&model.Model{}).Where("model_name = ?", "gpt-6.2-sol").
+		Update("capabilities", `{"context_length":2000000,"top_provider":{"max_completion_tokens":128000}}`).Error)
+	model.RefreshPricing()
+
+	after := objectKeys(t, rawModelObjects(t, requestCapabilityList(t, constant.ChannelTypeOpenAI), "data")["gpt-6.2-sol"])
+	assert.JSONEq(t, `2000000`, string(after["context_length"]))
 }
