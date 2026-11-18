@@ -43,6 +43,7 @@ type DialogType =
   | 'sync-wizard'
   | 'prefill-groups'
   | 'description'
+  | 'capabilities-json'
   | null
 
 type ModelsContextType = {

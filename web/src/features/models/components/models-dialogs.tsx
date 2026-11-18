@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { CapabilitiesJsonDialog } from './dialogs/capabilities-json-dialog'
 import { DescriptionDialog } from './dialogs/description-dialog'
 import { MissingModelsDialog } from './dialogs/missing-models-dialog'
 import { PrefillGroupManagement } from './dialogs/prefill-group-management'
@@ -76,6 +77,11 @@ export function ModelsDialogs() {
       {/* Prefill Groups Management */}
       <PrefillGroupManagement
         open={open === 'prefill-groups'}
+        onOpenChange={(v) => !v && setOpen(null)}
+      />
+
+      <CapabilitiesJsonDialog
+        open={open === 'capabilities-json'}
         onOpenChange={(v) => !v && setOpen(null)}
       />
 

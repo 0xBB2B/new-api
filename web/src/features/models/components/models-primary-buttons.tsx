@@ -68,6 +68,13 @@ export function ModelsPrimaryButtons() {
           {t('Sync pricing')}
         </Button>
       )}
+      <Button
+        onClick={() => setOpen('capabilities-json')}
+        variant='outline'
+        size='sm'
+      >
+        {t('Capabilities JSON')}
+      </Button>
       {/* Create Model */}
       <Button onClick={handleCreateModel} size='sm'>
         <Plus className='h-4 w-4' />
