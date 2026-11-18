@@ -123,6 +123,14 @@ func upsertExactRecordThinking(tx *gorm.DB, name string, efforts []string) error
 	var record Model
 	err := tx.Where("model_name = ? AND name_rule = ?", name, NameRuleExact).First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		var ruleCount int64
+		if err := tx.Model(&Model{}).Where("model_name = ? AND name_rule <> ?", name, NameRuleExact).Count(&ruleCount).Error; err != nil {
+			return err
+		}
+		if ruleCount > 0 {
+			common.SysError(common.LogText("skip legacy thinking capability of model %s: name is used by a non-exact record", name))
+			return nil
+		}
 		_, err = NewExactModelRecord(tx, name, ModelCapability{Efforts: &efforts}.MarshalCanonical())
 		return err
 	}
@@ -131,7 +139,7 @@ func upsertExactRecordThinking(tx *gorm.DB, name string, efforts []string) error
 	}
 	capability := parseRecordCapability(record)
 	capability.Efforts = &efforts
-	return tx.Model(&Model{}).Where("id = ?", record.Id).Update("capabilities", capability.MarshalCanonical()).Error
+	return tx.Model(&Model{}).Where("id = ?", record.Id).Updates(map[string]any{"capabilities": capability.MarshalCanonical(), "updated_time": common.GetTimestamp()}).Error
 }
 
 // NewExactModelRecord 在 tx 内新建完全匹配记录；名字已被前缀/后缀/包含记录命中时沿用它的目录信息。

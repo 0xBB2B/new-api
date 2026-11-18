@@ -294,3 +294,52 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, get(commonRead, "?models=gpt-5.4").Code)
 	})
 }
+
+func TestModelCapabilitiesRoutes(t *testing.T) {
+	routes := []string{
+		"GET /api/models/capabilities",
+		"POST /api/models/capabilities/preview",
+		"PUT /api/models/capabilities",
+	}
+	registered := map[string]bool{}
+	for _, route := range newAccessTokenScopeTestEngine(t).Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, key := range routes {
+		assert.True(t, registered[key], key)
+		_, ok := middleware.AccessTokenRouteRule(key)
+		assert.True(t, ok, "%s has no access token rule", key)
+	}
+
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	model.DB, model.LOG_DB = db, db
+	t.Cleanup(func() { model.DB, model.LOG_DB = previousDB, previousLogDB })
+	require.NoError(t, i18n.Init())
+	require.NoError(t, authz.Init(db))
+
+	user := model.User{Username: "cap_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "cap_common"}
+	require.NoError(t, db.Create(&user).Error)
+	suffix, err := common.GenerateRandomCharsKey(43)
+	require.NoError(t, err)
+	raw := model.AccessTokenPrefix + suffix
+	token := &model.UserAccessToken{Name: "cap_common", TokenHash: model.AccessTokenFingerprint(raw), TokenHint: model.AccessTokenHint(raw)}
+	require.NoError(t, token.SetScopes([]string{"option:read"}))
+	require.NoError(t, model.CreateUserAccessToken(user.Id, token, service.AccessTokenMaxPerUser))
+
+	engine := gin.New()
+	SetApiRouter(engine)
+	for _, key := range routes {
+		method, target, _ := strings.Cut(key, " ")
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(method, target, strings.NewReader(`{"capabilities":{}}`))
+		request.Header.Set("Authorization", "Bearer "+raw)
+		engine.ServeHTTP(recorder, request)
+		assert.Equal(t, http.StatusForbidden, recorder.Code, key)
+	}
+}

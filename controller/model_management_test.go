@@ -1698,220 +1698,652 @@ export function parseTaskResult(){return {};}
 }
 
 func TestModelCapabilitiesManagement(t *testing.T) {
-	db := modelManagementDB(t, "sqlite", "")
-	require.NoError(t, db.AutoMigrate(&model.SystemTask{}))
-	const full = `{"context_length":1050000,"top_provider":{"max_completion_tokens":128000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"reasoning":{"supported_efforts":["none","low","medium","high","xhigh","max"]}}`
-	type modelResponse struct {
-		Success bool
-		Data    map[string]any
-	}
-	create := func(t *testing.T, body map[string]any) (*httptest.ResponseRecorder, modelResponse) {
-		var response modelResponse
-		recorder := modelManagementRequest(t, CreateModelMeta, "POST", "/api/models/", body, &response)
-		return recorder, response
-	}
-	fetch := func(t *testing.T, id any) modelResponse {
-		var response modelResponse
-		recorder := httptest.NewRecorder()
-		context, _ := gin.CreateTestContext(recorder)
-		context.Request = httptest.NewRequest("GET", "/api/models/"+fmt.Sprint(id), nil)
-		context.Params = gin.Params{{Key: "id", Value: fmt.Sprint(id)}}
-		context.Set("role", common.RoleRootUser)
-		GetModelMeta(context)
-		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
-		return response
-	}
-	capabilitiesOf := func(t *testing.T, id any) string {
-		response := fetch(t, id)
-		require.True(t, response.Success)
-		value, _ := response.Data["capabilities"].(string)
-		return value
-	}
-	lookup := func(name string) string {
-		capability := model.GetModelCapabilityByName(name)
-		return capability.MarshalCanonical()
-	}
-
-	t.Run("create_then_get_returns_canonical_json", func(t *testing.T) {
-		_, response := create(t, map[string]any{"model_name": "cap-create", "status": 1, "capabilities": full})
-		require.True(t, response.Success)
-		assert.Equal(t, full, capabilitiesOf(t, response.Data["id"]))
-	})
-
-	t.Run("create_normalizes_unordered_duplicates", func(t *testing.T) {
-		_, response := create(t, map[string]any{"model_name": "cap-normalize", "status": 1,
-			"capabilities": `{"reasoning":{"supported_efforts":["high","low","high"]},"architecture":{"input_modalities":["image","text","image"]}}`})
-		require.True(t, response.Success)
-		assert.Equal(t, `{"architecture":{"input_modalities":["text","image"]},"reasoning":{"supported_efforts":["low","high"]}}`, capabilitiesOf(t, response.Data["id"]))
-	})
-
-	t.Run("unset_and_null_and_empty_modalities_store_empty_string", func(t *testing.T) {
-		for i, input := range []string{``, `{}`, `{"context_length":null}`, `{"architecture":{"input_modalities":[]}}`} {
-			_, response := create(t, map[string]any{"model_name": fmt.Sprintf("cap-empty-%d", i), "status": 1, "capabilities": input})
-			require.True(t, response.Success, input)
-			assert.Equal(t, "", capabilitiesOf(t, response.Data["id"]), input)
-		}
-	})
-
-	t.Run("empty_efforts_array_is_kept", func(t *testing.T) {
-		_, response := create(t, map[string]any{"model_name": "cap-no-reasoning", "status": 1, "capabilities": `{"reasoning":{"supported_efforts":[]}}`})
-		require.True(t, response.Success)
-		assert.Equal(t, `{"reasoning":{"supported_efforts":[]}}`, capabilitiesOf(t, response.Data["id"]))
-	})
-
-	t.Run("max_safe_integer_accepted", func(t *testing.T) {
-		_, response := create(t, map[string]any{"model_name": "cap-max-int", "status": 1, "capabilities": `{"context_length":9007199254740991}`})
-		require.True(t, response.Success)
-		assert.Equal(t, `{"context_length":9007199254740991}`, capabilitiesOf(t, response.Data["id"]))
-	})
-
-	t.Run("create_invalid_is_rejected_without_record", func(t *testing.T) {
-		for i, input := range []string{
-			`{"architecture":{"input_modalities":["video"]}}`,
-			`{"reasoning":{"supported_efforts":["ultra"]}}`,
-			`{"foo":1}`,
-			`{"context_length":0}`,
-			`{"context_length":-5}`,
-			`{"context_length":1.5}`,
-			`{"context_length":9007199254740992}`,
-		} {
-			name := fmt.Sprintf("cap-invalid-create-%d", i)
-			_, response := create(t, map[string]any{"model_name": name, "status": 1, "capabilities": input})
-			assert.False(t, response.Success, input)
-			var count int64
-			require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", name).Count(&count).Error)
-			assert.Zero(t, count, input)
-		}
-	})
-
-	t.Run("update_valid_replaces_and_invalid_keeps_record", func(t *testing.T) {
-		_, created := create(t, map[string]any{"model_name": "cap-update", "status": 1, "capabilities": `{"context_length":1000}`})
-		require.True(t, created.Success)
-		id := created.Data["id"]
-		var response modelResponse
-		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": id, "model_name": "cap-update", "status": 1, "capabilities": full}, &response)
-		require.True(t, response.Success)
-		assert.Equal(t, full, capabilitiesOf(t, id))
-		for _, input := range []string{`{"context_length":0}`, `{"architecture":{"output_modalities":["video"]}}`, `{"foo":1}`, `{"reasoning":{"supported_efforts":["ultra"]}}`} {
-			var rejected modelResponse
-			modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": id, "model_name": "cap-update", "status": 1, "capabilities": input}, &rejected)
-			assert.False(t, rejected.Success, input)
-			assert.Equal(t, full, capabilitiesOf(t, id), input)
-		}
-	})
-
-	t.Run("name_lookup_whole_record_precedence", func(t *testing.T) {
-		for _, body := range []map[string]any{
-			{"model_name": "gpt-6.2-sol", "status": 1, "capabilities": `{"reasoning":{"supported_efforts":["low"]}}`},
-			{"model_name": "gpt-6", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":1050000,"reasoning":{"supported_efforts":["high"]}}`},
-		} {
-			_, response := create(t, body)
-			require.True(t, response.Success)
-		}
-		model.RefreshPricing()
-		assert.Equal(t, `{"reasoning":{"supported_efforts":["low"]}}`, lookup("gpt-6.2-sol"))
-		assert.Equal(t, `{"context_length":1050000,"reasoning":{"supported_efforts":["high"]}}`, lookup("gpt-6.2-luna"))
-		assert.Equal(t, "", lookup("unmatched-model"))
-	})
-
-	t.Run("name_lookup_rule_order_exact_prefix_suffix_contains", func(t *testing.T) {
-		for _, body := range []map[string]any{
-			{"model_name": "ord-", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":2}`},
-			{"model_name": "-ord", "status": 1, "name_rule": model.NameRuleSuffix, "capabilities": `{"context_length":3}`},
-			{"model_name": "mid", "status": 1, "name_rule": model.NameRuleContains, "capabilities": `{"context_length":4}`},
-		} {
-			_, response := create(t, body)
-			require.True(t, response.Success)
-		}
-		model.RefreshPricing()
-		assert.Equal(t, `{"context_length":2}`, lookup("ord-x-ord"))
-		assert.Equal(t, `{"context_length":3}`, lookup("x-ord"))
-		assert.Equal(t, `{"context_length":4}`, lookup("xmidx"))
-	})
-
-	t.Run("name_lookup_reflects_update_without_restart", func(t *testing.T) {
-		_, created := create(t, map[string]any{"model_name": "cap-live", "status": 1, "capabilities": `{"context_length":10}`})
-		require.True(t, created.Success)
-		model.RefreshPricing()
-		assert.Equal(t, `{"context_length":10}`, lookup("cap-live"))
-		var response modelResponse
-		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": created.Data["id"], "model_name": "cap-live", "status": 1, "capabilities": `{"context_length":20}`}, &response)
-		require.True(t, response.Success)
-		assert.Equal(t, `{"context_length":20}`, lookup("cap-live"))
-	})
-
-	t.Run("metadata_sync_keeps_capabilities", func(t *testing.T) {
-		_, created := create(t, map[string]any{"model_name": "cap-sync", "status": 1, "sync_official": 1, "capabilities": full})
-		require.True(t, created.Success)
-		var local model.Model
-		require.NoError(t, db.Where("model_name = ?", "cap-sync").First(&local).Error)
-		locals, _, err := model.GetMetadataSyncState(db)
-		require.NoError(t, err)
-		update := model.MetadataSyncUpdate{
-			MetadataSyncSelection: model.MetadataSyncSelection{ModelName: "cap-sync", RecordVersion: model.MetadataRecordVersion(locals["cap-sync"], nil, nil), Fields: model.MetadataSyncFields},
-			Values:                model.MetadataValues{Description: "Synced description", Status: 1},
-		}
-		_, err = model.ApplyMetadataSync([]model.MetadataSyncUpdate{update}, nil)
-		require.NoError(t, err)
-		assert.Equal(t, full, capabilitiesOf(t, local.Id))
-		var synced model.Model
-		require.NoError(t, db.First(&synced, local.Id).Error)
-		assert.Equal(t, "Synced description", synced.Description)
-	})
-
-	t.Run("name_lookup_same_rule_takes_lowest_id", func(t *testing.T) {
-		_, earlier := create(t, map[string]any{"model_name": "tie-", "status": 0, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":11}`})
-		_, later := create(t, map[string]any{"model_name": "tie-6", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":22}`})
-		require.True(t, earlier.Success)
-		require.True(t, later.Success)
-		model.RefreshPricing()
-		assert.Equal(t, `{"context_length":11}`, lookup("tie-6.2-x"))
-
-		var response modelResponse
-		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": earlier.Data["id"], "model_name": "tie-", "status": 0, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":33}`}, &response)
-		require.True(t, response.Success)
-		model.RefreshPricing()
-		assert.Equal(t, `{"context_length":33}`, lookup("tie-6.2-x"))
-
-		row := &model.Model{ModelName: "tie-6.2-x"}
-		connections := []model.ModelConnection{{AbilityWithChannel: model.AbilityWithChannel{Ability: model.Ability{Model: "tie-6.2-x"}}}}
-		require.NoError(t, model.FillModelSquareStates([]*model.Model{row}, map[string][]int{"tie-6.2-x": {1}}, connections))
-		assert.Equal(t, model.ModelSquareHidden, row.SquareState)
-	})
-
-	t.Run("save_adds_exactly_one_models_sync_task", func(t *testing.T) {
-		_, created := create(t, map[string]any{"model_name": "cap-sync-task", "status": 1})
-		require.True(t, created.Success)
-		countTasks := func() int64 {
-			var count int64
-			require.NoError(t, db.Model(&model.SystemTask{}).Where("type = ?", model.SyncTaskType(model.SyncTopicModels)).Count(&count).Error)
-			return count
-		}
-		before := countTasks()
-		var response modelResponse
-		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": created.Data["id"], "model_name": "cap-sync-task", "status": 1, "capabilities": full}, &response)
-		require.True(t, response.Success)
-		assert.Equal(t, before+1, countTasks())
-	})
-
-	t.Run("failed_reload_keeps_previous_capabilities", func(t *testing.T) {
-		_, created := create(t, map[string]any{"model_name": "cap-keep", "status": 1, "capabilities": `{"context_length":77}`})
-		require.True(t, created.Success)
-		model.RefreshPricing()
-		require.Equal(t, `{"context_length":77}`, lookup("cap-keep"))
-
-		const callbackName = "test:fail_models_query"
-		modelsQueries := 0
-		require.NoError(t, db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
-			if tx.Statement.Table == "models" {
-				modelsQueries++
-				_ = tx.AddError(errors.New("models read failed"))
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			if dialect.env != "" && os.Getenv(dialect.env) == "" {
+				t.Skip("set " + dialect.env + " to run this database")
 			}
-		}))
-		t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
-		model.RefreshPricing()
-		require.NoError(t, db.Callback().Query().Remove(callbackName))
-		require.NotZero(t, modelsQueries)
-		assert.Equal(t, `{"context_length":77}`, lookup("cap-keep"))
-	})
+			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+			require.NoError(t, db.AutoMigrate(&model.SystemTask{}))
+			const full = `{"context_length":1050000,"top_provider":{"max_completion_tokens":128000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"reasoning":{"supported_efforts":["none","low","medium","high","xhigh","max"]}}`
+			type modelResponse struct {
+				Success bool
+				Data    map[string]any
+			}
+			create := func(t *testing.T, body map[string]any) (*httptest.ResponseRecorder, modelResponse) {
+				var response modelResponse
+				recorder := modelManagementRequest(t, CreateModelMeta, "POST", "/api/models/", body, &response)
+				return recorder, response
+			}
+			fetch := func(t *testing.T, id any) modelResponse {
+				var response modelResponse
+				recorder := httptest.NewRecorder()
+				context, _ := gin.CreateTestContext(recorder)
+				context.Request = httptest.NewRequest("GET", "/api/models/"+fmt.Sprint(id), nil)
+				context.Params = gin.Params{{Key: "id", Value: fmt.Sprint(id)}}
+				context.Set("role", common.RoleRootUser)
+				GetModelMeta(context)
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+				return response
+			}
+			capabilitiesOf := func(t *testing.T, id any) string {
+				response := fetch(t, id)
+				require.True(t, response.Success)
+				value, _ := response.Data["capabilities"].(string)
+				return value
+			}
+			lookup := func(name string) string {
+				capability := model.GetModelCapabilityByName(name)
+				return capability.MarshalCanonical()
+			}
+
+			t.Run("create_then_get_returns_canonical_json", func(t *testing.T) {
+				_, response := create(t, map[string]any{"model_name": "cap-create", "status": 1, "capabilities": full})
+				require.True(t, response.Success)
+				assert.Equal(t, full, capabilitiesOf(t, response.Data["id"]))
+			})
+
+			t.Run("create_normalizes_unordered_duplicates", func(t *testing.T) {
+				_, response := create(t, map[string]any{"model_name": "cap-normalize", "status": 1,
+					"capabilities": `{"reasoning":{"supported_efforts":["high","low","high"]},"architecture":{"input_modalities":["image","text","image"]}}`})
+				require.True(t, response.Success)
+				assert.Equal(t, `{"architecture":{"input_modalities":["text","image"]},"reasoning":{"supported_efforts":["low","high"]}}`, capabilitiesOf(t, response.Data["id"]))
+			})
+
+			t.Run("unset_and_null_and_empty_modalities_store_empty_string", func(t *testing.T) {
+				for i, input := range []string{``, `{}`, `{"context_length":null}`, `{"architecture":{"input_modalities":[]}}`} {
+					_, response := create(t, map[string]any{"model_name": fmt.Sprintf("cap-empty-%d", i), "status": 1, "capabilities": input})
+					require.True(t, response.Success, input)
+					assert.Equal(t, "", capabilitiesOf(t, response.Data["id"]), input)
+				}
+			})
+
+			t.Run("empty_efforts_array_is_kept", func(t *testing.T) {
+				_, response := create(t, map[string]any{"model_name": "cap-no-reasoning", "status": 1, "capabilities": `{"reasoning":{"supported_efforts":[]}}`})
+				require.True(t, response.Success)
+				assert.Equal(t, `{"reasoning":{"supported_efforts":[]}}`, capabilitiesOf(t, response.Data["id"]))
+			})
+
+			t.Run("max_safe_integer_accepted", func(t *testing.T) {
+				_, response := create(t, map[string]any{"model_name": "cap-max-int", "status": 1, "capabilities": `{"context_length":9007199254740991}`})
+				require.True(t, response.Success)
+				assert.Equal(t, `{"context_length":9007199254740991}`, capabilitiesOf(t, response.Data["id"]))
+			})
+
+			t.Run("create_invalid_is_rejected_without_record", func(t *testing.T) {
+				for i, input := range []string{
+					`{"architecture":{"input_modalities":["video"]}}`,
+					`{"reasoning":{"supported_efforts":["ultra"]}}`,
+					`{"foo":1}`,
+					`{"context_length":0}`,
+					`{"context_length":-5}`,
+					`{"context_length":1.5}`,
+					`{"context_length":9007199254740992}`,
+				} {
+					name := fmt.Sprintf("cap-invalid-create-%d", i)
+					_, response := create(t, map[string]any{"model_name": name, "status": 1, "capabilities": input})
+					assert.False(t, response.Success, input)
+					var count int64
+					require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", name).Count(&count).Error)
+					assert.Zero(t, count, input)
+				}
+			})
+
+			t.Run("update_valid_replaces_and_invalid_keeps_record", func(t *testing.T) {
+				_, created := create(t, map[string]any{"model_name": "cap-update", "status": 1, "capabilities": `{"context_length":1000}`})
+				require.True(t, created.Success)
+				id := created.Data["id"]
+				var response modelResponse
+				modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": id, "model_name": "cap-update", "status": 1, "capabilities": full}, &response)
+				require.True(t, response.Success)
+				assert.Equal(t, full, capabilitiesOf(t, id))
+				for _, input := range []string{`{"context_length":0}`, `{"architecture":{"output_modalities":["video"]}}`, `{"foo":1}`, `{"reasoning":{"supported_efforts":["ultra"]}}`} {
+					var rejected modelResponse
+					modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": id, "model_name": "cap-update", "status": 1, "capabilities": input}, &rejected)
+					assert.False(t, rejected.Success, input)
+					assert.Equal(t, full, capabilitiesOf(t, id), input)
+				}
+			})
+
+			t.Run("name_lookup_whole_record_precedence", func(t *testing.T) {
+				for _, body := range []map[string]any{
+					{"model_name": "gpt-6.2-sol", "status": 1, "capabilities": `{"reasoning":{"supported_efforts":["low"]}}`},
+					{"model_name": "gpt-6", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":1050000,"reasoning":{"supported_efforts":["high"]}}`},
+				} {
+					_, response := create(t, body)
+					require.True(t, response.Success)
+				}
+				model.RefreshPricing()
+				assert.Equal(t, `{"reasoning":{"supported_efforts":["low"]}}`, lookup("gpt-6.2-sol"))
+				assert.Equal(t, `{"context_length":1050000,"reasoning":{"supported_efforts":["high"]}}`, lookup("gpt-6.2-luna"))
+				assert.Equal(t, "", lookup("unmatched-model"))
+			})
+
+			t.Run("name_lookup_rule_order_exact_prefix_suffix_contains", func(t *testing.T) {
+				for _, body := range []map[string]any{
+					{"model_name": "ord-", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":2}`},
+					{"model_name": "-ord", "status": 1, "name_rule": model.NameRuleSuffix, "capabilities": `{"context_length":3}`},
+					{"model_name": "mid", "status": 1, "name_rule": model.NameRuleContains, "capabilities": `{"context_length":4}`},
+				} {
+					_, response := create(t, body)
+					require.True(t, response.Success)
+				}
+				model.RefreshPricing()
+				assert.Equal(t, `{"context_length":2}`, lookup("ord-x-ord"))
+				assert.Equal(t, `{"context_length":3}`, lookup("x-ord"))
+				assert.Equal(t, `{"context_length":4}`, lookup("xmidx"))
+			})
+
+			t.Run("name_lookup_reflects_update_without_restart", func(t *testing.T) {
+				_, created := create(t, map[string]any{"model_name": "cap-live", "status": 1, "capabilities": `{"context_length":10}`})
+				require.True(t, created.Success)
+				model.RefreshPricing()
+				assert.Equal(t, `{"context_length":10}`, lookup("cap-live"))
+				var response modelResponse
+				modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": created.Data["id"], "model_name": "cap-live", "status": 1, "capabilities": `{"context_length":20}`}, &response)
+				require.True(t, response.Success)
+				assert.Equal(t, `{"context_length":20}`, lookup("cap-live"))
+			})
+
+			t.Run("metadata_sync_keeps_capabilities", func(t *testing.T) {
+				_, created := create(t, map[string]any{"model_name": "cap-sync", "status": 1, "sync_official": 1, "capabilities": full})
+				require.True(t, created.Success)
+				var local model.Model
+				require.NoError(t, db.Where("model_name = ?", "cap-sync").First(&local).Error)
+				locals, _, err := model.GetMetadataSyncState(db)
+				require.NoError(t, err)
+				update := model.MetadataSyncUpdate{
+					MetadataSyncSelection: model.MetadataSyncSelection{ModelName: "cap-sync", RecordVersion: model.MetadataRecordVersion(locals["cap-sync"], nil, nil), Fields: model.MetadataSyncFields},
+					Values:                model.MetadataValues{Description: "Synced description", Status: 1},
+				}
+				_, err = model.ApplyMetadataSync([]model.MetadataSyncUpdate{update}, nil)
+				require.NoError(t, err)
+				assert.Equal(t, full, capabilitiesOf(t, local.Id))
+				var synced model.Model
+				require.NoError(t, db.First(&synced, local.Id).Error)
+				assert.Equal(t, "Synced description", synced.Description)
+			})
+
+			t.Run("name_lookup_same_rule_takes_lowest_id", func(t *testing.T) {
+				_, earlier := create(t, map[string]any{"model_name": "tie-", "status": 0, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":11}`})
+				_, later := create(t, map[string]any{"model_name": "tie-6", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":22}`})
+				require.True(t, earlier.Success)
+				require.True(t, later.Success)
+				model.RefreshPricing()
+				assert.Equal(t, `{"context_length":11}`, lookup("tie-6.2-x"))
+
+				var response modelResponse
+				modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": earlier.Data["id"], "model_name": "tie-", "status": 0, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":33}`}, &response)
+				require.True(t, response.Success)
+				model.RefreshPricing()
+				assert.Equal(t, `{"context_length":33}`, lookup("tie-6.2-x"))
+
+				row := &model.Model{ModelName: "tie-6.2-x"}
+				connections := []model.ModelConnection{{AbilityWithChannel: model.AbilityWithChannel{Ability: model.Ability{Model: "tie-6.2-x"}}}}
+				require.NoError(t, model.FillModelSquareStates([]*model.Model{row}, map[string][]int{"tie-6.2-x": {1}}, connections))
+				assert.Equal(t, model.ModelSquareHidden, row.SquareState)
+			})
+
+			t.Run("save_adds_exactly_one_models_sync_task", func(t *testing.T) {
+				_, created := create(t, map[string]any{"model_name": "cap-sync-task", "status": 1})
+				require.True(t, created.Success)
+				countTasks := func() int64 {
+					var count int64
+					require.NoError(t, db.Model(&model.SystemTask{}).Where("type = ?", model.SyncTaskType(model.SyncTopicModels)).Count(&count).Error)
+					return count
+				}
+				before := countTasks()
+				var response modelResponse
+				modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": created.Data["id"], "model_name": "cap-sync-task", "status": 1, "capabilities": full}, &response)
+				require.True(t, response.Success)
+				assert.Equal(t, before+1, countTasks())
+			})
+
+			t.Run("failed_reload_keeps_previous_capabilities", func(t *testing.T) {
+				_, created := create(t, map[string]any{"model_name": "cap-keep", "status": 1, "capabilities": `{"context_length":77}`})
+				require.True(t, created.Success)
+				model.RefreshPricing()
+				require.Equal(t, `{"context_length":77}`, lookup("cap-keep"))
+
+				const callbackName = "test:fail_models_query"
+				modelsQueries := 0
+				require.NoError(t, db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+					if tx.Statement.Table == "models" {
+						modelsQueries++
+						_ = tx.AddError(errors.New("models read failed"))
+					}
+				}))
+				t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
+				model.RefreshPricing()
+				require.NoError(t, db.Callback().Query().Remove(callbackName))
+				require.NotZero(t, modelsQueries)
+				assert.Equal(t, `{"context_length":77}`, lookup("cap-keep"))
+			})
+		})
+	}
+}
+
+func TestModelCapabilitiesBatch(t *testing.T) {
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			if dialect.env != "" && os.Getenv(dialect.env) == "" {
+				t.Skip("set " + dialect.env + " to run this database")
+			}
+			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+			require.NoError(t, db.AutoMigrate(&model.SystemTask{}))
+			const (
+				path        = "/api/models/capabilities"
+				staleReject = "Model metadata changed. Preview again before saving."
+				gpt62       = `{"context_length":1050000,"architecture":{"input_modalities":["text","image"]}}`
+				qwen        = `{"reasoning":{"supported_efforts":["none","low","high","xhigh"]}}`
+			)
+			type previewItem struct {
+				ModelName string `json:"model_name"`
+				Action    string `json:"action"`
+				Before    any    `json:"before"`
+				After     any    `json:"after"`
+			}
+			type previewData struct {
+				Version string        `json:"version"`
+				Items   []previewItem `json:"items"`
+				Errors  []struct {
+					ModelName string `json:"model_name"`
+					Message   any    `json:"message"`
+				} `json:"errors"`
+				Summary map[string]int `json:"summary"`
+			}
+			type previewResponse struct {
+				Success bool
+				Data    previewData
+			}
+			type listResponse struct {
+				Success bool
+				Data    struct {
+					Capabilities map[string]any `json:"capabilities"`
+					NonExact     []struct {
+						ModelName string `json:"model_name"`
+						NameRule  int    `json:"name_rule"`
+					} `json:"non_exact"`
+					Unconfigured []string `json:"unconfigured"`
+				}
+			}
+			type saveResponse struct {
+				Success bool
+				Message string
+				Data    map[string]int
+			}
+			parse := func(t *testing.T, text string) map[string]any {
+				var out map[string]any
+				require.NoError(t, common.UnmarshalJsonStr(text, &out))
+				return out
+			}
+			seed := func(t *testing.T) {
+				require.NoError(t, db.Unscoped().Where("1 = 1").Delete(&model.Model{}).Error)
+				require.NoError(t, db.Unscoped().Where("1 = 1").Delete(&model.Vendor{}).Error)
+				vendor := model.Vendor{Name: "vendor-a", Status: 1}
+				require.NoError(t, db.Create(&vendor).Error)
+				for _, record := range []model.Model{
+					{ModelName: "gpt-6.2-sol", Capabilities: gpt62, Status: 1, SyncOfficial: 1},
+					{ModelName: "qwen4-max", Capabilities: qwen, Status: 1, SyncOfficial: 1},
+					{ModelName: "glm-5.2", Status: 1, SyncOfficial: 1},
+					{ModelName: "gpt-6", NameRule: model.NameRulePrefix, Description: "prefix desc", Icon: "OpenAI", Tags: "chat", VendorID: vendor.Id,
+						Endpoints: `{"openai":{"path":"/v1/chat/completions","method":"POST"}}`, Status: 1, SyncOfficial: 1},
+				} {
+					require.NoError(t, db.Create(&record).Error)
+				}
+				require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", "gpt-6").Updates(map[string]any{"status": 0, "sync_official": 0}).Error)
+				model.RefreshPricing()
+			}
+			rows := func(t *testing.T) []model.Model {
+				var all []model.Model
+				require.NoError(t, db.Unscoped().Order("id").Find(&all).Error)
+				return all
+			}
+			byName := func(t *testing.T, name string) model.Model {
+				var record model.Model
+				require.NoError(t, db.Where("model_name = ? AND name_rule = ?", name, model.NameRuleExact).First(&record).Error)
+				return record
+			}
+			submission := func(t *testing.T) map[string]any {
+				return map[string]any{
+					"gpt-6.2-sol": parse(t, `{"context_length":900000}`),
+					"gpt-6.3-sol": parse(t, `{"context_length":1050000}`),
+					"foo-model":   parse(t, `{"reasoning":{"supported_efforts":[]}}`),
+				}
+			}
+			preview := func(t *testing.T, caps map[string]any) (*httptest.ResponseRecorder, previewResponse) {
+				var response previewResponse
+				recorder := modelManagementRequest(t, PreviewModelCapabilities, http.MethodPost, path+"/preview", map[string]any{"capabilities": caps}, &response)
+				return recorder, response
+			}
+			save := func(t *testing.T, caps map[string]any, version string) (*httptest.ResponseRecorder, saveResponse) {
+				var response saveResponse
+				recorder := modelManagementRequest(t, SaveModelCapabilities, http.MethodPut, path, map[string]any{"capabilities": caps, "version": version}, &response)
+				return recorder, response
+			}
+
+			t.Run("get_lists_configured_exact_and_the_rest", func(t *testing.T) {
+				seed(t)
+				var response listResponse
+				modelManagementRequest(t, GetModelCapabilities, http.MethodGet, path, map[string]any{}, &response)
+				require.True(t, response.Success)
+				assert.Equal(t, map[string]any{
+					"gpt-6.2-sol": parse(t, gpt62),
+					"qwen4-max":   parse(t, qwen),
+				}, response.Data.Capabilities)
+				require.Len(t, response.Data.NonExact, 1)
+				assert.Equal(t, "gpt-6", response.Data.NonExact[0].ModelName)
+				assert.Equal(t, model.NameRulePrefix, response.Data.NonExact[0].NameRule)
+				assert.Equal(t, []string{"glm-5.2"}, response.Data.Unconfigured)
+			})
+
+			t.Run("preview_reports_actions_and_field_changes", func(t *testing.T) {
+				seed(t)
+				before := rows(t)
+				_, response := preview(t, submission(t))
+				require.True(t, response.Success)
+				assert.Empty(t, response.Data.Errors)
+				assert.Len(t, response.Data.Version, 64)
+				assert.Equal(t, map[string]int{"create": 2, "update": 1, "clear": 1, "unchanged": 0}, response.Data.Summary)
+				items := map[string]previewItem{}
+				for _, item := range response.Data.Items {
+					items[item.ModelName] = item
+				}
+				assert.Equal(t, "create", items["gpt-6.3-sol"].Action)
+				assert.Equal(t, "create", items["foo-model"].Action)
+				assert.Nil(t, items["foo-model"].Before)
+				assert.Equal(t, "update", items["gpt-6.2-sol"].Action)
+				assert.Equal(t, parse(t, gpt62), items["gpt-6.2-sol"].Before)
+				assert.Equal(t, parse(t, `{"context_length":900000}`), items["gpt-6.2-sol"].After)
+				assert.Equal(t, "clear", items["qwen4-max"].Action)
+				assert.Equal(t, parse(t, qwen), items["qwen4-max"].Before)
+				assert.Equal(t, before, rows(t))
+			})
+
+			t.Run("preview_marks_identical_submission_unchanged", func(t *testing.T) {
+				seed(t)
+				_, response := preview(t, map[string]any{"gpt-6.2-sol": parse(t, gpt62), "qwen4-max": parse(t, qwen)})
+				require.True(t, response.Success)
+				assert.Equal(t, map[string]int{"create": 0, "update": 0, "clear": 0, "unchanged": 2}, response.Data.Summary)
+			})
+
+			t.Run("null_and_empty_modalities_mean_unconfigured", func(t *testing.T) {
+				seed(t)
+				_, response := preview(t, map[string]any{
+					"gpt-6.2-sol": parse(t, `{"context_length":null,"architecture":{"input_modalities":[]}}`),
+					"qwen4-max":   parse(t, qwen),
+				})
+				require.True(t, response.Success)
+				assert.Empty(t, response.Data.Errors)
+				assert.Equal(t, "clear", func() string {
+					for _, item := range response.Data.Items {
+						if item.ModelName == "gpt-6.2-sol" {
+							return item.Action
+						}
+					}
+					return ""
+				}())
+			})
+
+			t.Run("save_applies_replacement_and_new_records", func(t *testing.T) {
+				seed(t)
+				var prefixRule model.Model
+				require.NoError(t, db.Where("model_name = ?", "gpt-6").First(&prefixRule).Error)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				recorder, saved := save(t, submission(t), previewed.Data.Version)
+				require.Equal(t, http.StatusOK, recorder.Code)
+				require.True(t, saved.Success, saved.Message)
+				assert.Equal(t, map[string]int{"create": 2, "update": 1, "clear": 1}, saved.Data)
+
+				copied := byName(t, "gpt-6.3-sol")
+				assert.Equal(t, `{"context_length":1050000}`, copied.Capabilities)
+				assert.Equal(t, prefixRule.Description, copied.Description)
+				assert.Equal(t, prefixRule.Icon, copied.Icon)
+				assert.Equal(t, prefixRule.Tags, copied.Tags)
+				assert.Equal(t, prefixRule.VendorID, copied.VendorID)
+				assert.Equal(t, prefixRule.Endpoints, copied.Endpoints)
+				assert.Equal(t, 0, copied.Status)
+				assert.Equal(t, 0, copied.SyncOfficial)
+
+				created := byName(t, "foo-model")
+				assert.Equal(t, `{"reasoning":{"supported_efforts":[]}}`, created.Capabilities)
+				assert.Empty(t, created.Description)
+				assert.Empty(t, created.Endpoints)
+				assert.Zero(t, created.VendorID)
+				assert.Equal(t, 1, created.Status)
+				assert.Equal(t, 1, created.SyncOfficial)
+
+				assert.Equal(t, `{"context_length":900000}`, byName(t, "gpt-6.2-sol").Capabilities)
+				assert.Empty(t, byName(t, "qwen4-max").Capabilities)
+				assert.Empty(t, byName(t, "glm-5.2").Capabilities)
+				var prefixAfter model.Model
+				require.NoError(t, db.Where("model_name = ?", "gpt-6").First(&prefixAfter).Error)
+				assert.Equal(t, prefixRule, prefixAfter)
+
+				capability := model.GetModelCapabilityByName("gpt-6.2-sol")
+				require.NotNil(t, capability.ContextLength)
+				assert.EqualValues(t, 900000, *capability.ContextLength)
+				assert.Nil(t, capability.InputModalities)
+			})
+
+			t.Run("invalid_entries_block_preview_and_save", func(t *testing.T) {
+				for _, tc := range []struct{ name, body string }{
+					{"effort_outside_range", `{"reasoning":{"supported_efforts":["ultra"]}}`},
+					{"input_modality_outside_range", `{"architecture":{"input_modalities":["video"]}}`},
+					{"output_modality_outside_range", `{"architecture":{"output_modalities":["file"]}}`},
+					{"unknown_field", `{"foo":1}`},
+					{"zero_context", `{"context_length":0}`},
+					{"fractional_context", `{"context_length":1.5}`},
+					{"too_large_completion", `{"top_provider":{"max_completion_tokens":9007199254740992}}`},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						seed(t)
+						before := rows(t)
+						caps := submission(t)
+						caps["bad-model"] = parse(t, tc.body)
+						_, previewed := preview(t, caps)
+						require.NotEmpty(t, previewed.Data.Errors)
+						assert.Equal(t, "bad-model", previewed.Data.Errors[0].ModelName)
+						assert.NotEmpty(t, previewed.Data.Errors[0].Message)
+						recorder, saved := save(t, caps, previewed.Data.Version)
+						assert.False(t, saved.Success)
+						assert.NotEqual(t, http.StatusConflict, recorder.Code)
+						assert.Equal(t, before, rows(t))
+					})
+				}
+			})
+
+			t.Run("save_rejects_when_touched_record_changed_after_preview", func(t *testing.T) {
+				seed(t)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", "qwen4-max").Updates(map[string]any{"capabilities": `{"context_length":5}`, "updated_time": 1}).Error)
+				before := rows(t)
+				var saved saveResponse
+				recorder := modelManagementRequest(t, SaveModelCapabilities, http.MethodPut, path, map[string]any{"capabilities": submission(t), "version": previewed.Data.Version}, &saved)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
+				assert.False(t, saved.Success)
+				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, before, rows(t))
+
+				_, again := preview(t, submission(t))
+				require.True(t, again.Success)
+				_, retried := save(t, submission(t), again.Data.Version)
+				assert.True(t, retried.Success, retried.Message)
+			})
+
+			t.Run("save_rejects_when_copy_source_changed_after_preview", func(t *testing.T) {
+				seed(t)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", "gpt-6").Updates(map[string]any{"description": "edited", "updated_time": 1}).Error)
+				before := rows(t)
+				recorder, saved := save(t, submission(t), previewed.Data.Version)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
+				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, before, rows(t))
+			})
+
+			t.Run("save_rejects_when_touched_record_deleted_after_preview", func(t *testing.T) {
+				seed(t)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				require.NoError(t, db.Where("model_name = ?", "qwen4-max").Delete(&model.Model{}).Error)
+				before := rows(t)
+				recorder, saved := save(t, submission(t), previewed.Data.Version)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
+				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, before, rows(t))
+			})
+
+			t.Run("save_rejects_when_same_name_exact_record_created_after_preview", func(t *testing.T) {
+				seed(t)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				require.NoError(t, db.Create(&model.Model{ModelName: "gpt-6.3-sol", Status: 1, SyncOfficial: 1}).Error)
+				before := rows(t)
+				recorder, saved := save(t, submission(t), previewed.Data.Version)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
+				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, before, rows(t))
+			})
+
+			t.Run("failed_write_rolls_back_everything", func(t *testing.T) {
+				seed(t)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				before := rows(t)
+				const hook = "capability_batch_failure"
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register(hook, func(tx *gorm.DB) {
+					if record, ok := tx.Statement.Dest.(*model.Model); ok && record.ModelName == "foo-model" {
+						_ = tx.AddError(errors.New("injected write failure"))
+					}
+				}))
+				t.Cleanup(func() { _ = db.Callback().Create().Remove(hook) })
+				_, saved := save(t, submission(t), previewed.Data.Version)
+				assert.False(t, saved.Success)
+				assert.Equal(t, before, rows(t))
+			})
+
+			t.Run("get_key_order_follows_raw_response_bytes", func(t *testing.T) {
+				seed(t)
+				for _, name := range []string{"zeta-model", "alpha-model", "mid-model"} {
+					require.NoError(t, db.Create(&model.Model{ModelName: name, Capabilities: `{"context_length":10}`, Status: 1, SyncOfficial: 1}).Error)
+				}
+				recorder := modelManagementRequest(t, GetModelCapabilities, http.MethodGet, path, map[string]any{}, nil)
+				raw := recorder.Body.Bytes()
+				last := -1
+				for _, name := range []string{"alpha-model", "gpt-6.2-sol", "mid-model", "qwen4-max", "zeta-model"} {
+					position := bytes.Index(raw, []byte(`"`+name+`":`))
+					require.Greater(t, position, last, name)
+					last = position
+				}
+			})
+
+			t.Run("prefix_record_with_own_capability_is_untouched_by_save", func(t *testing.T) {
+				seed(t)
+				require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", "gpt-6").Update("capabilities", `{"context_length":1050000}`).Error)
+				var before model.Model
+				require.NoError(t, db.Where("model_name = ?", "gpt-6").First(&before).Error)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				_, saved := save(t, submission(t), previewed.Data.Version)
+				require.True(t, saved.Success, saved.Message)
+				var after model.Model
+				require.NoError(t, db.Where("model_name = ?", "gpt-6").First(&after).Error)
+				assert.Equal(t, before, after)
+			})
+
+			t.Run("copy_source_prefers_prefix_then_suffix_then_contains_smallest_id", func(t *testing.T) {
+				seed(t)
+				for _, rule := range []struct {
+					name, description string
+					nameRule          int
+				}{
+					{"alpha", "C1", model.NameRuleContains}, {"alp", "C2", model.NameRuleContains},
+					{"-gamma", "S1", model.NameRuleSuffix}, {"a-gamma", "S2", model.NameRuleSuffix},
+					{"zz-", "P1", model.NameRulePrefix}, {"zz-a", "P2", model.NameRulePrefix},
+				} {
+					require.NoError(t, db.Create(&model.Model{ModelName: rule.name, Description: rule.description, NameRule: rule.nameRule, Status: 1, SyncOfficial: 1}).Error)
+				}
+				caps := map[string]any{"zz-alpha-beta-gamma": parse(t, `{"context_length":7}`)}
+				_, previewed := preview(t, caps)
+				require.True(t, previewed.Success)
+				_, saved := save(t, caps, previewed.Data.Version)
+				require.True(t, saved.Success, saved.Message)
+				assert.Equal(t, "P1", byName(t, "zz-alpha-beta-gamma").Description)
+			})
+
+			t.Run("save_rejects_when_copy_source_deleted_after_preview", func(t *testing.T) {
+				seed(t)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				require.NoError(t, db.Where("model_name = ?", "gpt-6").Delete(&model.Model{}).Error)
+				before := rows(t)
+				recorder, saved := save(t, submission(t), previewed.Data.Version)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
+				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, before, rows(t))
+			})
+
+			t.Run("invalid_model_names_block_preview_and_save", func(t *testing.T) {
+				for _, name := range []string{"", strings.Repeat("a", 129), "gpt-6"} {
+					seed(t)
+					before := rows(t)
+					caps := submission(t)
+					caps[name] = parse(t, `{"context_length":5}`)
+					_, previewed := preview(t, caps)
+					found := false
+					for _, item := range previewed.Data.Errors {
+						if item.ModelName == name {
+							found = true
+							assert.NotEmpty(t, item.Message)
+						}
+					}
+					assert.True(t, found, "no error for name of %d chars %q", len(name), name)
+					_, saved := save(t, caps, previewed.Data.Version)
+					assert.False(t, saved.Success)
+					assert.Equal(t, before, rows(t))
+					var count int64
+					require.NoError(t, db.Unscoped().Model(&model.Model{}).Where("model_name = ?", "gpt-6").Count(&count).Error)
+					assert.EqualValues(t, 1, count)
+				}
+			})
+
+			t.Run("name_of_128_characters_is_accepted", func(t *testing.T) {
+				seed(t)
+				name := strings.Repeat("a", 128)
+				caps := map[string]any{name: parse(t, `{"context_length":5}`)}
+				_, previewed := preview(t, caps)
+				require.True(t, previewed.Success)
+				assert.Empty(t, previewed.Data.Errors)
+				_, saved := save(t, caps, previewed.Data.Version)
+				assert.True(t, saved.Success, saved.Message)
+				assert.Equal(t, `{"context_length":5}`, byName(t, name).Capabilities)
+			})
+
+			t.Run("manual_create_rejects_129_character_name", func(t *testing.T) {
+				seed(t)
+				name := strings.Repeat("b", 129)
+				var response struct{ Success bool }
+				modelManagementRequest(t, CreateModelMeta, http.MethodPost, "/api/models/", map[string]any{"model_name": name, "status": 1}, &response)
+				assert.False(t, response.Success)
+				var count int64
+				require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", name).Count(&count).Error)
+				assert.Zero(t, count)
+			})
+
+			t.Run("update_and_clear_refresh_updated_time", func(t *testing.T) {
+				seed(t)
+				require.NoError(t, db.Model(&model.Model{}).Where("model_name IN ?", []string{"gpt-6.2-sol", "qwen4-max"}).Update("updated_time", 100).Error)
+				_, previewed := preview(t, submission(t))
+				require.True(t, previewed.Success)
+				_, saved := save(t, submission(t), previewed.Data.Version)
+				require.True(t, saved.Success, saved.Message)
+				assert.Greater(t, byName(t, "gpt-6.2-sol").UpdatedTime, int64(100))
+				assert.Greater(t, byName(t, "qwen4-max").UpdatedTime, int64(100))
+			})
+		})
+	}
 }

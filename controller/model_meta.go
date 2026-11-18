@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -114,6 +115,10 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiErrorT(c, "Model name cannot be empty")
 		return
 	}
+	if utf8.RuneCountInString(m.ModelName) > 128 {
+		common.ApiErrorT(c, "Model name must be 1 to 128 characters")
+		return
+	}
 	if err := model.ValidateMetadataValues(model.MetadataValues{Endpoints: m.Endpoints, Status: m.Status, NameRule: m.NameRule}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -170,6 +175,10 @@ func UpdateModelMeta(c *gin.Context) {
 	} else {
 		if strings.TrimSpace(m.ModelName) == "" {
 			common.ApiErrorT(c, "Model name cannot be empty")
+			return
+		}
+		if utf8.RuneCountInString(m.ModelName) > 128 {
+			common.ApiErrorT(c, "Model name must be 1 to 128 characters")
 			return
 		}
 		if err := model.ValidateMetadataValues(model.MetadataValues{Endpoints: m.Endpoints, Status: m.Status, NameRule: m.NameRule}); err != nil {
