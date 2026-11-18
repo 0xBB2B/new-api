@@ -116,6 +116,39 @@ describe('model capabilities section in the model drawer', () => {
     ).toBeTruthy()
   })
 
+  it('also shows the section for a prefix-rule model between Matching Rules and Endpoints', async () => {
+    setup({ ...model, name_rule: 1 })
+    const capabilities = await screen.findByRole('heading', {
+      name: 'Model capabilities',
+    })
+    const rules = screen.getByRole('heading', { name: 'Matching Rules' })
+    const endpoints = screen.getByRole('heading', { name: 'Endpoints' })
+    expect(
+      rules.compareDocumentPosition(capabilities) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      capabilities.compareDocumentPosition(endpoints) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it('reports a non-numeric context_length written in JSON mode and blocks saving', async () => {
+    const { put, user } = setup()
+    const s = await section()
+    await user.click(s.getByRole('button', { name: /JSON mode/ }))
+    fireEvent.input(s.getByRole('textbox'), {
+      target: { value: '{"context_length":"abc"}' },
+    })
+    expect(
+      await s.findByText(
+        'context_length must be an integer from 1 to 9007199254740991'
+      )
+    ).toBeInTheDocument()
+    await user.click(save())
+    expect(put).not.toHaveBeenCalled()
+  })
+
   it('shows every field with its placeholder', async () => {
     setup()
     const s = await section()

@@ -1968,9 +1968,10 @@ func TestModelCapabilitiesBatch(t *testing.T) {
 				}
 			}
 			type saveResponse struct {
-				Success bool
-				Message string
-				Data    map[string]int
+				Success    bool
+				Message    string
+				MessageKey string `json:"message_key"`
+				Data       map[string]int
 			}
 			parse := func(t *testing.T, text string) map[string]any {
 				var out map[string]any
@@ -2165,6 +2166,7 @@ func TestModelCapabilitiesBatch(t *testing.T) {
 				assert.Equal(t, http.StatusConflict, recorder.Code)
 				assert.False(t, saved.Success)
 				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, staleReject, saved.MessageKey)
 				assert.Equal(t, before, rows(t))
 
 				_, again := preview(t, submission(t))
@@ -2182,6 +2184,7 @@ func TestModelCapabilitiesBatch(t *testing.T) {
 				recorder, saved := save(t, submission(t), previewed.Data.Version)
 				assert.Equal(t, http.StatusConflict, recorder.Code)
 				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, staleReject, saved.MessageKey)
 				assert.Equal(t, before, rows(t))
 			})
 
@@ -2194,6 +2197,7 @@ func TestModelCapabilitiesBatch(t *testing.T) {
 				recorder, saved := save(t, submission(t), previewed.Data.Version)
 				assert.Equal(t, http.StatusConflict, recorder.Code)
 				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, staleReject, saved.MessageKey)
 				assert.Equal(t, before, rows(t))
 			})
 
@@ -2206,6 +2210,7 @@ func TestModelCapabilitiesBatch(t *testing.T) {
 				recorder, saved := save(t, submission(t), previewed.Data.Version)
 				assert.Equal(t, http.StatusConflict, recorder.Code)
 				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, staleReject, saved.MessageKey)
 				assert.Equal(t, before, rows(t))
 			})
 
@@ -2284,6 +2289,7 @@ func TestModelCapabilitiesBatch(t *testing.T) {
 				recorder, saved := save(t, submission(t), previewed.Data.Version)
 				assert.Equal(t, http.StatusConflict, recorder.Code)
 				assert.Equal(t, staleReject, saved.Message)
+				assert.Equal(t, staleReject, saved.MessageKey)
 				assert.Equal(t, before, rows(t))
 			})
 

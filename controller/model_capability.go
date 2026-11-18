@@ -47,7 +47,7 @@ func SaveModelCapabilities(c *gin.Context) {
 	}
 	counts, err := model.ApplyModelCapabilityReplace(request.Capabilities, request.Version)
 	if errors.Is(err, model.ErrMetadataSyncConflict) {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "Model metadata changed. Preview again before saving."})
+		common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("Model metadata changed. Preview again before saving."))
 		return
 	}
 	if err != nil {

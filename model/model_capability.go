@@ -58,7 +58,11 @@ func parseCapabilityObject(raw []byte, path string, allowed []string) (map[strin
 	result := make(map[string][]byte, len(fields))
 	for key, value := range fields {
 		if !slices.Contains(allowed, key) {
-			errs = append(errs, common.NewMessage("{{path}} is not a capability field", map[string]any{"path": joinCapabilityPath(path, key)}))
+			fieldPath := key
+			if path != "" {
+				fieldPath = path + "." + key
+			}
+			errs = append(errs, common.NewMessage("{{path}} is not a capability field", map[string]any{"path": fieldPath}))
 			continue
 		}
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
@@ -73,13 +77,6 @@ func capabilityTypeError(key, path string) error {
 	return common.NewMessage(key, map[string]any{"path": path})
 }
 
-func joinCapabilityPath(parent, key string) string {
-	if parent == "" {
-		return key
-	}
-	return parent + "." + key
-}
-
 func parseCapabilityNumber(raw []byte, path string) (*int64, error) {
 	number, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
 	if err != nil || number < 1 || number > maxCapabilityNumber {
@@ -89,11 +86,6 @@ func parseCapabilityNumber(raw []byte, path string) (*int64, error) {
 }
 
 func parseCapabilityList(raw []byte, path string, allowed []string) (*[]string, []error) {
-	unknownValue := func(value string) error {
-		return common.NewMessage("{{path}} contains an unknown value {{value}}. Allowed values: {{allowed}}", map[string]any{
-			"path": path, "value": value, "allowed": allowed,
-		})
-	}
 	var items []any
 	if err := common.Unmarshal(raw, &items); err != nil {
 		return nil, []error{capabilityTypeError("{{path}} must be an array of strings", path)}
@@ -109,7 +101,9 @@ func parseCapabilityList(raw []byte, path string, allowed []string) (*[]string, 
 	var errs []error
 	for _, value := range values {
 		if !slices.Contains(allowed, value) {
-			errs = append(errs, unknownValue(value))
+			errs = append(errs, common.NewMessage("{{path}} contains an unknown value {{value}}. Allowed values: {{allowed}}", map[string]any{
+				"path": path, "value": value, "allowed": allowed,
+			}))
 		}
 	}
 	if len(errs) > 0 {
