@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -148,4 +149,62 @@ func TestPricingSyncCompleteSourcesAndArrayFormats(t *testing.T) {
 	assert.NotContains(t, response.Data.Prices, "sync-unpriced")
 	assert.NotContains(t, response.Data.Prices, "sync-invalid-expression")
 	assert.NotContains(t, response.Data.Differences, "sync-already")
+}
+
+func TestPricingSyncSkipsVirtualModels(t *testing.T) {
+	oldRoutes, oldRatios := operation_setting.SmartRoutingRoutesToString(), ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		operation_setting.LoadSmartRoutesFromJSONString(oldRoutes)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"sync-virtual":3}`))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		encoded, err := common.Marshal(map[string]any{"success": true, "data": []map[string]any{
+			{"model_name": "sync-virtual", "model_ratio": 5},
+			{"model_name": "Sync-Virtual", "model_ratio": 5},
+			{"model_name": "sync-normal", "model_ratio": 2},
+		}})
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+	type fetchResponse struct {
+		Success bool
+		Data    struct {
+			Differences map[string]map[string]dto.DifferenceItem
+			Prices      map[string]any
+		}
+	}
+	fetch := func(includeUnchanged bool) fetchResponse {
+		var response fetchResponse
+		body := map[string]any{
+			"upstreams":         []map[string]any{{"id": 1, "name": "Legacy", "base_url": server.URL, "endpoint": "/pricing"}},
+			"include_unchanged": includeUnchanged,
+		}
+		recorder := modelManagementRequest(t, FetchUpstreamRatios, http.MethodPost, "/api/ratio_sync/fetch", body, &response)
+		require.True(t, response.Success, recorder.Body.String())
+		return response
+	}
+
+	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"sync-virtual"}]`)
+	response := fetch(false)
+	assert.NotContains(t, response.Data.Differences, "sync-virtual")
+	assert.NotContains(t, response.Data.Prices, "sync-virtual")
+	assert.Contains(t, response.Data.Differences, "Sync-Virtual")
+	assert.Contains(t, response.Data.Prices, "Sync-Virtual")
+	assert.Contains(t, response.Data.Differences, "sync-normal")
+	assert.Contains(t, response.Data.Prices, "sync-normal")
+	response = fetch(true)
+	assert.NotContains(t, response.Data.Differences, "sync-virtual")
+	assert.NotContains(t, response.Data.Prices, "sync-virtual")
+	assert.Contains(t, response.Data.Prices, "Sync-Virtual")
+	localRatio, _, _ := ratio_setting.GetModelRatio("sync-virtual")
+	assert.Equal(t, float64(3), localRatio)
+
+	operation_setting.LoadSmartRoutesFromJSONString(`[{"name":"sync-renamed"}]`)
+	assert.Contains(t, fetch(false).Data.Differences, "sync-virtual")
+
+	operation_setting.LoadSmartRoutesFromJSONString(`[]`)
+	assert.Contains(t, fetch(false).Data.Differences, "sync-virtual")
 }

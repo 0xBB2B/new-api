@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
 
@@ -613,6 +614,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 		for _, channel := range successfulChannels {
 			for _, field := range pricingSyncFields {
 				for name := range valueMap(channel.data[field]) {
+					if _, virtual := operation_setting.FindSmartRoute(name); virtual {
+						continue
+					}
 					models[name] = struct{}{}
 				}
 			}
@@ -675,6 +679,9 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 
 	for _, field := range pricingSyncFields {
 		for modelName := range valueMap(localData[field]) {
+			if _, virtual := operation_setting.FindSmartRoute(modelName); virtual {
+				continue
+			}
 			allModels[modelName] = struct{}{}
 		}
 	}
@@ -682,6 +689,9 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	for _, channel := range successfulChannels {
 		for _, field := range pricingSyncFields {
 			for modelName := range valueMap(channel.data[field]) {
+				if _, virtual := operation_setting.FindSmartRoute(modelName); virtual {
+					continue
+				}
 				allModels[modelName] = struct{}{}
 			}
 		}
