@@ -26,8 +26,8 @@
 | routing tier | 虚拟模型下的一个档位，包含一个真实模型、一组分组顺序和一种思考力度方式；固定 simple、normal、hard 三档，从低到高排列 | 简体「档位」；三档分别称「简单档」「普通档」「困难档」 |
 | default tier | 三个档位的兜底档：打分失败或超时、打分把握低于可信度门槛、工具结果续跑时会话没有记录、选中的档位没有可用渠道，这几种情况都用它；由管理员为每个虚拟模型指定 | 简体「默认档」 |
 | effort mode | 档位决定思考力度的方式，三选一：not override（保留客户端的值）、fixed（固定一个值）、follow scoring（按 thinking need 在管理员配的最低～最高之间、模型支持的档位里按比例选一档） | 简体「思考力度方式」；三种分别称「不覆盖」「固定」「跟随打分」 |
-| thinking capability | 一个模型支持七档思考力度（none、minimal、low、medium、high、xhigh、max）里的哪几档，或不支持思考；来自代码内置表或管理员覆盖，二者都没有时为 capability unconfirmed | 简体「模型思考能力」 |
-| capability unconfirmed | 内置表里没有、管理员也没覆盖的模型的思考能力状态，按只支持 low、medium、high 处理 | 简体「能力未确认」；能力表来源标签写「未确认」 |
+| thinking capability | 一个模型支持七档思考力度（none、minimal、low、medium、high、xhigh、max）里的哪几档，或不支持思考；先取命中该模型名的 model record 里配置的值，没有时用代码里 2026 年 Claude、Gemini 3.x 的推算规则，都没有时为 capability unconfirmed | 简体「模型思考能力」 |
+| capability unconfirmed | 模型记录没配置思考等级、推算规则也认不出的模型的思考能力状态，智能路由按只支持 low、medium、high 处理，/v1/models 不返回思考等级 | 简体「能力未确认」 |
 | effort adjustment | 算出的思考力度模型不支持时，发出前换成模型支持的档位里最接近的一档，上下一样近取更高的一档 | 简体「思考力度换档」；换成更低一档称「降档」、日志写「由 X 降档」，换成更高一档称「升档」、日志写「由 X 升档」 |
 | scorer model | 给每条用户新消息贴难度标签的模型，每条用户新消息调用一次，费用单独计入用户的消费记录 | 简体「打分模型」 |
 | thinking need | 打分模型给每条用户新消息的 0～1 的数，表示最新一条请求需要多少思考：目标越模糊、问题越难越大，目标越明确、越简单越小；只用来定 follow scoring 的力度，不参与选档 | 简体「思考需求」；英文界面写 Thinking need |
@@ -39,3 +39,6 @@
 | routing session | new-api 认定属于同一段对话的一组请求，用"密钥 + prompt_cache_key"或"密钥 + 第一条用户消息"识别；与登录会话、渠道亲和的会话无关 | 简体「会话」（仅在智能路由内） |
 | reasoning item | 请求历史里记录模型上一轮思考过程的条目：Responses 格式是 `type` 为 `reasoning` 的条目，Claude 格式是 assistant 消息里的 `thinking`、`redacted_thinking` 块 | 简体「思考记录」 |
 | channel tag | 中台返回 Responses 条目时写进条目编号（Claude 格式写进思考块的签名或 data）里的加密信息，记着生成它的渠道和上游原值；读不出来时按没有标记处理 | 简体「渠道标记」 |
+| model record | 模型管理页（/models/metadata）里的一行，按名称规则（完全匹配、前缀、包含、后缀）命中一个或多个模型名，存描述、图标、标签、厂商、接口配置和 model capability；一个名字被多条命中时完全匹配优先，其次前缀、后缀、包含 | 简体「模型记录」 |
+| model capability | model record 上的五项可选配置：输入模态、输出模态、上下文大小、最大输出 token、thinking capability；每项可以是未配置，通过 /v1/models 的 OpenAI 格式返回 | 简体「模型能力」 |
+| capabilities JSON | 模型管理页上查看、复制、下载全部完全匹配记录的 model capability，并整体替换保存的窗口，内容按模型名组织，写法与 /v1/models 一致 | 简体「能力配置 JSON」 |
