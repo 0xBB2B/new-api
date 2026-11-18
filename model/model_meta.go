@@ -33,13 +33,15 @@ type BoundChannel struct {
 }
 
 type Model struct {
-	Id                 int            `json:"id"`
-	ModelName          string         `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
-	Description        string         `json:"description,omitempty" gorm:"type:text"`
-	Icon               string         `json:"icon,omitempty" gorm:"type:varchar(128)"`
-	Tags               string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
-	VendorID           int            `json:"vendor_id,omitempty" gorm:"index"`
-	Endpoints          string         `json:"endpoints,omitempty" gorm:"type:text"`
+	Id          int    `json:"id"`
+	ModelName   string `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
+	Description string `json:"description,omitempty" gorm:"type:text"`
+	Icon        string `json:"icon,omitempty" gorm:"type:varchar(128)"`
+	Tags        string `json:"tags,omitempty" gorm:"type:varchar(255)"`
+	VendorID    int    `json:"vendor_id,omitempty" gorm:"index"`
+	Endpoints   string `json:"endpoints,omitempty" gorm:"type:text"`
+	// Capabilities 存规范化后的能力 JSON（形状与 /v1/models 一致），空串表示五项都未配置。
+	Capabilities       string         `json:"capabilities,omitempty" gorm:"type:text"`
 	SupportedEndpoints []string       `json:"supported_endpoints,omitempty" gorm:"-"`
 	Status             int            `json:"status" gorm:"default:1"`
 	SyncOfficial       int            `json:"sync_official" gorm:"default:1"`
@@ -103,7 +105,7 @@ func resolveModelMetadata(records []Model, names []string) map[string]*Model {
 // to live routes, then aggregates concrete models for metadata rule rows.
 func FillModelSquareStates(rows []*Model, configured map[string][]int, connections []ModelConnection) error {
 	var metadata []Model
-	if err := DB.Find(&metadata).Error; err != nil {
+	if err := DB.Order("id").Find(&metadata).Error; err != nil {
 		return err
 	}
 	nameSet := make(map[string]struct{}, len(configured))
@@ -265,7 +267,7 @@ func (mi *Model) Update() error {
 		}
 		mi.UpdatedTime = common.GetTimestamp()
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).
-			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").Updates(mi).Error
+			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "capabilities", "status", "sync_official", "name_rule", "updated_time").Updates(mi).Error
 	})
 }
 

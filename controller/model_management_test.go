@@ -1696,3 +1696,222 @@ export function parseTaskResult(){return {};}
 		})
 	}
 }
+
+func TestModelCapabilitiesManagement(t *testing.T) {
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}))
+	const full = `{"context_length":1050000,"top_provider":{"max_completion_tokens":128000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"reasoning":{"supported_efforts":["none","low","medium","high","xhigh","max"]}}`
+	type modelResponse struct {
+		Success bool
+		Data    map[string]any
+	}
+	create := func(t *testing.T, body map[string]any) (*httptest.ResponseRecorder, modelResponse) {
+		var response modelResponse
+		recorder := modelManagementRequest(t, CreateModelMeta, "POST", "/api/models/", body, &response)
+		return recorder, response
+	}
+	fetch := func(t *testing.T, id any) modelResponse {
+		var response modelResponse
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest("GET", "/api/models/"+fmt.Sprint(id), nil)
+		context.Params = gin.Params{{Key: "id", Value: fmt.Sprint(id)}}
+		context.Set("role", common.RoleRootUser)
+		GetModelMeta(context)
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+		return response
+	}
+	capabilitiesOf := func(t *testing.T, id any) string {
+		response := fetch(t, id)
+		require.True(t, response.Success)
+		value, _ := response.Data["capabilities"].(string)
+		return value
+	}
+	lookup := func(name string) string {
+		capability := model.GetModelCapabilityByName(name)
+		return capability.MarshalCanonical()
+	}
+
+	t.Run("create_then_get_returns_canonical_json", func(t *testing.T) {
+		_, response := create(t, map[string]any{"model_name": "cap-create", "status": 1, "capabilities": full})
+		require.True(t, response.Success)
+		assert.Equal(t, full, capabilitiesOf(t, response.Data["id"]))
+	})
+
+	t.Run("create_normalizes_unordered_duplicates", func(t *testing.T) {
+		_, response := create(t, map[string]any{"model_name": "cap-normalize", "status": 1,
+			"capabilities": `{"reasoning":{"supported_efforts":["high","low","high"]},"architecture":{"input_modalities":["image","text","image"]}}`})
+		require.True(t, response.Success)
+		assert.Equal(t, `{"architecture":{"input_modalities":["text","image"]},"reasoning":{"supported_efforts":["low","high"]}}`, capabilitiesOf(t, response.Data["id"]))
+	})
+
+	t.Run("unset_and_null_and_empty_modalities_store_empty_string", func(t *testing.T) {
+		for i, input := range []string{``, `{}`, `{"context_length":null}`, `{"architecture":{"input_modalities":[]}}`} {
+			_, response := create(t, map[string]any{"model_name": fmt.Sprintf("cap-empty-%d", i), "status": 1, "capabilities": input})
+			require.True(t, response.Success, input)
+			assert.Equal(t, "", capabilitiesOf(t, response.Data["id"]), input)
+		}
+	})
+
+	t.Run("empty_efforts_array_is_kept", func(t *testing.T) {
+		_, response := create(t, map[string]any{"model_name": "cap-no-reasoning", "status": 1, "capabilities": `{"reasoning":{"supported_efforts":[]}}`})
+		require.True(t, response.Success)
+		assert.Equal(t, `{"reasoning":{"supported_efforts":[]}}`, capabilitiesOf(t, response.Data["id"]))
+	})
+
+	t.Run("max_safe_integer_accepted", func(t *testing.T) {
+		_, response := create(t, map[string]any{"model_name": "cap-max-int", "status": 1, "capabilities": `{"context_length":9007199254740991}`})
+		require.True(t, response.Success)
+		assert.Equal(t, `{"context_length":9007199254740991}`, capabilitiesOf(t, response.Data["id"]))
+	})
+
+	t.Run("create_invalid_is_rejected_without_record", func(t *testing.T) {
+		for i, input := range []string{
+			`{"architecture":{"input_modalities":["video"]}}`,
+			`{"reasoning":{"supported_efforts":["ultra"]}}`,
+			`{"foo":1}`,
+			`{"context_length":0}`,
+			`{"context_length":-5}`,
+			`{"context_length":1.5}`,
+			`{"context_length":9007199254740992}`,
+		} {
+			name := fmt.Sprintf("cap-invalid-create-%d", i)
+			_, response := create(t, map[string]any{"model_name": name, "status": 1, "capabilities": input})
+			assert.False(t, response.Success, input)
+			var count int64
+			require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", name).Count(&count).Error)
+			assert.Zero(t, count, input)
+		}
+	})
+
+	t.Run("update_valid_replaces_and_invalid_keeps_record", func(t *testing.T) {
+		_, created := create(t, map[string]any{"model_name": "cap-update", "status": 1, "capabilities": `{"context_length":1000}`})
+		require.True(t, created.Success)
+		id := created.Data["id"]
+		var response modelResponse
+		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": id, "model_name": "cap-update", "status": 1, "capabilities": full}, &response)
+		require.True(t, response.Success)
+		assert.Equal(t, full, capabilitiesOf(t, id))
+		for _, input := range []string{`{"context_length":0}`, `{"architecture":{"output_modalities":["video"]}}`, `{"foo":1}`, `{"reasoning":{"supported_efforts":["ultra"]}}`} {
+			var rejected modelResponse
+			modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": id, "model_name": "cap-update", "status": 1, "capabilities": input}, &rejected)
+			assert.False(t, rejected.Success, input)
+			assert.Equal(t, full, capabilitiesOf(t, id), input)
+		}
+	})
+
+	t.Run("name_lookup_whole_record_precedence", func(t *testing.T) {
+		for _, body := range []map[string]any{
+			{"model_name": "gpt-6.2-sol", "status": 1, "capabilities": `{"reasoning":{"supported_efforts":["low"]}}`},
+			{"model_name": "gpt-6", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":1050000,"reasoning":{"supported_efforts":["high"]}}`},
+		} {
+			_, response := create(t, body)
+			require.True(t, response.Success)
+		}
+		model.RefreshPricing()
+		assert.Equal(t, `{"reasoning":{"supported_efforts":["low"]}}`, lookup("gpt-6.2-sol"))
+		assert.Equal(t, `{"context_length":1050000,"reasoning":{"supported_efforts":["high"]}}`, lookup("gpt-6.2-luna"))
+		assert.Equal(t, "", lookup("unmatched-model"))
+	})
+
+	t.Run("name_lookup_rule_order_exact_prefix_suffix_contains", func(t *testing.T) {
+		for _, body := range []map[string]any{
+			{"model_name": "ord-", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":2}`},
+			{"model_name": "-ord", "status": 1, "name_rule": model.NameRuleSuffix, "capabilities": `{"context_length":3}`},
+			{"model_name": "mid", "status": 1, "name_rule": model.NameRuleContains, "capabilities": `{"context_length":4}`},
+		} {
+			_, response := create(t, body)
+			require.True(t, response.Success)
+		}
+		model.RefreshPricing()
+		assert.Equal(t, `{"context_length":2}`, lookup("ord-x-ord"))
+		assert.Equal(t, `{"context_length":3}`, lookup("x-ord"))
+		assert.Equal(t, `{"context_length":4}`, lookup("xmidx"))
+	})
+
+	t.Run("name_lookup_reflects_update_without_restart", func(t *testing.T) {
+		_, created := create(t, map[string]any{"model_name": "cap-live", "status": 1, "capabilities": `{"context_length":10}`})
+		require.True(t, created.Success)
+		model.RefreshPricing()
+		assert.Equal(t, `{"context_length":10}`, lookup("cap-live"))
+		var response modelResponse
+		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": created.Data["id"], "model_name": "cap-live", "status": 1, "capabilities": `{"context_length":20}`}, &response)
+		require.True(t, response.Success)
+		assert.Equal(t, `{"context_length":20}`, lookup("cap-live"))
+	})
+
+	t.Run("metadata_sync_keeps_capabilities", func(t *testing.T) {
+		_, created := create(t, map[string]any{"model_name": "cap-sync", "status": 1, "sync_official": 1, "capabilities": full})
+		require.True(t, created.Success)
+		var local model.Model
+		require.NoError(t, db.Where("model_name = ?", "cap-sync").First(&local).Error)
+		locals, _, err := model.GetMetadataSyncState(db)
+		require.NoError(t, err)
+		update := model.MetadataSyncUpdate{
+			MetadataSyncSelection: model.MetadataSyncSelection{ModelName: "cap-sync", RecordVersion: model.MetadataRecordVersion(locals["cap-sync"], nil, nil), Fields: model.MetadataSyncFields},
+			Values:                model.MetadataValues{Description: "Synced description", Status: 1},
+		}
+		_, err = model.ApplyMetadataSync([]model.MetadataSyncUpdate{update}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, full, capabilitiesOf(t, local.Id))
+		var synced model.Model
+		require.NoError(t, db.First(&synced, local.Id).Error)
+		assert.Equal(t, "Synced description", synced.Description)
+	})
+
+	t.Run("name_lookup_same_rule_takes_lowest_id", func(t *testing.T) {
+		_, earlier := create(t, map[string]any{"model_name": "tie-", "status": 0, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":11}`})
+		_, later := create(t, map[string]any{"model_name": "tie-6", "status": 1, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":22}`})
+		require.True(t, earlier.Success)
+		require.True(t, later.Success)
+		model.RefreshPricing()
+		assert.Equal(t, `{"context_length":11}`, lookup("tie-6.2-x"))
+
+		var response modelResponse
+		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": earlier.Data["id"], "model_name": "tie-", "status": 0, "name_rule": model.NameRulePrefix, "capabilities": `{"context_length":33}`}, &response)
+		require.True(t, response.Success)
+		model.RefreshPricing()
+		assert.Equal(t, `{"context_length":33}`, lookup("tie-6.2-x"))
+
+		row := &model.Model{ModelName: "tie-6.2-x"}
+		connections := []model.ModelConnection{{AbilityWithChannel: model.AbilityWithChannel{Ability: model.Ability{Model: "tie-6.2-x"}}}}
+		require.NoError(t, model.FillModelSquareStates([]*model.Model{row}, map[string][]int{"tie-6.2-x": {1}}, connections))
+		assert.Equal(t, model.ModelSquareHidden, row.SquareState)
+	})
+
+	t.Run("save_adds_exactly_one_models_sync_task", func(t *testing.T) {
+		_, created := create(t, map[string]any{"model_name": "cap-sync-task", "status": 1})
+		require.True(t, created.Success)
+		countTasks := func() int64 {
+			var count int64
+			require.NoError(t, db.Model(&model.SystemTask{}).Where("type = ?", model.SyncTaskType(model.SyncTopicModels)).Count(&count).Error)
+			return count
+		}
+		before := countTasks()
+		var response modelResponse
+		modelManagementRequest(t, UpdateModelMeta, "PUT", "/api/models/", map[string]any{"id": created.Data["id"], "model_name": "cap-sync-task", "status": 1, "capabilities": full}, &response)
+		require.True(t, response.Success)
+		assert.Equal(t, before+1, countTasks())
+	})
+
+	t.Run("failed_reload_keeps_previous_capabilities", func(t *testing.T) {
+		_, created := create(t, map[string]any{"model_name": "cap-keep", "status": 1, "capabilities": `{"context_length":77}`})
+		require.True(t, created.Success)
+		model.RefreshPricing()
+		require.Equal(t, `{"context_length":77}`, lookup("cap-keep"))
+
+		const callbackName = "test:fail_models_query"
+		modelsQueries := 0
+		require.NoError(t, db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+			if tx.Statement.Table == "models" {
+				modelsQueries++
+				_ = tx.AddError(errors.New("models read failed"))
+			}
+		}))
+		t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
+		model.RefreshPricing()
+		require.NoError(t, db.Callback().Query().Remove(callbackName))
+		require.NotZero(t, modelsQueries)
+		assert.Equal(t, `{"context_length":77}`, lookup("cap-keep"))
+	})
+}
