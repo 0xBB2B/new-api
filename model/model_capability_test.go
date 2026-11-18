@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const fullCapabilityJSON = `{"context_length":1050000,"top_provider":{"max_completion_tokens":128000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"reasoning":{"supported_efforts":["none","low","medium","high","xhigh","max"]}}`
@@ -169,4 +171,35 @@ func TestModelCapabilityWrongTypeErrors(t *testing.T) {
 			assert.Len(t, messages[0].Params, 1)
 		})
 	}
+}
+
+func TestModelCapabilityCacheIndependentOfAbilities(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &Model{}, &Vendor{}))
+	previousDB := DB
+	DB = db
+	t.Cleanup(func() { DB = previousDB })
+	require.NoError(t, db.Create(&Model{ModelName: "cap-cache-model", Capabilities: `{"reasoning":{"supported_efforts":["low","high"]}}`}).Error)
+
+	abilityQueries := 0
+	failAbilities := func(tx *gorm.DB) {
+		if tx.Statement.Table == "abilities" {
+			abilityQueries++
+			tx.AddError(errors.New("abilities unavailable"))
+		}
+	}
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:fail_abilities_query", failAbilities))
+	require.NoError(t, db.Callback().Row().Before("gorm:row").Register("test:fail_abilities_row", failAbilities))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Query().Remove("test:fail_abilities_query"))
+		require.NoError(t, db.Callback().Row().Remove("test:fail_abilities_row"))
+	})
+
+	RefreshPricing()
+
+	assert.Positive(t, abilityQueries)
+	efforts, configured := ModelThinkingSupport(GetModelCapabilityByName("cap-cache-model"))
+	assert.True(t, configured)
+	assert.Equal(t, []string{"low", "high"}, efforts)
 }

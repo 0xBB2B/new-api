@@ -923,11 +923,17 @@ func TestRunSmartRouteScorer_IgnoresTheMainRequestFormatFilter(t *testing.T) {
 	}
 }
 
-func setScorerCapabilities(t *testing.T, overrides string) {
+func setScorerCapabilities(t *testing.T, f *scorerFixture, records string) {
 	t.Helper()
-	prev := operation_setting.ThinkingCapabilitiesToString()
-	operation_setting.LoadThinkingCapabilitiesFromJSONString(overrides)
-	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(prev) })
+	var efforts map[string][]string
+	require.NoError(t, common.UnmarshalJsonStr(records, &efforts))
+	require.NoError(t, f.db.AutoMigrate(&model.Model{}, &model.Vendor{}))
+	for name, supported := range efforts {
+		encoded, err := common.Marshal(map[string]any{"reasoning": map[string]any{"supported_efforts": supported}})
+		require.NoError(t, err)
+		require.NoError(t, f.db.Create(&model.Model{ModelName: name, Capabilities: string(encoded)}).Error)
+	}
+	model.RefreshPricing()
 }
 
 func captureServerWarnings(t *testing.T) *bytes.Buffer {
@@ -952,15 +958,15 @@ func TestRunSmartRouteScorer_EffortIsSnappedToModelCapability(t *testing.T) {
 		effort       string
 		want         any
 	}{
-		{"supported level is sent as is", `{"scorer-x":{"efforts":["none","low","high","max"]}}`, "none", "none"},
-		{"unsupported level snaps to the nearest lower one", `{"scorer-x":{"efforts":["none","low"]}}`, "high", "low"},
-		{"tie between two levels picks the higher", `{"scorer-x":{"efforts":["none","high"]}}`, "low", "high"},
-		{"model without thinking gets no parameter", `{"scorer-x":{"no_thinking":true}}`, "low", nil},
+		{"supported level is sent as is", `{"scorer-x":["none","low","high","max"]}`, "none", "none"},
+		{"unsupported level snaps to the nearest lower one", `{"scorer-x":["none","low"]}`, "high", "low"},
+		{"tie between two levels picks the higher", `{"scorer-x":["none","high"]}`, "low", "high"},
+		{"model without thinking gets no parameter", `{"scorer-x":[]}`, "low", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := setupScorerFixture(t, scorerTestQuota)
-			setScorerCapabilities(t, tt.capabilities)
+			setScorerCapabilities(t, f, tt.capabilities)
 			route := scorerRoute(5000, "api")
 			route.Scorer.Effort = tt.effort
 
@@ -982,7 +988,7 @@ func TestRunSmartRouteScorer_EffortIsSnappedToModelCapability(t *testing.T) {
 
 func TestRunSmartRouteScorer_CodexChannelSendsConfiguredEffort(t *testing.T) {
 	f := setupScorerFixture(t, scorerTestQuota)
-	setScorerCapabilities(t, `{"scorer-x":{"efforts":["low","medium","high"]}}`)
+	setScorerCapabilities(t, f, `{"scorer-x":["low","medium","high"]}`)
 	addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "default", f.upstream.URL)
 	route := scorerRoute(5000, "default", "api")
 	route.Scorer.Effort = "low"
@@ -1089,13 +1095,13 @@ func TestRunSmartRouteScorer_CodexChannelSnapsEffortToCapability(t *testing.T) {
 		effort        string
 		wantReasoning any
 	}{
-		{"unsupported level snaps down", `{"scorer-x":{"efforts":["none","low"]}}`, "high", map[string]any{"effort": "low"}},
-		{"model without thinking gets no reasoning field", `{"scorer-x":{"no_thinking":true}}`, "low", nil},
+		{"unsupported level snaps down", `{"scorer-x":["none","low"]}`, "high", map[string]any{"effort": "low"}},
+		{"model without thinking gets no reasoning field", `{"scorer-x":[]}`, "low", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := setupScorerFixture(t, scorerTestQuota)
-			setScorerCapabilities(t, tt.capabilities)
+			setScorerCapabilities(t, f, tt.capabilities)
 			addScorerChannel(t, f, 2, constant.ChannelTypeCodex, `{"access_token":"tok-placeholder","account_id":"acct-placeholder"}`, "default", f.upstream.URL)
 			route := scorerRoute(5000, "default", "api")
 			route.Scorer.Effort = tt.effort
@@ -1115,14 +1121,14 @@ func TestRunSmartRouteScorer_CodexChannelSnapsEffortToCapability(t *testing.T) {
 	}
 }
 
-func TestRunSmartRouteScorer_BuiltInNoThinkingModelGetsNoEffort(t *testing.T) {
+func TestRunSmartRouteScorer_RecordNoThinkingModelGetsNoEffort(t *testing.T) {
 	f := setupScorerFixture(t, scorerTestQuota)
 	priority, weight := int64(0), uint(100)
 	require.NoError(t, f.db.Model(&model.Channel{}).Where("id = ?", 1).Update("models", "scorer-x,gpt-4o").Error)
 	require.NoError(t, f.db.Create(&model.Ability{Group: "api", Model: "gpt-4o", ChannelId: 1, Enabled: true, Priority: &priority, Weight: weight}).Error)
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"scorer-x":0.01,"gpt-4o":0.01}`))
 	model.InitChannelCache()
-	setScorerCapabilities(t, `{}`)
+	setScorerCapabilities(t, f, `{"gpt-4o":[]}`)
 	route := scorerRoute(5000, "api")
 	route.Scorer.Model = "gpt-4o"
 	route.Scorer.Effort = "low"

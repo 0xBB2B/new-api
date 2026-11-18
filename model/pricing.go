@@ -216,11 +216,6 @@ func appendPricingEndpoint(endpoints []string, endpoint string) []string {
 
 func updatePricing() {
 	//modelRatios := common.GetModelRatios()
-	enableAbilities, err := GetAllEnableAbilityWithChannels()
-	if err != nil {
-		common.SysLog(common.LogText("GetAllEnableAbilityWithChannels error: %v", err))
-		return
-	}
 	// 预加载模型元数据与供应商一次，避免循环查询
 	var allMeta []Model
 	if err := DB.Order("id").Find(&allMeta).Error; err != nil {
@@ -228,6 +223,11 @@ func updatePricing() {
 		return
 	}
 	setCapabilityRecords(allMeta)
+	enableAbilities, err := GetAllEnableAbilityWithChannels()
+	if err != nil {
+		common.SysLog(common.LogText("GetAllEnableAbilityWithChannels error: %v", err))
+		return
+	}
 	names := make([]string, 0, len(enableAbilities))
 	for _, ability := range enableAbilities {
 		names = append(names, ability.Model)

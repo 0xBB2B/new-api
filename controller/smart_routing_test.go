@@ -252,72 +252,39 @@ func TestUpdateOption_SavesLegacyRouteWithoutEndpointsAlongsideCompleteRoute(t *
 	assert.True(t, decodeQuotaResetOptionResponse(t, recorder).Success, recorder.Body.String())
 }
 
-func TestThinkingCapabilitiesOption(t *testing.T) {
-	const key = "smart_routing_setting.thinking_capabilities"
-	const baseline = `{}`
-	const valid = `{"gpt-5.5":{"no_thinking":false,"efforts":["low","high","xhigh"]},"gpt-4o":{"no_thinking":true,"efforts":[]}}`
-	tests := []struct {
-		name  string
-		value string
-		ok    bool
-	}{
-		{"valid table", valid, true},
-		{"empty table", `{}`, true},
-		{"no_thinking false with empty efforts", `{"gpt-5.5":{"no_thinking":false,"efforts":[]}}`, false},
-		{"efforts contain unknown level", `{"gpt-5.5":{"no_thinking":false,"efforts":["low","ultra"]}}`, false},
-		{"empty model name", `{"":{"no_thinking":false,"efforts":["low"]}}`, false},
-		{"whitespace-only model name", `{" ":{"no_thinking":false,"efforts":["low"]}}`, false},
-		{"not an object", `["gpt-5.5"]`, false},
-	}
-	viaRequestPolicy := func(t *testing.T, value string) bool {
-		t.Helper()
-		recorder := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(recorder)
-		body, err := common.Marshal(map[string]any{"options": map[string]string{key: value}})
-		require.NoError(t, err)
-		ctx.Request = httptest.NewRequest(http.MethodPatch, "/api/option/request_policy", bytes.NewReader(body))
-		ctx.Request.Header.Set("Content-Type", "application/json")
-		UpdateRequestPolicy(ctx)
-		var response map[string]any
-		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-		return response["success"] == true
-	}
-	viaUpdateOption := func(t *testing.T, value string) bool {
-		t.Helper()
-		seedQuotaResetOption(t, key, baseline)
-		recorder := putQuotaResetOption(t, key, value)
-		require.Equal(t, http.StatusOK, recorder.Code)
-		return decodeQuotaResetOptionResponse(t, recorder).Success
-	}
-	channels := map[string]func(*testing.T, string) bool{
-		"PATCH request_policy": viaRequestPolicy,
-		"PUT option":           viaUpdateOption,
-	}
+func TestGetSmartRouteThinkingCapabilities(t *testing.T) {
+	setupSmartRoutingControllerTest(t)
+	require.NoError(t, model.DB.Create(&model.Model{ModelName: "gpt-6.2-sol",
+		Capabilities: `{"reasoning":{"supported_efforts":["none","low","medium","high","xhigh","max"]}}`}).Error)
+	require.NoError(t, model.DB.Create(&model.Model{ModelName: "gpt-4o",
+		Capabilities: `{"reasoning":{"supported_efforts":[]}}`}).Error)
+	model.RefreshPricing()
 
-	for channelName, save := range channels {
-		for _, tt := range tests {
-			t.Run(channelName+"/"+tt.name, func(t *testing.T) {
-				setupSmartRoutingControllerTest(t)
-				require.NoError(t, model.UpdateOption(key, baseline))
-				t.Cleanup(func() { require.NoError(t, model.UpdateOption(key, baseline)) })
-				before := operation_setting.GetThinkingCapabilityOverrides()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/option/smart_routing/thinking_capabilities?models=gpt-6.2-sol,gpt-4o,foo-model,glm-5.3,claude-opus-5", nil)
+	GetSmartRouteThinkingCapabilities(ctx)
 
-				success := save(t, tt.value)
-
-				assert.Equal(t, tt.ok, success)
-				if !tt.ok {
-					assert.Equal(t, before, operation_setting.GetThinkingCapabilityOverrides())
-					return
-				}
-				var want map[string]operation_setting.ThinkingCapabilityOverride
-				require.NoError(t, common.UnmarshalJsonStr(tt.value, &want))
-				got := operation_setting.GetThinkingCapabilityOverrides()
-				assert.Len(t, got, len(want))
-				for name, capability := range want {
-					assert.Equal(t, capability.NoThinking, got[name].NoThinking, name)
-					assert.ElementsMatch(t, capability.Efforts, got[name].Efforts, name)
-				}
-			})
-		}
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    map[string]struct {
+			Known      bool     `json:"known"`
+			NoThinking bool     `json:"no_thinking"`
+			Efforts    []string `json:"efforts"`
+		} `json:"data"`
 	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Data, 5)
+	sol := response.Data["gpt-6.2-sol"]
+	assert.True(t, sol.Known)
+	assert.False(t, sol.NoThinking)
+	assert.Equal(t, []string{"none", "low", "medium", "high", "xhigh", "max"}, sol.Efforts)
+	assert.True(t, response.Data["gpt-4o"].Known)
+	assert.True(t, response.Data["gpt-4o"].NoThinking)
+	assert.False(t, response.Data["foo-model"].Known)
+	assert.False(t, response.Data["glm-5.3"].Known)
+	assert.Equal(t, []string{"low", "medium", "high"}, response.Data["glm-5.3"].Efforts)
+	assert.True(t, response.Data["claude-opus-5"].Known)
+	assert.NotEmpty(t, response.Data["claude-opus-5"].Efforts)
 }

@@ -29,8 +29,18 @@ type ModelCapability struct {
 	Efforts             *[]string
 }
 
+type capabilityRule struct {
+	record     Model
+	capability ModelCapability
+}
+
+type capabilityIndex struct {
+	exact map[string]ModelCapability
+	rules []capabilityRule
+}
+
 var (
-	capabilityRecords     []Model
+	capabilityRecords     capabilityIndex
 	capabilityRecordsLock sync.RWMutex
 )
 
@@ -237,26 +247,48 @@ func ModelThinkingSupport(c ModelCapability) (efforts []string, configured bool)
 	return slices.Clone(*c.Efforts), true
 }
 
+func parseRecordCapability(record Model) ModelCapability {
+	capability, err := ParseModelCapability(record.Capabilities)
+	if err != nil {
+		return ModelCapability{}
+	}
+	return capability
+}
+
+// setCapabilityRecords 预先建好索引，查询结果必须与 resolveModelMetadata 一致。
 func setCapabilityRecords(records []Model) {
+	index := capabilityIndex{exact: make(map[string]ModelCapability)}
+	for _, record := range records {
+		if record.NameRule == NameRuleExact {
+			index.exact[record.ModelName] = parseRecordCapability(record)
+		}
+	}
+	for _, rule := range []int{NameRulePrefix, NameRuleSuffix, NameRuleContains} {
+		for _, record := range records {
+			if record.NameRule == rule {
+				index.rules = append(index.rules, capabilityRule{record: record, capability: parseRecordCapability(record)})
+			}
+		}
+	}
 	capabilityRecordsLock.Lock()
-	capabilityRecords = records
+	capabilityRecords = index
 	capabilityRecordsLock.Unlock()
 }
 
 // GetModelCapabilityByName 按目录命中顺序找到记录，整条记录的能力生效。
 func GetModelCapabilityByName(name string) ModelCapability {
 	capabilityRecordsLock.RLock()
-	records := capabilityRecords
+	index := capabilityRecords
 	capabilityRecordsLock.RUnlock()
-	record := resolveModelMetadata(records, []string{name})[name]
-	if record == nil {
-		return ModelCapability{}
+	if capability, ok := index.exact[name]; ok {
+		return capability
 	}
-	capability, err := ParseModelCapability(record.Capabilities)
-	if err != nil {
-		return ModelCapability{}
+	for i := range index.rules {
+		if index.rules[i].record.MatchesName(name) {
+			return index.rules[i].capability
+		}
 	}
-	return capability
+	return ModelCapability{}
 }
 
 func ValidateModelCapabilityText(text string) (string, error) {
