@@ -16,14 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { BuiltinThinkingCapabilities } from './api'
+import type { ThinkingCapabilities } from './api'
 import { SMART_TIER_IDS } from './lib'
-import type {
-  SmartEffort,
-  SmartRoute,
-  SmartRouteTier,
-  ThinkingCapabilityOverride,
-} from './types'
+import type { SmartEffort, SmartRoute, SmartRouteTier } from './types'
 
 export const SMART_EFFORTS: SmartEffort[] = [
   'none',
@@ -38,25 +33,16 @@ export const SMART_EFFORTS: SmartEffort[] = [
 const UNCONFIRMED_EFFORTS: SmartEffort[] = ['low', 'medium', 'high']
 
 export type EffectiveCapability = {
-  source: 'builtin' | 'override' | 'unconfirmed'
+  source: 'confirmed' | 'unconfirmed'
   noThinking: boolean
   efforts: SmartEffort[]
 }
 
 export function effectiveCapability(
   model: string,
-  builtin: BuiltinThinkingCapabilities,
-  overrides: Record<string, ThinkingCapabilityOverride>
+  capabilities: ThinkingCapabilities
 ): EffectiveCapability {
-  const override = overrides[model]
-  if (override) {
-    return {
-      source: 'override',
-      noThinking: override.no_thinking,
-      efforts: override.efforts,
-    }
-  }
-  const known = builtin[model]
+  const known = capabilities[model]
   if (!known?.known) {
     return {
       source: 'unconfirmed',
@@ -65,7 +51,7 @@ export function effectiveCapability(
     }
   }
   return {
-    source: 'builtin',
+    source: 'confirmed',
     noThinking: known.no_thinking,
     efforts: known.efforts,
   }

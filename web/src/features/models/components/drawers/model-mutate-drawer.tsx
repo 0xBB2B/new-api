@@ -82,6 +82,7 @@ import {
 } from '../../lib/model-form'
 import type { Model } from '../../types'
 import { ModelConnections } from '../model-connections'
+import { ModelCapabilitiesSection } from './model-capabilities-section'
 
 export function ModelMutateDrawer(props: {
   open: boolean
@@ -478,6 +479,8 @@ export function ModelMutateDrawer(props: {
                         )}
                       />
                     </SideDrawerSection>
+
+                    <ModelCapabilitiesSection />
 
                     {/* Endpoints Configuration */}
                     <SideDrawerSection>

@@ -23,22 +23,15 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 
 import { getPolicyConfig } from './api'
-import { getBuiltinThinkingCapabilities } from './smart-routing/api'
-import { ThinkingCapabilitiesCard } from './smart-routing/capabilities-card'
+import { getThinkingCapabilities } from './smart-routing/api'
 import { capabilityModelsOfRoutes } from './smart-routing/capability'
 import {
   parseSmartRoutes,
-  parseThinkingCapabilities,
   serializeSmartRoutes,
-  serializeThinkingCapabilities,
   SMART_ROUTES_OPTION_KEY,
-  SMART_THINKING_CAPABILITIES_OPTION_KEY,
 } from './smart-routing/lib'
 import { SmartRoutesCard } from './smart-routing/routes-card'
-import type {
-  SmartRoute,
-  ThinkingCapabilityOverride,
-} from './smart-routing/types'
+import type { SmartRoute } from './smart-routing/types'
 import { useSavePolicy } from './use-save-policy'
 
 export function SmartRoutingSection() {
@@ -51,13 +44,10 @@ export function SmartRoutingSection() {
   })
   const value = query.data?.options[SMART_ROUTES_OPTION_KEY] ?? ''
   const { routes } = parseSmartRoutes(value)
-  const overrides = parseThinkingCapabilities(
-    query.data?.options[SMART_THINKING_CAPABILITIES_OPTION_KEY] ?? ''
-  )
   const capabilityModels = capabilityModelsOfRoutes(routes).sort()
-  const builtinQuery = useQuery({
-    queryKey: ['smart-routing', 'builtin-capabilities', capabilityModels],
-    queryFn: () => getBuiltinThinkingCapabilities(capabilityModels),
+  const thinkingQuery = useQuery({
+    queryKey: ['smart-routing', 'thinking-capabilities', capabilityModels],
+    queryFn: () => getThinkingCapabilities(capabilityModels),
     enabled: capabilityModels.length > 0,
   })
   if (query.isPending) return <LoadingState />
@@ -76,32 +66,12 @@ export function SmartRoutingSection() {
     })
   }
 
-  const saveCapabilities = async (
-    next: Record<string, ThinkingCapabilityOverride>
-  ) => {
-    await mutation.mutateAsync({
-      [SMART_THINKING_CAPABILITIES_OPTION_KEY]:
-        serializeThinkingCapabilities(next),
-    })
-  }
-
   return (
     <div className='min-w-0 space-y-4'>
       <SmartRoutesCard
         value={value}
-        overrides={overrides}
-        builtin={builtinQuery.data}
+        thinkingCapabilities={thinkingQuery.data}
         onSave={saveRoutes}
-        saving={mutation.isPending}
-      />
-      <ThinkingCapabilitiesCard
-        routes={routes}
-        builtin={builtinQuery.data}
-        isPending={builtinQuery.isPending && capabilityModels.length > 0}
-        isError={builtinQuery.isError}
-        onRetry={() => void builtinQuery.refetch()}
-        overrides={overrides}
-        onSave={saveCapabilities}
         saving={mutation.isPending}
       />
     </div>

@@ -35,6 +35,8 @@ import { SmartRoutingSection } from '../smart-routing-section'
 
 const ROUTES_KEY = 'smart_routing_setting.routes'
 const CAPABILITIES_KEY = 'smart_routing_setting.thinking_capabilities'
+const UNCONFIRMED_TIP =
+  'This model has no thinking levels configured yet. Edit it under Model management and add them in Model capabilities'
 
 type TierOptions = {
   effort_mode?: string
@@ -107,7 +109,7 @@ const enabledModels = [
   'chat-scorer',
 ]
 
-const builtinCapabilities: Record<
+const thinkingCapabilities: Record<
   string,
   { known: boolean; no_thinking: boolean; efforts: string[] }
 > = {
@@ -188,7 +190,7 @@ beforeEach(() => {
           data: Object.fromEntries(
             asked.map((model) => [
               model,
-              builtinCapabilities[model] ?? {
+              thinkingCapabilities[model] ?? {
                 known: false,
                 no_thinking: false,
                 efforts: [],
@@ -1113,6 +1115,9 @@ it('the unconfirmed tag sits on the reasoning effort row, can be focused and exp
   expect(trigger).not.toHaveAttribute('tabindex', '-1')
   trigger?.focus()
   expect((await screen.findAllByRole('tooltip')).length).toBeGreaterThan(0)
+  expect((await screen.findAllByText(UNCONFIRMED_TIP)).length).toBeGreaterThan(
+    0
+  )
 })
 
 it('a confirmed model does not show the unconfirmed tag', async () => {
@@ -2041,40 +2046,7 @@ const capabilityRoutes = [
 function setCapabilityOptions(routes: unknown = capabilityRoutes) {
   currentOptions = {
     [ROUTES_KEY]: JSON.stringify(routes),
-    [CAPABILITIES_KEY]: JSON.stringify({
-      'gpt-5.5': {
-        no_thinking: false,
-        efforts: ['none', 'low', 'medium', 'high'],
-      },
-    }),
   }
-}
-
-async function capabilityTable() {
-  return screen.findByRole('table', { name: 'Model thinking capabilities' })
-}
-
-async function capabilityRow(model: string) {
-  const table = await capabilityTable()
-  return within(table).getByRole('row', { name: new RegExp(model) })
-}
-
-async function openOverrideDialog(model: string) {
-  const row = await capabilityRow(model)
-  const trigger =
-    within(row).queryByRole('button', { name: 'Override' }) ??
-    within(row).getByRole('button', { name: 'Modify' })
-  await userEvent.click(trigger)
-  return screen.findByRole('dialog', {
-    name: `Override thinking capability of ${model}`,
-  })
-}
-
-function savedOption(key: string) {
-  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
-    options: Record<string, string>
-  }
-  return JSON.parse(payload.options[key]) as unknown
 }
 
 it('the table shows interfaces under the name and effort with groups under every tier', async () => {
@@ -2087,420 +2059,105 @@ it('the table shows interfaces under the name and effort with groups under every
   await waitFor(() => expect(chat).toHaveTextContent('No thinking · api'))
 })
 
-it('the capability card counts the tier and scorer models once each and leaves out advisor-only models', async () => {
+it('the smart routing page has only the virtual models card and no thinking capabilities card', async () => {
   setCapabilityOptions()
   show()
-  const table = await capabilityTable()
-  const heading = screen.getByText('Model thinking capabilities')
-  expect(heading.parentElement).toHaveTextContent('6')
-  for (const model of [
-    'gpt-5.4-mini',
-    'gpt-5.5',
-    'gpt-5.6-sol',
-    'gpt-4.1',
-    'glm-5.1',
-    'gpt-5.6-luna',
-  ]) {
-    expect(within(table).getAllByText(model)).toHaveLength(1)
-  }
-  expect(within(table).getAllByRole('row')).toHaveLength(1 + 6)
-  for (const header of ['Model', 'Source', 'Supported efforts', 'Actions']) {
-    expect(
-      within(table).getByRole('columnheader', { name: header })
-    ).toBeVisible()
-  }
+  await virtualModelsTable()
+  expect(screen.queryByText('Model thinking capabilities')).toBeNull()
+  expect(
+    screen.queryByRole('table', { name: 'Model thinking capabilities' })
+  ).toBeNull()
+  expect(
+    screen.queryByRole('region', { name: 'Model thinking capabilities' })
+  ).toBeNull()
 })
 
-it('an advisor-only model is not listed in the capability card', async () => {
-  setCapabilityOptions(
-    capabilityRoutes.map((route) => ({
-      ...route,
-      advisor: {
-        model: 'advisor-only',
-        groups: ['api'],
-        after_dissatisfied: 3,
-      },
-    }))
-  )
-  show()
-  const table = await capabilityTable()
-  expect(within(table).queryByText('advisor-only')).toBeNull()
-})
-
-it('the scorer model row behaves like a tier model row: unconfirmed, override, restore', async () => {
-  setCapabilityOptions()
-  show()
-  const unconfirmed = await capabilityRow('gpt-5.6-luna')
-  expect(unconfirmed).toHaveTextContent('Unconfirmed')
-  expect(unconfirmed).toHaveTextContent(/low.*medium.*high/)
-
-  const dialog = await openOverrideDialog('gpt-5.6-luna')
-  for (const level of ['low', 'medium', 'high']) {
-    expect(within(dialog).getByRole('checkbox', { name: level })).toBeChecked()
-  }
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'high' }))
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  const overridden = await capabilityRow('gpt-5.6-luna')
-  expect(overridden).toHaveTextContent('Overridden')
-  expect(overridden).not.toHaveTextContent('high')
-
-  await userEvent.click(
-    within(overridden).getByRole('button', { name: 'Restore built-in' })
-  )
-  const restored = await capabilityRow('gpt-5.6-luna')
-  expect(restored).toHaveTextContent('Unconfirmed')
-  expect(restored).toHaveTextContent(/low.*medium.*high/)
-})
-
-it('a scorer-only model known to the built-in table is queried and shown as Built-in', async () => {
-  setCapabilityOptions(
-    capabilityRoutes.map((route) => ({
-      ...route,
-      scorer: { ...route.scorer, model: 'scorer-only' },
-    }))
-  )
+it('the smart routing page shows a loading state until the settings arrive', async () => {
   const base = vi.mocked(api.get).getMockImplementation()
   if (!base) throw new Error('api.get is not mocked')
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
   vi.mocked(api.get).mockImplementation(async (url, config) => {
-    if (url === '/api/option/smart_routing/thinking_capabilities') {
-      const asked = String(
-        (config as { params: { models: string } }).params.models
-      ).split(',')
-      if (asked.includes('scorer-only')) {
-        return {
-          data: {
-            success: true,
-            data: {
-              'scorer-only': {
-                known: true,
-                no_thinking: false,
-                efforts: ['low', 'medium'],
-              },
-            },
-          },
-        }
-      }
+    if (url === '/api/option/request_policy') await gate
+    return base(url, config)
+  })
+  show()
+  expect(screen.queryByRole('region', { name: 'Virtual models' })).toBeNull()
+  expect(screen.queryByText('Failed to load settings')).toBeNull()
+  expect(screen.getByText('Loading...')).toBeVisible()
+  release()
+  expect(await virtualModelsTable()).toBeVisible()
+})
+
+it('a failed settings request shows an error with Retry that reloads the virtual models card', async () => {
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  let calls = 0
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/request_policy') {
+      calls += 1
+      if (calls === 1) throw new Error('settings down')
     }
     return base(url, config)
   })
   show()
-  await waitFor(async () => {
-    expect(await capabilityRow('scorer-only')).toHaveTextContent('Built-in')
+  expect(await screen.findByText('Failed to load settings')).toBeVisible()
+  expect(screen.queryByRole('region', { name: 'Virtual models' })).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await virtualModelsTable()).toBeVisible()
+  expect(calls).toBe(2)
+})
+
+it('saving virtual models never writes the thinking capabilities option', async () => {
+  setCapabilityOptions()
+  currentOptions[CAPABILITIES_KEY] = JSON.stringify({
+    'gpt-5.5': { no_thinking: false, efforts: ['low'] },
   })
-  const row = await capabilityRow('scorer-only')
-  expect(row).toHaveTextContent(/low.*medium/)
-  expect(row).not.toHaveTextContent('high')
-  expect(within(row).getByRole('button', { name: 'Override' })).toBeVisible()
-})
-
-it('capability rows show their source, supported levels and the actions that fit', async () => {
-  setCapabilityOptions()
   show()
-  const overridden = await capabilityRow('gpt-5.5')
-  expect(overridden).toHaveTextContent('Overridden')
-  expect(
-    within(overridden).getByRole('button', { name: 'Modify' })
-  ).toBeVisible()
-  expect(
-    within(overridden).getByRole('button', { name: 'Restore built-in' })
-  ).toBeVisible()
-  const unknown = await capabilityRow('glm-5.1')
-  expect(unknown).toHaveTextContent('Unconfirmed')
-  expect(
-    within(unknown).getByRole('button', { name: 'Override' })
-  ).toBeVisible()
-  await waitFor(async () => {
-    expect(await capabilityRow('gpt-4.1')).toHaveTextContent('Built-in')
-  })
-  expect(await capabilityRow('gpt-4.1')).toHaveTextContent('No thinking')
-  expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Built-in')
-})
-
-it('the capability card shows its explanation', async () => {
-  setCapabilityOptions()
-  show()
-  await capabilityTable()
-  expect(
-    screen.getByText(
-      "Smart routing uses this to decide which thinking efforts can be sent. Built-in values come from each vendor's official documentation and can be overridden per model."
-    )
-  ).toBeVisible()
-})
-
-it('overriding a model without its top level saves only the capability option at once and warns on the tier that exceeds it', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  expect(dialog).toHaveTextContent(
-    'Tick the thinking efforts this model supports. Takes effect immediately after you save.'
-  )
-  for (const level of ['low', 'medium', 'high', 'xhigh']) {
-    expect(within(dialog).getByRole('checkbox', { name: level })).toBeChecked()
-  }
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  expect(api.patch).toHaveBeenCalledTimes(1)
-  expect(patchedKeys()).toEqual([CAPABILITIES_KEY])
-  const gpt = screen.getByRole('row', { name: /auto-gpt/ })
-  expect(gpt).toHaveTextContent('Exceeds the model capability, sent as high')
-  expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Overridden')
-  const overrides = savedOption(CAPABILITIES_KEY) as Record<
-    string,
-    { efforts: string[] }
-  >
-  expect(overrides['gpt-5.6-sol'].efforts).not.toContain('xhigh')
-  expect(overrides['gpt-5.6-sol'].efforts).toContain('high')
-})
-
-it.each(failureKinds)(
-  'a %s override save keeps the dialog and the ticks, shows one error, leaves the row Built-in and can be retried',
-  async (kind) => {
-    setCapabilityOptions()
-    show()
-    const dialog = await openOverrideDialog('gpt-5.6-sol')
-    await userEvent.click(
-      within(dialog).getByRole('checkbox', { name: 'xhigh' })
-    )
-    const restore = failPatch(kind)
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
-    await waitFor(() =>
-      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled()
-    )
-    expect(toastCount()).toBe(1)
-    expect(screen.getByRole('dialog')).toBeVisible()
-    expect(
-      within(dialog).getByRole('checkbox', { name: 'xhigh' })
-    ).not.toBeChecked()
-    const table = screen.getByRole('table', {
-      name: 'Model thinking capabilities',
-      hidden: true,
-    })
-    expect(
-      within(table).getByRole('row', { name: /gpt-5.6-sol/, hidden: true })
-    ).toHaveTextContent('Built-in')
-
-    restore()
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    )
-    expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Overridden')
-  }
-)
-
-it('while the override is saving Cancel and Save are disabled and Save reads Saving...', async () => {
-  setCapabilityOptions()
-  const finish = holdPatch()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  expect(
-    await within(dialog).findByRole('button', { name: 'Saving...' })
-  ).toBeDisabled()
-  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
-  await userEvent.keyboard('{Escape}')
-  expect(screen.getByRole('dialog')).toBeVisible()
-  finish()
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-})
-
-it('an in-range tier shows no capability warning', async () => {
-  setCapabilityOptions()
-  show()
-  const gpt = await screen.findByRole('row', { name: /auto-gpt/ })
-  await capabilityTable()
-  expect(gpt).not.toHaveTextContent('Exceeds the model capability')
-})
-
-it('saving the override dialog with no level ticked shows an error and keeps the dialog open', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  for (const level of ['low', 'medium', 'high', 'xhigh']) {
-    await userEvent.click(within(dialog).getByRole('checkbox', { name: level }))
-  }
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  expect(
-    await within(dialog).findByText('Select at least one level')
-  ).toBeVisible()
-  expect(screen.getByRole('dialog')).toBeVisible()
-  expect(api.patch).not.toHaveBeenCalled()
-})
-
-it('turning on No thinking disables all seven level checkboxes', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  const levels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-  for (const level of levels) {
-    expect(
-      within(dialog).getByRole('checkbox', { name: level })
-    ).not.toHaveAttribute('aria-disabled', 'true')
-  }
-  await userEvent.click(
-    within(dialog).getByRole('switch', { name: 'No thinking' })
-  )
-  for (const level of levels) {
-    expect(
-      within(dialog).getByRole('checkbox', { name: level })
-    ).toHaveAttribute('aria-disabled', 'true')
-  }
-})
-
-it('cancelling the override dialog leaves the row unchanged and sends nothing', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  expect(await capabilityRow('gpt-5.6-sol')).toHaveTextContent('Built-in')
-  expect(api.patch).not.toHaveBeenCalled()
-})
-
-it('restoring built-in on an overridden row saves at once without a confirm dialog', async () => {
-  setCapabilityOptions()
-  show()
-  const row = await capabilityRow('gpt-5.5')
-  await userEvent.click(
-    within(row).getByRole('button', { name: 'Restore built-in' })
-  )
-  expect(screen.queryByRole('alertdialog')).toBeNull()
+  await deleteVirtualModel('auto-chat')
   await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  expect(patchedKeys()).toEqual([CAPABILITIES_KEY])
-  expect(savedOption(CAPABILITIES_KEY)).toEqual({})
-  await waitFor(async () =>
-    expect(await capabilityRow('gpt-5.5')).not.toHaveTextContent('Overridden')
-  )
-  const restored = await capabilityRow('gpt-5.5')
-  expect(restored).toHaveTextContent(/Built-in|Unconfirmed/)
-  expect(
-    within(restored).queryByRole('button', { name: 'Restore built-in' })
-  ).toBeNull()
-  expect(
-    within(restored).getByRole('button', { name: 'Override' })
-  ).toBeVisible()
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(Object.keys(payload.options)).toEqual([ROUTES_KEY])
+  expect(payload.options).not.toHaveProperty([CAPABILITIES_KEY])
 })
 
-it('while restoring built-in is saving every other change button is disabled', async () => {
-  setCapabilityOptions()
-  const finish = holdPatch()
-  show()
-  const row = await capabilityRow('gpt-5.5')
-  await userEvent.click(
-    within(row).getByRole('button', { name: 'Restore built-in' })
-  )
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  const table = await capabilityTable()
-  for (const button of within(table).getAllByRole('button', {
-    name: /^(Override|Modify|Restore built-in)$/,
-  })) {
-    expect(button).toBeDisabled()
-  }
-  const routeRow = screen.getByRole('row', { name: /auto-gpt/ })
-  expect(within(routeRow).getByRole('button', { name: 'Edit' })).toBeDisabled()
-  expect(
-    screen.getByRole('button', { name: 'Add virtual model' })
-  ).toBeDisabled()
-  finish()
-  await waitFor(() =>
-    expect(within(routeRow).getByRole('button', { name: 'Edit' })).toBeEnabled()
-  )
-})
-
-it.each(failureKinds)(
-  'a %s restore built-in shows the error once and the row stays Overridden',
-  async (kind) => {
-    setCapabilityOptions()
-    show()
-    const row = await capabilityRow('gpt-5.5')
-    failPatch(kind)
-    await userEvent.click(
-      within(row).getByRole('button', { name: 'Restore built-in' })
-    )
-    await waitFor(() => expect(toastCount()).toBeGreaterThan(0))
-    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-    expect(toastCount()).toBe(1)
-    expect(await capabilityRow('gpt-5.5')).toHaveTextContent('Overridden')
-  }
-)
-
-it('deleting every virtual model empties the capability card', async () => {
-  setCapabilityOptions()
-  show()
-  for (const name of ['auto-gpt', 'auto-chat']) {
-    const row = await screen.findByRole('row', { name: new RegExp(name) })
-    await userEvent.click(
-      within(row).getByRole('button', { name: 'More actions' })
-    )
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
-    await userEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', {
-        name: 'Delete',
-      })
-    )
-  }
-  expect(
-    await screen.findByText('No model is used by a virtual model yet')
-  ).toBeVisible()
-})
-
-it('every locale has the capability card texts and Chinese uses the agreed sentences', () => {
-  const keys = [
+it('the unconfirmed tooltip text exists in all seven locales, zh matches the agreed sentence and the card texts are gone', () => {
+  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
+  const cardKeys = [
     'Model thinking capabilities',
     'No model is used by a virtual model yet',
     'Override thinking capability of {{model}}',
     'Select at least one level',
-    'Exceeds the model capability, sent as {{effort}}',
     'Restore built-in',
-    'Overridden',
-    'Built-in',
-    'Unconfirmed',
     'Modify',
+    "Smart routing uses this to decide which thinking efforts can be sent. Built-in values come from each vendor's official documentation and can be overridden per model.",
+    'Overridden',
+    'Unconfirmed',
     'Supported efforts',
+    'This model is not in the built-in capability table. Add it under Model thinking capabilities',
+    'Tick the thinking efforts this model supports. Takes effect immediately after you save.',
   ]
-  const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
   for (const [name, locale] of Object.entries(locales)) {
     const entries = locale.translation as Record<string, string>
-    for (const key of keys) {
-      expect(entries[key], `${name} ${key}`).toEqual(expect.any(String))
+    expect(entries[UNCONFIRMED_TIP], name).toEqual(expect.any(String))
+    for (const key of cardKeys) {
+      expect(entries, `${name} ${key}`).not.toHaveProperty([key])
     }
   }
-  const zhEntries = zh.translation as Record<string, string>
-  expect(zhEntries['Modify']).toBe('修改')
-  expect(zhEntries['Select at least one level']).toBe('至少选择一个档位')
-  expect(zhEntries['No model is used by a virtual model yet']).toBe(
-    '还没有虚拟模型用到的模型'
-  )
-  expect(zhEntries['Override thinking capability of {{model}}']).toBe(
-    '覆盖 {{model}} 的思考能力'
-  )
-  expect(zhEntries['Exceeds the model capability, sent as {{effort}}']).toBe(
-    '超出模型能力，实际按 {{effort}} 发送'
+  expect((zh.translation as Record<string, string>)[UNCONFIRMED_TIP]).toBe(
+    '这个模型还没有配置思考等级，可在「模型管理」里编辑这个模型，在「模型能力」里补充'
   )
 })
 
-it('every locale has the two immediate-save texts and none keeps the old save-later texts', () => {
+it('every locale has the immediate-delete text and none keeps the old save-later texts', () => {
   const added = [
     'Delete {{name}}? It takes effect immediately after you confirm.',
-    'Tick the thinking efforts this model supports. Takes effect immediately after you save.',
   ]
-  const removed = [
-    'Delete {{name}}? It takes effect after you save changes.',
-    'Tick the thinking efforts this model supports. Takes effect after you save changes.',
-  ]
+  const removed = ['Delete {{name}}? It takes effect after you save changes.']
   const locales = { en, fr, ja, ru, vi: viLocale, zh, 'zh-TW': zhTW }
   for (const [name, locale] of Object.entries(locales)) {
     const entries = locale.translation as Record<string, string>
@@ -2513,9 +2170,6 @@ it('every locale has the two immediate-save texts and none keeps the old save-la
   }
   const zhEntries = zh.translation as Record<string, string>
   expect(zhEntries[added[0]]).toBe('确定删除 {{name}} 吗？确认后立即生效。')
-  expect(zhEntries[added[1]]).toBe(
-    '勾选这个模型支持的思考力度，保存后立即生效。'
-  )
 })
 
 async function deleteVirtualModel(name: string) {
@@ -2537,131 +2191,6 @@ it('deleting a virtual model submits only the routes option', async () => {
   await deleteVirtualModel('auto-chat')
   await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
   expect(patchedKeys()).toEqual([ROUTES_KEY])
-})
-
-it('changing a capability after deleting a virtual model sends two separate single-option requests and leaves the stored effort untouched', async () => {
-  setCapabilityOptions()
-  show()
-  await deleteVirtualModel('auto-chat')
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2))
-  expect(patchedKeys(0)).toEqual([ROUTES_KEY])
-  expect(patchedKeys(1)).toEqual([CAPABILITIES_KEY])
-  const routes = savedOption(ROUTES_KEY) as {
-    name: string
-    tiers: { hard: { effort_max: string } }
-  }[]
-  expect(routes.find((r) => r.name === 'auto-gpt')?.tiers.hard.effort_max).toBe(
-    'xhigh'
-  )
-})
-
-function withCapabilityRequest(
-  handler: (call: number) => Promise<void> | void
-) {
-  const base = vi.mocked(api.get).getMockImplementation()
-  if (!base) throw new Error('api.get is not mocked')
-  let calls = 0
-  vi.mocked(api.get).mockImplementation(async (url, config) => {
-    if (url === '/api/option/smart_routing/thinking_capabilities') {
-      calls += 1
-      await handler(calls)
-    }
-    return base(url, config)
-  })
-}
-
-it('the capability card shows a loading state until the capability request returns', async () => {
-  setCapabilityOptions()
-  let release: () => void = () => {}
-  const gate = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  withCapabilityRequest(() => gate)
-  show()
-  const card = await screen.findByRole('region', {
-    name: 'Model thinking capabilities',
-  })
-  expect(within(card).getByText('Loading...')).toBeVisible()
-  expect(
-    screen.queryByRole('table', { name: 'Model thinking capabilities' })
-  ).toBeNull()
-  release()
-  expect(await capabilityTable()).toBeVisible()
-})
-
-it('a failed capability request shows an error with Retry that loads the table on success', async () => {
-  setCapabilityOptions()
-  withCapabilityRequest((call) => {
-    if (call === 1) throw new Error('capabilities down')
-  })
-  show()
-  const card = await screen.findByRole('region', {
-    name: 'Model thinking capabilities',
-  })
-  const retry = await within(card).findByRole('button', { name: 'Retry' })
-  expect(
-    screen.queryByRole('table', { name: 'Model thinking capabilities' })
-  ).toBeNull()
-  await userEvent.click(retry)
-  expect(await capabilityTable()).toBeVisible()
-})
-
-it('Modify on an overridden row opens with exactly the override levels ticked', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.5')
-  for (const level of ['none', 'low', 'medium', 'high']) {
-    expect(within(dialog).getByRole('checkbox', { name: level })).toBeChecked()
-  }
-  for (const level of ['minimal', 'xhigh', 'max']) {
-    expect(
-      within(dialog).getByRole('checkbox', { name: level })
-    ).not.toBeChecked()
-  }
-})
-
-it('restoring built-in on an overridden model removes the exceeds warning', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: 'xhigh' }))
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  const gpt = screen.getByRole('row', { name: /auto-gpt/ })
-  expect(gpt).toHaveTextContent('Exceeds the model capability, sent as high')
-  const row = await capabilityRow('gpt-5.6-sol')
-  await userEvent.click(
-    within(row).getByRole('button', { name: 'Restore built-in' })
-  )
-  await waitFor(() =>
-    expect(gpt).not.toHaveTextContent('Exceeds the model capability')
-  )
-})
-
-it('the override dialog groups the seven level checkboxes under Supported efforts and disables them together', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  const group = within(dialog).getByRole('group', {
-    name: 'Supported efforts',
-  })
-  const boxes = within(group).getAllByRole('checkbox')
-  expect(boxes).toHaveLength(7)
-  for (const box of boxes) {
-    expect(box).not.toHaveAttribute('aria-disabled', 'true')
-  }
-  await userEvent.click(
-    within(dialog).getByRole('switch', { name: 'No thinking' })
-  )
-  for (const box of within(group).getAllByRole('checkbox')) {
-    expect(box).toHaveAttribute('aria-disabled', 'true')
-  }
 })
 
 function lineMatcher(text: RegExp) {
@@ -2706,24 +2235,6 @@ it('focusing the second line of a tier cell shows the full text in a tooltip', a
   expect(focusable).not.toBeNull()
   act(() => focusable?.focus())
   await waitFor(() => expect(tooltipLines(text)).not.toHaveLength(0))
-})
-
-it('the override dialog puts the No thinking text before its switch', async () => {
-  setCapabilityOptions()
-  show()
-  const dialog = await openOverrideDialog('gpt-5.6-sol')
-  const toggle = within(dialog).getByRole('switch', { name: 'No thinking' })
-  const walker = document.createTreeWalker(dialog, NodeFilter.SHOW_TEXT)
-  let text: Node | null = null
-  while (!text && walker.nextNode()) {
-    if (walker.currentNode.textContent?.trim() === 'No thinking') {
-      text = walker.currentNode
-    }
-  }
-  if (!text) throw new Error('No thinking text node not found')
-  expect(
-    text.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING
-  ).toBeTruthy()
 })
 
 const noThinkingNotice =
@@ -2891,34 +2402,6 @@ it('the scorer reasoning effort lists Not set and every level the scorer model s
     'medium',
     'high',
     'xhigh',
-    'max',
-  ])
-  expect(scoringPanel().queryByText('Capability not confirmed')).toBeNull()
-})
-
-it('the scorer reasoning effort follows the administrator override of the scorer model', async () => {
-  mockDialogApis({ errors: [], endpoints: [] })
-  setRoutes([
-    {
-      ...autoGpt,
-      scorer: { ...autoGpt.scorer, model: 'deepseek-v4.1-flash' },
-    },
-  ])
-  currentOptions[CAPABILITIES_KEY] = JSON.stringify({
-    'deepseek-v4.1-flash': {
-      no_thinking: false,
-      efforts: ['none', 'low', 'high', 'max'],
-    },
-  })
-  show()
-  await openEditDialog('auto-gpt')
-  await waitFor(() => expect(scorerEffortSelect()).toBeEnabled())
-  await userEvent.click(scorerEffortSelect())
-  expect(effortOptionNames()).toEqual([
-    NOT_SET_EFFORT,
-    'none',
-    'low',
-    'high',
     'max',
   ])
   expect(scoringPanel().queryByText('Capability not confirmed')).toBeNull()
@@ -3170,11 +2653,7 @@ it('the unconfirmed tag on the scorer reasoning effort row explains itself on fo
   const trigger = badge.closest<HTMLElement>('[tabindex]')
   expect(trigger).not.toBeNull()
   act(() => trigger?.focus())
-  expect(
-    (
-      await screen.findAllByText(
-        'This model is not in the built-in capability table. Add it under Model thinking capabilities'
-      )
-    ).length
-  ).toBeGreaterThan(0)
+  expect((await screen.findAllByText(UNCONFIRMED_TIP)).length).toBeGreaterThan(
+    0
+  )
 })

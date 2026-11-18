@@ -3,28 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { getBuiltinThinkingCapabilities, validateSmartRoute } from '../api'
+import { getThinkingCapabilities, validateSmartRoute } from '../api'
 import {
   clampEffort,
   effectiveCapability,
   effortOverflow,
   capabilityModelsOfRoutes,
 } from '../capability'
-import {
-  endpointShortNames,
-  parseThinkingCapabilities,
-  serializeThinkingCapabilities,
-  slotSummaries,
-  SMART_THINKING_CAPABILITIES_OPTION_KEY,
-  tierEffortSummary,
-} from '../lib'
+import { endpointShortNames, slotSummaries, tierEffortSummary } from '../lib'
 import { createRouteFormSchema, emptyRouteFormValues } from '../route-form'
-import type {
-  SmartEffort,
-  SmartRoute,
-  SmartRouteTier,
-  ThinkingCapabilityOverride,
-} from '../types'
+import type { SmartEffort, SmartRoute, SmartRouteTier } from '../types'
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
 
@@ -84,7 +72,7 @@ function route(
 }
 
 const cap = (efforts: SmartEffort[], noThinking = false) => ({
-  source: 'builtin' as const,
+  source: 'confirmed' as const,
   noThinking,
   efforts,
 })
@@ -213,31 +201,6 @@ describe('createRouteFormSchema', () => {
   })
 })
 
-describe('thinking capabilities option', () => {
-  it('uses the smart routing option key', () => {
-    expect(SMART_THINKING_CAPABILITIES_OPTION_KEY).toBe(
-      'smart_routing_setting.thinking_capabilities'
-    )
-  })
-
-  it('round-trips through serialize and parse', () => {
-    const map: Record<string, ThinkingCapabilityOverride> = {
-      'glm-5.1': { no_thinking: false, efforts: ['low', 'high'] },
-    }
-    expect(
-      parseThinkingCapabilities(serializeThinkingCapabilities(map))
-    ).toEqual(map)
-  })
-
-  it('parses empty text to an empty object', () => {
-    expect(parseThinkingCapabilities('')).toEqual({})
-  })
-
-  it('parses invalid JSON to an empty object', () => {
-    expect(parseThinkingCapabilities('{oops')).toEqual({})
-  })
-})
-
 describe('endpointShortNames', () => {
   it('joins responses and anthropic with a slash', () => {
     expect(endpointShortNames(['openai-response', 'anthropic'])).toBe(
@@ -356,42 +319,46 @@ describe('slotSummaries', () => {
 })
 
 describe('effectiveCapability', () => {
-  const builtin: Record<
+  const capabilities: Record<
     string,
     { known: boolean; no_thinking: boolean; efforts: SmartEffort[] }
   > = {
-    'gpt-5.5': { known: true, no_thinking: false, efforts: ['low', 'high'] },
-    mystery: { known: false, no_thinking: false, efforts: [] },
+    'gpt-6.2-sol': {
+      known: true,
+      no_thinking: false,
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    },
+    'gpt-4o': { known: true, no_thinking: true, efforts: [] },
+    'foo-model': { known: false, no_thinking: false, efforts: [] },
   }
 
-  it('uses the builtin capability when there is no override', () => {
-    expect(effectiveCapability('gpt-5.5', builtin, {})).toEqual({
-      source: 'builtin',
+  it('uses the efforts the interface returns for a confirmed model', () => {
+    expect(effectiveCapability('gpt-6.2-sol', capabilities)).toMatchObject({
       noThinking: false,
-      efforts: ['low', 'high'],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
     })
   })
 
-  it('prefers the override over builtin', () => {
-    expect(
-      effectiveCapability('gpt-5.5', builtin, {
-        'gpt-5.5': { no_thinking: false, efforts: ['medium'] },
-      })
-    ).toEqual({ source: 'override', noThinking: false, efforts: ['medium'] })
+  it('treats a no_thinking model as not supporting thinking', () => {
+    expect(effectiveCapability('gpt-4o', capabilities)).toMatchObject({
+      noThinking: true,
+      efforts: [],
+    })
   })
 
-  it('is unconfirmed when builtin marks the model unknown', () => {
-    expect(effectiveCapability('mystery', builtin, {})).toEqual({
+  it('is unconfirmed with low, medium and high when the interface marks the model unknown', () => {
+    expect(effectiveCapability('foo-model', capabilities)).toMatchObject({
       source: 'unconfirmed',
       noThinking: false,
       efforts: ['low', 'medium', 'high'],
     })
   })
 
-  it('is unconfirmed when builtin has no entry for the model', () => {
-    expect(effectiveCapability('absent', builtin, {}).source).toBe(
-      'unconfirmed'
-    )
+  it('is unconfirmed when the interface has no entry for the model', () => {
+    expect(effectiveCapability('absent', capabilities)).toMatchObject({
+      source: 'unconfirmed',
+      efforts: ['low', 'medium', 'high'],
+    })
   })
 })
 
@@ -549,10 +516,12 @@ describe('smart routing api', () => {
     vi.mocked(api.post).mockReset()
   })
 
-  it('requests builtin capabilities with comma-joined models', async () => {
-    const data = { 'gpt-5.5': { known: true, no_thinking: false, efforts: [] } }
+  it('requests thinking capabilities with comma-joined models', async () => {
+    const data = {
+      'gpt-5.5': { known: true, no_thinking: false, efforts: [] },
+    }
     vi.mocked(api.get).mockResolvedValue({ data: { success: true, data } })
-    const result = await getBuiltinThinkingCapabilities(['gpt-5.5', 'glm-5.1'])
+    const result = await getThinkingCapabilities(['gpt-5.5', 'glm-5.1'])
     expect(api.get).toHaveBeenCalledWith(
       '/api/option/smart_routing/thinking_capabilities',
       { params: { models: 'gpt-5.5,glm-5.1' } }

@@ -24,13 +24,9 @@ import type {
   SmartRoute,
   SmartRouteTier,
   SmartTierId,
-  ThinkingCapabilityOverride,
 } from './types'
 
 export const SMART_ROUTES_OPTION_KEY = 'smart_routing_setting.routes'
-
-export const SMART_THINKING_CAPABILITIES_OPTION_KEY =
-  'smart_routing_setting.thinking_capabilities'
 
 export const SMART_TIER_IDS: SmartTierId[] = ['simple', 'normal', 'hard']
 
@@ -85,27 +81,6 @@ export function smartRoutesErrorMessage(
 
 export function serializeSmartRoutes(routes: SmartRoute[], indent?: number) {
   return JSON.stringify(routes, null, indent)
-}
-
-export function parseThinkingCapabilities(
-  text: string
-): Record<string, ThinkingCapabilityOverride> {
-  if (!text.trim()) return {}
-  try {
-    const parsed: unknown = JSON.parse(text)
-    return isObject(parsed)
-      ? (parsed as Record<string, ThinkingCapabilityOverride>)
-      : {}
-  } catch {
-    return {}
-  }
-}
-
-export function serializeThinkingCapabilities(
-  map: Record<string, ThinkingCapabilityOverride>,
-  indent?: number
-) {
-  return JSON.stringify(map, null, indent)
 }
 
 const ENDPOINT_SHORT_NAMES: Record<SmartEndpoint, string> = {

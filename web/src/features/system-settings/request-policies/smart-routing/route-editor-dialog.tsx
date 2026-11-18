@@ -55,9 +55,9 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import {
-  getBuiltinThinkingCapabilities,
+  getThinkingCapabilities,
   validateSmartRoute,
-  type BuiltinThinkingCapabilities,
+  type ThinkingCapabilities,
 } from './api'
 import { capabilityModelsOfRoutes, effectiveCapability } from './capability'
 import {
@@ -76,12 +76,7 @@ import {
   routeToFormValues,
   type RouteFormValues,
 } from './route-form'
-import type {
-  SmartEndpoint,
-  SmartRoute,
-  SmartTierId,
-  ThinkingCapabilityOverride,
-} from './types'
+import type { SmartEndpoint, SmartRoute, SmartTierId } from './types'
 
 const ROUTE_FORM_ID = 'smart-route-form'
 const ENDPOINTS: SmartEndpoint[] = ['openai-response', 'openai', 'anthropic']
@@ -103,8 +98,7 @@ type AdvancedFieldName = Extract<
 type RouteEditorDialogProps = {
   route: SmartRoute | null
   otherNames: string[]
-  overrides: Record<string, ThinkingCapabilityOverride>
-  builtin: BuiltinThinkingCapabilities | undefined
+  thinkingCapabilities: ThinkingCapabilities | undefined
   onOpenChange: (open: boolean) => void
   onSave: (route: SmartRoute) => Promise<void>
 }
@@ -143,25 +137,17 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
   const route = formValuesToRoute(values)
 
   const askedModels = capabilityModelsOfRoutes([route]).sort()
-  const builtinQuery = useQuery({
-    queryKey: ['smart-routing', 'builtin-capabilities', askedModels],
-    queryFn: () => getBuiltinThinkingCapabilities(askedModels),
+  const thinkingQuery = useQuery({
+    queryKey: ['smart-routing', 'thinking-capabilities', askedModels],
+    queryFn: () => getThinkingCapabilities(askedModels),
     enabled: askedModels.length > 0,
-    placeholderData: (previous) => previous ?? props.builtin,
+    placeholderData: (previous) => previous ?? props.thinkingCapabilities,
   })
-  const builtin = builtinQuery.data ?? {}
+  const thinkingCapabilities = thinkingQuery.data ?? {}
   const capabilities = {
-    simple: effectiveCapability(
-      route.tiers.simple.model,
-      builtin,
-      props.overrides
-    ),
-    normal: effectiveCapability(
-      route.tiers.normal.model,
-      builtin,
-      props.overrides
-    ),
-    hard: effectiveCapability(route.tiers.hard.model, builtin, props.overrides),
+    simple: effectiveCapability(route.tiers.simple.model, thinkingCapabilities),
+    normal: effectiveCapability(route.tiers.normal.model, thinkingCapabilities),
+    hard: effectiveCapability(route.tiers.hard.model, thinkingCapabilities),
   }
   const unconfirmed = {
     simple: isUnconfirmed(route.tiers.simple.model),
@@ -175,15 +161,17 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
   }
   const scorerCapability = effectiveCapability(
     route.scorer.model,
-    builtin,
-    props.overrides
+    thinkingCapabilities
   )
   const summaries = slotSummaries(route, t, scorerCapability)
   const scorerNoThinking = scorerCapability.noThinking
   const noThinkingKey = SMART_TIER_IDS.filter((id) => {
     const model = route.tiers[id].model
-    const settled = model in builtin || !!props.overrides[model]
-    return model !== '' && settled && capabilities[id].noThinking
+    return (
+      model !== '' &&
+      model in thinkingCapabilities &&
+      capabilities[id].noThinking
+    )
   }).join(',')
   useEffect(() => {
     for (const id of noThinkingKey ? noThinkingKey.split(',') : []) {
@@ -205,14 +193,13 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     form.clearErrors('scorer.effort')
   }, [scorerNoThinking, form])
   function isUnavailable(model: string) {
-    return model !== '' && !(model in builtin) && !props.overrides[model]
+    return model !== '' && !(model in thinkingCapabilities)
   }
   function isUnconfirmed(model: string) {
     return (
       model !== '' &&
-      model in builtin &&
-      effectiveCapability(model, builtin, props.overrides).source ===
-        'unconfirmed'
+      model in thinkingCapabilities &&
+      effectiveCapability(model, thinkingCapabilities).source === 'unconfirmed'
     )
   }
 
@@ -446,7 +433,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
                   capability={scorerCapability}
                   unconfirmed={isUnconfirmed(route.scorer.model)}
                   unavailable={isUnavailable(route.scorer.model)}
-                  failed={builtinQuery.isError}
+                  failed={thinkingQuery.isError}
                 />
               </TabsContent>
               <TabsContent value='tiers'>
@@ -459,7 +446,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
                   unconfirmed={unconfirmed}
                   tierErrorCounts={tierErrorCounts}
                   unavailable={unavailable}
-                  capabilityFailed={builtinQuery.isError}
+                  capabilityFailed={thinkingQuery.isError}
                 />
               </TabsContent>
               <TabsContent value='advisor'>

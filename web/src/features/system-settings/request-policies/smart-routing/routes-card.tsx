@@ -43,7 +43,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import type { BuiltinThinkingCapabilities } from './api'
+import type { ThinkingCapabilities } from './api'
 import { effectiveCapability, effortOverflow } from './capability'
 import {
   endpointShortNames,
@@ -55,14 +55,13 @@ import {
 } from './lib'
 import { RouteEditorDialog } from './route-editor-dialog'
 import { normalizeTier } from './route-form'
-import type { SmartRoute, ThinkingCapabilityOverride } from './types'
+import type { SmartRoute } from './types'
 
 type SmartRoutesCardProps = {
   value: string
   onSave: (routes: SmartRoute[]) => Promise<void>
   saving: boolean
-  overrides: Record<string, ThinkingCapabilityOverride>
-  builtin: BuiltinThinkingCapabilities | undefined
+  thinkingCapabilities: ThinkingCapabilities | undefined
 }
 
 export function SmartRoutesCard(props: SmartRoutesCardProps) {
@@ -168,8 +167,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
           <TabsContent value='visual' className='min-w-0'>
             <SmartRoutesTable
               routes={routes}
-              overrides={props.overrides}
-              builtin={props.builtin}
+              thinkingCapabilities={props.thinkingCapabilities}
               saving={props.saving}
               onAdd={() => setEditorTarget({ route: null, index: -1 })}
               onEdit={(route) =>
@@ -206,8 +204,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
       {editorTarget !== null && (
         <RouteEditorDialog
           route={editorTarget.route}
-          overrides={props.overrides}
-          builtin={props.builtin}
+          thinkingCapabilities={props.thinkingCapabilities}
           otherNames={routes
             .filter((_, index) => index !== editorTarget.index)
             .map((item) => item.name)}
@@ -275,8 +272,7 @@ export function SmartRoutesCard(props: SmartRoutesCardProps) {
 
 type SmartRoutesTableProps = {
   routes: SmartRoute[]
-  overrides: Record<string, ThinkingCapabilityOverride>
-  builtin: BuiltinThinkingCapabilities | undefined
+  thinkingCapabilities: ThinkingCapabilities | undefined
   saving: boolean
   onAdd: () => void
   onEdit: (route: SmartRoute) => void
@@ -285,7 +281,7 @@ type SmartRoutesTableProps = {
 
 function SmartRoutesTable(props: SmartRoutesTableProps) {
   const { t } = useTranslation()
-  const builtin = props.builtin ?? {}
+  const thinkingCapabilities = props.thinkingCapabilities ?? {}
   const tierTitles = {
     simple: t('Simple tier'),
     normal: t('Normal tier'),
@@ -358,11 +354,10 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
           header: tierTitles[id],
           cell: (route: SmartRoute) => {
             const tier = normalizeTier(route.tiers[id])
-            const known = tier.model in builtin || !!props.overrides[tier.model]
+            const known = tier.model in thinkingCapabilities
             const capability = effectiveCapability(
               tier.model,
-              builtin,
-              props.overrides
+              thinkingCapabilities
             )
             const overflow = known
               ? effortOverflow(tier, capability)

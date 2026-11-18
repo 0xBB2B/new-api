@@ -93,7 +93,7 @@ export function EffortCapabilityStatus(props: {
           </TooltipTrigger>
           <TooltipContent role='tooltip' className='max-w-72'>
             {t(
-              'This model is not in the built-in capability table. Add it under Model thinking capabilities'
+              'This model has no thinking levels configured yet. Edit it under Model management and add them in Model capabilities'
             )}
           </TooltipContent>
         </Tooltip>

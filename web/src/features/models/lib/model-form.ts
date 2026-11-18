@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import type { Model } from '../types'
+import {
+  capabilityTextToPayload,
+  parseModelCapabilityJson,
+} from './model-capabilities'
 import { parseModelTags as parseTagsFromUtils } from './model-utils'
 
 // ============================================================================
@@ -36,6 +40,13 @@ export const modelFormSchema = z.object({
   tags: z.array(z.string()).default([]),
   vendor_id: z.number(),
   endpoints: z.string().default(''),
+  capabilities: z
+    .string()
+    .default('')
+    .refine(
+      (text) => text.trim() === '' || parseModelCapabilityJson(text).ok,
+      'Invalid JSON'
+    ),
   name_rule: z.number().min(0).max(3).default(0),
   status: z.boolean().default(true),
   sync_official: z.boolean().default(true),
@@ -52,6 +63,7 @@ export const MODEL_FORM_DEFAULT_VALUES: ModelFormValues = {
   tags: [],
   vendor_id: 0,
   endpoints: '',
+  capabilities: '',
   name_rule: 0,
   status: true,
   sync_official: true,
@@ -92,6 +104,7 @@ export function transformModelToFormDefaults(model: Model): ModelFormValues {
     tags: parseTagsFromUtils(model.tags),
     vendor_id: model.vendor_id ?? 0,
     endpoints: model.endpoints || '',
+    capabilities: model.capabilities || '',
     name_rule: model.name_rule || 0,
     status: model.status === 1,
     sync_official: model.sync_official === 1,
@@ -114,6 +127,7 @@ export function transformFormDataToModelPayload(
     tags: formatTagsArray(formData.tags),
     vendor_id: formData.vendor_id,
     endpoints: formData.endpoints || '',
+    capabilities: capabilityTextToPayload(formData.capabilities),
     name_rule: formData.name_rule,
     status: formData.status ? 1 : 0,
     sync_official: formData.sync_official ? 1 : 0,
