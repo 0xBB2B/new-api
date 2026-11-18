@@ -31,7 +31,7 @@ type ThinkingCapability struct {
 //   - Gemini 发布日期: https://aistudio.google.com/docs/changelog
 //   - GLM 档位: https://docs.bigmodel.cn/cn/guide/capabilities/thinking（GLM-5.3 系列仅支持 max、high、low；GLM-5.2 的 low/medium 映射为 high，xhigh 映射为 max）
 //   - GLM 发布日期: https://docs.bigmodel.cn/cn/update/new-releases
-//   - Kimi 档位: https://platform.kimi.com/docs/guide/use-reasoning-effort（kimi-k3.1-pro 始终思考，只有 low、high、max）
+//   - Kimi 档位: https://platform.kimi.com/docs/guide/use-reasoning-effort（官方写 kimi-k3.1-pro 始终思考，只有 low、high、max）
 //   - Qwen 档位: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions（none 关闭思考，其余值映射到下列档位）
 //   - Qwen 发布日期: https://www.alibabacloud.com/blog/qwen3-8-max-a-new-bar-for-coding-and-cowork_603421 、https://www.alibabacloud.com/blog/alibaba-unveils-qwen4-max-new-ai-teammate-for-work-creativity-and-discovery_603783
 //
@@ -54,16 +54,17 @@ type ThinkingCapability struct {
 //   - gpt-6-sol none/low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6-sol
 //   - gpt-6-luna none/low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6-luna
 //   - gpt-6.1-terra none/low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6.1-terra
-//   - gpt-6-astra low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6-astra
-//   - gpt-6.1-sol low/medium/high/xhigh/max: https://developers.openai.com/api/docs/models/gpt-6.1-sol
-//   - gpt-6.2-sol、gpt-6.2-astra low/medium/high/xhigh/max：官方型号页只写明拒绝 none；2026-11-18 经 Codex 渠道实测这五档都被接受（该渠道也接受 none，与公开 API 不同）:
+//   - gpt-6-astra、gpt-6.1-sol、gpt-6.2-sol、gpt-6.2-astra none/low/medium/high/xhigh/max：官方型号页写明公开 API 拒绝 none，
+//     2026-11-18 经 Codex 订阅渠道实测六档都被接受，按实测收录 none:
+//     https://developers.openai.com/api/docs/models/gpt-6-astra 、https://developers.openai.com/api/docs/models/gpt-6.1-sol 、
 //     https://developers.openai.com/api/docs/models/gpt-6.2-sol 、https://developers.openai.com/api/docs/models/gpt-6.2-astra
 //   - glm-5.3、glm-5.3-flash、glm-5.3-flashx low/high/max: https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 //   - glm-5.2 none/high/max: https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 //   - deepseek-v4-pro none/low/high/max，thinking 可关闭: https://api-docs.deepseek.com/guides/thinking_mode
 //   - deepseek-v4-flash none/low/high/max: https://api-docs.deepseek.com/updates（2026-08-13）
 //   - deepseek-v4.1-flash none/low/high/max: https://api-docs.deepseek.com/updates（2026-09-10）和 https://api-docs.deepseek.com/guides/thinking_mode
-//   - kimi-k3.1-pro low/high/max: https://platform.kimi.com/docs/guide/use-reasoning-effort
+//   - kimi-k3.1-pro none/low/high/max：官方只列 low/high/max，2026-11-18 在测试站实测 none 能关闭思考，按实测收录 none:
+//     https://platform.kimi.com/docs/guide/use-reasoning-effort
 //   - qwen3.8-max none/low/medium/xhigh（high、max 映射为 xhigh）: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions
 //   - qwen4-max none/low/high/xhigh（medium 映射为 high，max 映射为 xhigh）: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions
 //
@@ -87,10 +88,10 @@ var builtinThinkingCapabilities = map[string]ThinkingCapability{
 	"gpt-6-sol":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
 	"gpt-6-luna":          {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
 	"gpt-6.1-terra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
-	"gpt-6-astra":         {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.1-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.2-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
-	"gpt-6.2-astra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+	"gpt-6-astra":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.1-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.2-sol":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
+	"gpt-6.2-astra":       {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "high", "xhigh", "max"}},
 	"glm-5.3":             {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
 	"glm-5.3-flash":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
 	"glm-5.3-flashx":      {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
@@ -98,7 +99,7 @@ var builtinThinkingCapabilities = map[string]ThinkingCapability{
 	"deepseek-v4-pro":     {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
 	"deepseek-v4-flash":   {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
 	"deepseek-v4.1-flash": {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
-	"kimi-k3.1-pro":       {Source: ThinkingSourceBuiltin, Efforts: []string{"low", "high", "max"}},
+	"kimi-k3.1-pro":       {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "max"}},
 	"qwen3.8-max":         {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "medium", "xhigh"}},
 	"qwen4-max":           {Source: ThinkingSourceBuiltin, Efforts: []string{"none", "low", "high", "xhigh"}},
 }
