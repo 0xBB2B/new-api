@@ -36,6 +36,10 @@ import type {
   MetadataSyncRequest,
   DeploymentSettingsResponse,
   ListDeploymentsResponse,
+  CapabilitiesMap,
+  GetModelCapabilitiesResponse,
+  PreviewModelCapabilitiesResponse,
+  SaveModelCapabilitiesResponse,
 } from './types'
 
 // ============================================================================
@@ -120,6 +124,35 @@ export async function deleteModel(
       remove_from_channels: removeFromChannels,
       remove_pricing: removePricing,
     },
+  })
+  return res.data
+}
+
+// ============================================================================
+// Model Capabilities JSON
+// ============================================================================
+
+export async function getModelCapabilities(): Promise<GetModelCapabilitiesResponse> {
+  const res = await api.get('/api/models/capabilities')
+  return res.data
+}
+
+export async function previewModelCapabilities(
+  capabilities: CapabilitiesMap
+): Promise<PreviewModelCapabilitiesResponse> {
+  const res = await api.post('/api/models/capabilities/preview', {
+    capabilities,
+  })
+  return res.data
+}
+
+export async function saveModelCapabilities(
+  capabilities: CapabilitiesMap,
+  version: string
+): Promise<SaveModelCapabilitiesResponse> {
+  const res = await api.put('/api/models/capabilities', {
+    capabilities,
+    version,
   })
   return res.data
 }

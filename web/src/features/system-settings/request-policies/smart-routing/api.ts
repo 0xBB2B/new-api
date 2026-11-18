@@ -40,16 +40,16 @@ export async function validateSmartRoute(body: { route: SmartRoute }) {
   return requireServerSuccess(response.data).data
 }
 
-export type BuiltinThinkingCapabilities = Record<
+export type ThinkingCapabilities = Record<
   string,
   { known: boolean; no_thinking: boolean; efforts: SmartEffort[] }
 >
 
-export async function getBuiltinThinkingCapabilities(models: string[]) {
+export async function getThinkingCapabilities(models: string[]) {
   const response = await api.get<{
     success: boolean
     message?: string
-    data: BuiltinThinkingCapabilities
+    data: ThinkingCapabilities
   }>('/api/option/smart_routing/thinking_capabilities', {
     params: { models: models.join(',') },
   })

@@ -18,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -217,17 +216,18 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}))
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	model.DB, model.LOG_DB = db, db
 	t.Cleanup(func() { model.DB, model.LOG_DB = previousDB, previousLogDB })
 	require.NoError(t, i18n.Init())
 	require.NoError(t, authz.Init(db))
 
-	// 覆盖表里的值不应出现在接口结果中：接口只返回内置值。
-	originalOverrides := operation_setting.ThinkingCapabilitiesToString()
-	operation_setting.LoadThinkingCapabilitiesFromJSONString(`{"gpt-5.4":{"no_thinking":true,"efforts":[]}}`)
-	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(originalOverrides) })
+	require.NoError(t, db.Create(&model.Model{ModelName: "gpt-5.4",
+		Capabilities: `{"reasoning":{"supported_efforts":["low","high"]}}`}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "gpt-4.1",
+		Capabilities: `{"reasoning":{"supported_efforts":[]}}`}).Error)
+	model.RefreshPricing()
 
 	newToken := func(role int, name string, scopes ...string) string {
 		user := model.User{Username: name, Role: role, Status: common.UserStatusEnabled, AffCode: name}
@@ -265,14 +265,14 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 		Data    map[string]capability `json:"data"`
 	}
 
-	t.Run("root 带 option:read 的访问令牌返回内置值", func(t *testing.T) {
+	t.Run("root 带 option:read 的访问令牌返回模型记录里的值", func(t *testing.T) {
 		recorder := get(rootRead, "?models=gpt-5.4,gpt-4.1,glm-5.1")
 		require.Equal(t, http.StatusOK, recorder.Code)
 		var got response
 		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &got))
 		assert.True(t, got.Success)
 		assert.Equal(t, map[string]capability{
-			"gpt-5.4": {Known: true, NoThinking: false, Efforts: []string{"none", "low", "medium", "high", "xhigh"}},
+			"gpt-5.4": {Known: true, NoThinking: false, Efforts: []string{"low", "high"}},
 			"gpt-4.1": {Known: true, NoThinking: true, Efforts: []string{}},
 			"glm-5.1": {Known: false, NoThinking: false, Efforts: []string{"low", "medium", "high"}},
 		}, got.Data)
@@ -293,4 +293,53 @@ func TestThinkingCapabilitiesRoute(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, get(adminRead, "?models=gpt-5.4").Code)
 		assert.Equal(t, http.StatusForbidden, get(commonRead, "?models=gpt-5.4").Code)
 	})
+}
+
+func TestModelCapabilitiesRoutes(t *testing.T) {
+	routes := []string{
+		"GET /api/models/capabilities",
+		"POST /api/models/capabilities/preview",
+		"PUT /api/models/capabilities",
+	}
+	registered := map[string]bool{}
+	for _, route := range newAccessTokenScopeTestEngine(t).Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, key := range routes {
+		assert.True(t, registered[key], key)
+		_, ok := middleware.AccessTokenRouteRule(key)
+		assert.True(t, ok, "%s has no access token rule", key)
+	}
+
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	model.DB, model.LOG_DB = db, db
+	t.Cleanup(func() { model.DB, model.LOG_DB = previousDB, previousLogDB })
+	require.NoError(t, i18n.Init())
+	require.NoError(t, authz.Init(db))
+
+	user := model.User{Username: "cap_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "cap_common"}
+	require.NoError(t, db.Create(&user).Error)
+	suffix, err := common.GenerateRandomCharsKey(43)
+	require.NoError(t, err)
+	raw := model.AccessTokenPrefix + suffix
+	token := &model.UserAccessToken{Name: "cap_common", TokenHash: model.AccessTokenFingerprint(raw), TokenHint: model.AccessTokenHint(raw)}
+	require.NoError(t, token.SetScopes([]string{"option:read"}))
+	require.NoError(t, model.CreateUserAccessToken(user.Id, token, service.AccessTokenMaxPerUser))
+
+	engine := gin.New()
+	SetApiRouter(engine)
+	for _, key := range routes {
+		method, target, _ := strings.Cut(key, " ")
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(method, target, strings.NewReader(`{"capabilities":{}}`))
+		request.Header.Set("Authorization", "Bearer "+raw)
+		engine.ServeHTTP(recorder, request)
+		assert.Equal(t, http.StatusForbidden, recorder.Code, key)
+	}
 }

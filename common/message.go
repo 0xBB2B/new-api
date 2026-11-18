@@ -36,7 +36,11 @@ func (m *Message) Error() string {
 	// One pass over the key, so a value that contains "{{name}}" stays as is.
 	pairs := make([]string, 0, len(m.Params)*2)
 	for name, value := range m.Params {
-		pairs = append(pairs, "{{"+name+"}}", fmt.Sprint(value))
+		text := fmt.Sprint(value)
+		if list, ok := value.([]string); ok {
+			text = strings.Join(list, ", ")
+		}
+		pairs = append(pairs, "{{"+name+"}}", text)
 	}
 	return strings.NewReplacer(pairs...).Replace(m.Key)
 }

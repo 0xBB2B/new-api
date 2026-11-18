@@ -4,11 +4,29 @@ import "github.com/QuantumNous/new-api/relaykit/types"
 
 // 这里不好动就不动了，本来想独立出来的（
 type OpenAIModels struct {
-	Id                     string               `json:"id"`
-	Object                 string               `json:"object"`
-	Created                int                  `json:"created"`
-	OwnedBy                string               `json:"owned_by"`
-	SupportedEndpointTypes []types.EndpointType `json:"supported_endpoint_types"`
+	Id                     string                   `json:"id"`
+	Object                 string                   `json:"object"`
+	Created                int                      `json:"created"`
+	OwnedBy                string                   `json:"owned_by"`
+	SupportedEndpointTypes []types.EndpointType     `json:"supported_endpoint_types"`
+	ContextLength          *int64                   `json:"context_length,omitempty"`
+	TopProvider            *OpenAIModelTopProvider  `json:"top_provider,omitempty"`
+	Architecture           *OpenAIModelArchitecture `json:"architecture,omitempty"`
+	Reasoning              *OpenAIModelReasoning    `json:"reasoning,omitempty"`
+}
+
+type OpenAIModelTopProvider struct {
+	MaxCompletionTokens *int64 `json:"max_completion_tokens,omitempty"`
+}
+
+type OpenAIModelArchitecture struct {
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+}
+
+// SupportedEfforts 不带 omitempty：空数组表示确认不支持思考，必须输出。
+type OpenAIModelReasoning struct {
+	SupportedEfforts []string `json:"supported_efforts"`
 }
 
 type AnthropicModel struct {

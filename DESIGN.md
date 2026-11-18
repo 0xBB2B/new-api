@@ -489,6 +489,83 @@
 | 禁用 | 不适用：提示条里没有禁用状态 |
 | 聚焦 | 关闭按钮：`0 4px 12px rgba(0,0,0,0.1)` 加 2px 黑色 20% 外圈；操作按钮：2px 黑色 40% 外圈 |
 
+### 侧边抽屉
+
+- 写法（`Sheet` 加 `@/components/drawer-layout` 里的几个类名函数，模型编辑、渠道编辑等表单抽屉都这样写）：
+
+```html
+<div data-slot="sheet-overlay" class="fixed inset-0 z-50 bg-black/10 transition-opacity duration-150 supports-backdrop-filter:backdrop-blur-xs"></div>
+<div data-slot="sheet-content" data-side="right" class="bg-background text-foreground fixed inset-y-0 right-0 z-50 flex h-dvh w-full flex-col gap-0 overflow-hidden border-l p-0 text-sm shadow-none transition duration-200 ease-in-out sm:max-w-[1280px]">
+  <div data-slot="sheet-header" class="border-border/70 bg-background/95 flex flex-col gap-0.5 border-b px-4 py-3 text-start backdrop-blur sm:px-6 sm:py-4">
+    <h2 data-slot="sheet-title" class="text-foreground text-base font-medium">标题</h2>
+    <p data-slot="sheet-description" class="text-muted-foreground text-sm">说明</p>
+  </div>
+  <form class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
+    <section class="border-border/60 flex flex-col gap-4 border-b pb-6 last:border-b-0 last:pb-0">
+      <h3 class="text-sm font-semibold">分区标题</h3>
+      表单项
+      <!-- 开关行 -->
+      <div data-slot="form-item" class="border-border/60 flex min-h-16 flex-row items-center justify-between gap-3 border-y py-3">标题 + 说明 + 开关</div>
+    </section>
+  </form>
+  <div data-slot="sheet-footer" class="border-border/70 bg-background/95 mt-auto grid grid-cols-2 gap-2 border-t px-4 py-3 backdrop-blur sm:flex sm:flex-row sm:justify-end sm:px-6 sm:py-4">
+    <button data-slot="button" class="…outline…">关闭</button>
+    <button data-slot="button" class="…default…">保存</button>
+  </div>
+  <button data-slot="sheet-close" class="…ghost，icon-sm… absolute top-3 right-3"><svg>×</svg><span class="sr-only">Close</span></button>
+</div>
+```
+
+- 尺寸：贴右，占满视口高；宽度默认是视口的 75%、640px 起最大 384px，表单抽屉改成占满宽度并各自设最大宽度（模型编辑抽屉 640px 起最大 1280px）。左边 1px 分隔线，没有阴影和圆角。
+- 标题区：内边距左右 16px、上下 12px → 640px 起左右 24px、上下 16px；标题 16px、500，说明 14px 次要文字色，两者间距 2px（不达标）；下边 1px 分隔线（border 色 70%）。
+- 内容区：自己滚动，内边距左右 16px、上下 16px → 640px 起左右 24px、上下 20px；分区之间间距 24px，分区下内边距 24px 加 1px 分隔线（border 色 60%），最后一个分区没有；分区内元素间距 16px；分区标题 14px、600。
+- 开关行：最小高 64px，上下各 1px 分隔线，上下内边距 12px，文字和开关间距 12px；标题 16px、500，说明 14px 次要文字色。
+- 底栏：上边 1px 分隔线，内边距同标题区，按钮间距 8px；小于 640px 两个按钮各占一半宽，640px 起横排靠右。
+- 遮罩：纯黑 10% 加 4px 背景模糊。出现和消失：抽屉 200ms `ease-in-out`，从右侧 40px 处滑入并淡入；遮罩 150ms 淡入淡出。
+
+| 状态 | 样子（关闭按钮、底栏按钮） |
+|---|---|
+| 默认 | 关闭按钮：28×28px 透明底，16px 叉号图标，距右上角各 12px；底栏按钮按「按钮」一节 |
+| 悬停 | 关闭按钮底变 muted（浅 #f5f5f5，深色 muted 50%）；底栏按钮按「按钮」一节 |
+| 按下 | 下移 1px，没开"减少动态效果"时缩到 98% |
+| 禁用 | 保存中时底栏两个按钮 50% 不透明、不响应鼠标，点遮罩和关闭按钮都不关闭抽屉 |
+| 聚焦 | 边框变 ring，外加 3px ring 50% 光圈；抽屉打开时焦点进入抽屉 |
+
+### JSON 代码编辑器
+
+- 写法（`JsonCodeEditor`，带行号、JSON 校验、复制和格式化）：
+
+```html
+<div class="border-input bg-background focus-within:border-ring focus-within:ring-ring/50 overflow-hidden rounded-lg border transition-colors focus-within:ring-3">
+  <div class="bg-muted/30 flex h-8 items-center justify-between border-b px-2">
+    <div class="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs font-medium">
+      <svg class="h-3.5 w-3.5"></svg><span>JSON</span><span class="text-muted-foreground/70 font-mono">行:列</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="flex items-center gap-1 text-xs text-emerald-600"><svg class="h-3.5 w-3.5"></svg>JSON</span>
+      <!-- JSON 无效时：<span class="flex items-center gap-1 text-xs text-destructive">JSON 无效</span> -->
+      <button data-slot="button" class="…ghost，size=sm… h-6 px-2 text-xs"><svg class="mr-1 h-3.5 w-3.5"></svg>复制</button>
+      <button data-slot="button" class="…ghost，size=sm… h-6 px-2 text-xs"><svg class="mr-1 h-3.5 w-3.5"></svg>格式化 JSON</button>
+    </div>
+  </div>
+  <div class="bg-background relative h-56 max-h-56 min-h-56 overflow-hidden pl-2 has-[textarea:disabled]:bg-input/30 has-[textarea:disabled]:opacity-70">
+    <div class="json-code-editor-yace text-foreground h-full font-mono text-xs leading-5"><!-- 行号层 + 高亮层 + textarea --></div>
+  </div>
+</div>
+```
+
+- 尺寸：外框圆角 16px、1px 边框（input 色）；工具栏高 32px、左右内边距 8px、下边 1px 分隔线、底 muted 30%（浅 #fcfcfc / 深 #232323）；工具栏左侧元素间距 6px（不达标）、右侧元素间距 8px；工具栏按钮高 24px、左右 8px、12px 字，图标 14px、图标和文字间距 4px。
+- 编辑区：默认高 224px（调用处可以改，智能路由页用 360px），左内边距 8px；文字区内边距上下 8px、右 12px、左 8px；等宽字体 12px、行高 20px；带行号。
+- 校验状态文字 12px：有效时 emerald-600（#009966），对工具栏底浅色 3.56:1（不达标）、深色 4.30:1（不达标）；无效时错误色，对工具栏底浅色 4.65:1、深色 5.44:1。除了颜色还有不同的图标和文字（"JSON" / "JSON 无效"）。
+
+| 状态 | 样子 |
+|---|---|
+| 默认 | 边框 input 色（浅 #e8e8e8 / 深 #4e4e4e），底 = 页面背景 |
+| 悬停 | 外框没有变化；工具栏按钮底变 muted |
+| 按下 | 和聚焦一样（按下即获得焦点） |
+| 禁用 | 编辑区底变 input 30%，整体 70% 不透明；"复制"在内容为空时禁用，"格式化 JSON"在内容为空或 JSON 无效时禁用（50% 不透明） |
+| 聚焦 | 焦点在编辑区里时，外框边框变 ring，外加 3px ring 50% 光圈 |
+
 ### 其他常用基础组件（简表）
 
 | 组件 | 写法要点 | 尺寸和样子 |
@@ -497,7 +574,8 @@
 | 标签页 Tabs | 外框 `<div data-slot="tabs-list" class="inline-flex h-8 rounded-lg bg-muted p-[3px] text-muted-foreground">`，按钮 `<button data-slot="tabs-trigger" class="h-[calc(100%-1px)] flex-1 gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium text-foreground/60 hover:text-foreground data-active:bg-background data-active:text-foreground data-active:shadow-sm">` | 外框高 32px、内边距 3px（不达标）、圆角 16px；按钮左右 6px、上下 2px（不达标）、圆角 12.8px（不达标）；未选中字：浅色前景 60%（#686868，对 muted 5.11:1）、深色 #b7b7b7；选中：白底加小阴影，深色底 input 30%、1px input 边框；"线条"变体选中时底部 2px 下划线 |
 | 提示气泡 Tooltip | `<div data-slot="tooltip-content" class="bg-foreground text-background inline-flex w-fit max-w-xs items-center gap-1.5 rounded-md px-3 py-1.5 text-xs">` | 最大宽 320px、左右 12px、上下 6px（不达标）、圆角 12.8px（不达标）、12px 字；离触发元素 4px；带 10px 小箭头（圆角 2px，不达标）；鼠标移上去立即出现（延迟 0ms） |
 | 下拉菜单 / 气泡弹层 | `rounded-lg p-1 shadow-md ring-1 ring-foreground/10 bg-popover`；气泡弹层宽 288px、内边距 10px（不达标）、间距 10px | 圆角 16px，阴影见「圆角、边框、阴影」 |
-| 开关 Switch、复选框 | 边框 input、选中底 primary | 开关滑块 16×16px（小号 12×12px），全圆角 9999px |
+| 步骤条 | `<ol class="grid gap-2">`，每步 `<li aria-current="step" class="border-primary bg-primary/5 rounded-lg border p-2 text-sm font-medium">`，未到的步骤 `<li class="text-muted-foreground rounded-lg border p-2 text-sm">`；用于同步资料、能力配置 JSON 等多步弹窗 | 每步内边距 8px、圆角 16px、1px 边框、14px 字；当前步主色边框加主色 5% 底、500 字重，其余步次要文字色 |
+| 开关 Switch、复选框 | 开关 `<button data-slot="switch" class="h-[18.4px] w-[32px] rounded-full border border-transparent data-checked:bg-primary data-unchecked:bg-input">`；复选框 `<span data-slot="checkbox" class="size-4 rounded-sm border border-input data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground">`，一组复选框写成 `<label class="flex items-center gap-2 text-sm">` 包住复选框和文字 | 开关 32×18.4px，滑块 16×16px（小号 24×14px，滑块 12×12px），全圆角 9999px，未选中底 input（深色 input 80%）；复选框 16×16px、圆角 9.6px（不达标，看起来接近圆形）、1px 边框，选中后主色底加 14px 白色对勾；两者禁用时 50% 不透明，聚焦时边框变 ring 加 3px ring 50% 光圈；点击区域各向外扩 12px（左右）和 8px（上下） |
 
 ## 8. 动效
 
@@ -552,6 +630,7 @@
 | 基础组件间距 | 按钮、输入框、多行输入框、警示框左右 10px；按钮图标间距 6px；警示框标题和说明间距 2px；徽标上下 2px；标签页外框 3px、按钮左右 6px 上下 2px；提示气泡上下 6px；确认弹窗标题区间距 6px | 2026-11-09 |
 | 页面框架间距 | 页面标题区下内边距 10px；内容区 640px 起上内边距 6px；页面底栏上下 10px；顶栏元素间距 6px；侧栏二级菜单外边距 14px、内边距左右 10px 上下 2px；设置页开关行和控件组上下 10px | 2026-11-09 |
 | 轻提示关闭按钮、图标间距 | 关闭按钮 20×20px；图标和文字间距 6px | 2026-11-09 |
+| 侧边抽屉、JSON 代码编辑器 | 抽屉标题和说明间距 2px；JSON 编辑器工具栏左侧元素间距 6px；JSON 有效状态文字 #009966 对工具栏底浅色 3.56:1、深色 4.30:1 | 2026-11-18 |
 
 ## 10. 终端界面
 

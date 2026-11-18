@@ -216,14 +216,18 @@ func appendPricingEndpoint(endpoints []string, endpoint string) []string {
 
 func updatePricing() {
 	//modelRatios := common.GetModelRatios()
+	// 预加载模型元数据与供应商一次，避免循环查询
+	var allMeta []Model
+	if err := DB.Order("id").Find(&allMeta).Error; err != nil {
+		common.SysError(common.LogText("load model metadata for pricing error: %v", err))
+		return
+	}
+	setCapabilityRecords(allMeta)
 	enableAbilities, err := GetAllEnableAbilityWithChannels()
 	if err != nil {
 		common.SysLog(common.LogText("GetAllEnableAbilityWithChannels error: %v", err))
 		return
 	}
-	// 预加载模型元数据与供应商一次，避免循环查询
-	var allMeta []Model
-	_ = DB.Find(&allMeta).Error
 	names := make([]string, 0, len(enableAbilities))
 	for _, ability := range enableAbilities {
 		names = append(names, ability.Model)
@@ -232,7 +236,10 @@ func updatePricing() {
 
 	// 预加载供应商
 	var vendors []Vendor
-	_ = DB.Find(&vendors).Error
+	if err := DB.Find(&vendors).Error; err != nil {
+		common.SysError(common.LogText("load vendors for pricing error: %v", err))
+		return
+	}
 	vendorMap := make(map[int]*Vendor)
 	for i := range vendors {
 		vendorMap[vendors[i].Id] = &vendors[i]

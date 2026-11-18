@@ -46,6 +46,7 @@ export interface Model {
   tags?: string
   vendor_id?: number
   endpoints?: string
+  capabilities?: string
   supported_endpoints?: string[]
   status: number
   sync_official: number
@@ -429,4 +430,60 @@ export interface DeploymentLogsResponse {
     }>
     cursor?: string
   }
+}
+
+// ============================================================================
+// Model Capabilities JSON
+// ============================================================================
+
+export type CapabilitiesMap = Record<string, Record<string, unknown>>
+
+export type CapabilitiesNonExact = {
+  model_name: string
+  name_rule: number
+}
+
+export interface GetModelCapabilitiesResponse {
+  success: boolean
+  message?: string
+  data: {
+    capabilities: CapabilitiesMap
+    non_exact: CapabilitiesNonExact[]
+    unconfigured: string[]
+  }
+}
+
+export type CapabilitiesPreviewAction =
+  | 'create'
+  | 'update'
+  | 'clear'
+  | 'unchanged'
+
+export type CapabilitiesPreviewItem = {
+  model_name: string
+  action: CapabilitiesPreviewAction
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}
+
+export type CapabilitiesPreviewError = {
+  model_name: string
+  message: { key: string; params?: Record<string, unknown> }
+}
+
+export interface PreviewModelCapabilitiesResponse {
+  success: boolean
+  message?: string
+  data: {
+    version: string
+    items: CapabilitiesPreviewItem[]
+    errors: CapabilitiesPreviewError[]
+    summary: Record<CapabilitiesPreviewAction, number>
+  }
+}
+
+export interface SaveModelCapabilitiesResponse {
+  success: boolean
+  message?: string
+  data: { create: number; update: number; clear: number }
 }

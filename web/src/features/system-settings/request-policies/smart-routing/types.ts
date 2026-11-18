@@ -35,10 +35,6 @@ export type SmartRouteTier = {
   effort_min: SmartEffort | ''
   effort_max: SmartEffort | ''
 }
-export type ThinkingCapabilityOverride = {
-  no_thinking: boolean
-  efforts: SmartEffort[]
-}
 export type SmartRoute = {
   name: string
   endpoints: SmartEndpoint[]

@@ -240,6 +240,9 @@ func validateOptionValue(key string, value string) error {
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
+	if key == legacyThinkingCapabilitiesOptionKey {
+		return common.NewMessage("This option has been removed")
+	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}
@@ -722,11 +725,6 @@ func handleConfigUpdate(key, value string) bool {
 	}
 	if key == operation_setting.SmartRoutingRoutesOptionKey {
 		operation_setting.LoadSmartRoutesFromJSONString(value)
-		return true
-	}
-
-	if key == operation_setting.SmartThinkingCapabilitiesOptionKey {
-		operation_setting.LoadThinkingCapabilitiesFromJSONString(value)
 		return true
 	}
 

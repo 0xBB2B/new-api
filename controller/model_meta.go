@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -114,10 +115,20 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiErrorT(c, "Model name cannot be empty")
 		return
 	}
+	if utf8.RuneCountInString(m.ModelName) > 128 {
+		common.ApiErrorT(c, "Model name must be 1 to 128 characters")
+		return
+	}
 	if err := model.ValidateMetadataValues(model.MetadataValues{Endpoints: m.Endpoints, Status: m.Status, NameRule: m.NameRule}); err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	capabilities, err := model.ValidateModelCapabilityText(m.Capabilities)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	m.Capabilities = capabilities
 	// 名称冲突检查
 	if dup, err := model.IsModelNameDuplicated(0, m.ModelName); err != nil {
 		common.ApiError(c, err)
@@ -166,10 +177,20 @@ func UpdateModelMeta(c *gin.Context) {
 			common.ApiErrorT(c, "Model name cannot be empty")
 			return
 		}
+		if utf8.RuneCountInString(m.ModelName) > 128 {
+			common.ApiErrorT(c, "Model name must be 1 to 128 characters")
+			return
+		}
 		if err := model.ValidateMetadataValues(model.MetadataValues{Endpoints: m.Endpoints, Status: m.Status, NameRule: m.NameRule}); err != nil {
 			common.ApiError(c, err)
 			return
 		}
+		capabilities, err := model.ValidateModelCapabilityText(m.Capabilities)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		m.Capabilities = capabilities
 		// 名称冲突检查
 		if dup, err := model.IsModelNameDuplicated(m.Id, m.ModelName); err != nil {
 			common.ApiError(c, err)

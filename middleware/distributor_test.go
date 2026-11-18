@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1145,9 +1146,21 @@ func setupSmartEffortTiers(t *testing.T, simple, normal, hard effortTier, capabi
  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`,
 		tierJSON(simple), tierJSON(normal), tierJSON(hard)))
 
-	originalCapabilities := operation_setting.ThinkingCapabilitiesToString()
-	operation_setting.LoadThinkingCapabilitiesFromJSONString(capabilities)
-	t.Cleanup(func() { operation_setting.LoadThinkingCapabilitiesFromJSONString(originalCapabilities) })
+	recordEfforts := map[string][]string{
+		"gpt-5.6-sol":  {"none", "low", "medium", "high", "xhigh", "max"},
+		"gpt-5.4-mini": {"none", "low", "medium", "high", "xhigh"},
+		"gpt-5.5":      {"none", "low", "medium", "high", "xhigh"},
+		"glm-5.3":      {"low", "high", "max"},
+		"gpt-4.1":      {},
+	}
+	var overrides map[string][]string
+	require.NoError(t, common.UnmarshalJsonStr(capabilities, &overrides))
+	maps.Copy(recordEfforts, overrides)
+	for name, efforts := range recordEfforts {
+		encoded, err := common.Marshal(map[string]any{"reasoning": map[string]any{"supported_efforts": efforts}})
+		require.NoError(t, err)
+		require.NoError(t, model.DB.Create(&model.Model{ModelName: name, Capabilities: string(encoded)}).Error)
+	}
 	model.InitChannelCache()
 	model.RefreshPricing()
 
@@ -1210,11 +1223,11 @@ func TestSmartRouteDistributeEffortFollowScoreAgainstCapability(t *testing.T) {
 		wantValue, wantFrom               string
 	}{
 		{"gap below picks nearest supported", "gpt-5.6-sol", `"effort_mode":"follow","effort_min":"medium","effort_max":"high"`,
-			`{"gpt-5.6-sol":{"efforts":["low","xhigh"]}}`, smartScored(smartLabels("plan", "high", "neutral"), 0.3), "", "low", "medium"},
+			`{"gpt-5.6-sol":["low","xhigh"]}`, smartScored(smartLabels("plan", "high", "neutral"), 0.3), "", "low", "medium"},
 		{"gap above picks nearest supported", "gpt-5.6-sol", `"effort_mode":"follow","effort_min":"medium","effort_max":"high"`,
-			`{"gpt-5.6-sol":{"efforts":["low","xhigh"]}}`, smartScored(smartLabels("plan", "high", "neutral"), 0.8), "", "xhigh", "high"},
+			`{"gpt-5.6-sol":["low","xhigh"]}`, smartScored(smartLabels("plan", "high", "neutral"), 0.8), "", "xhigh", "high"},
 		{"timeout with capped capability takes highest candidate without from", "gpt-5.6-sol", effortFollowMediumXhigh,
-			`{"gpt-5.6-sol":{"efforts":["none","low","medium","high"]}}`, nil, smartroute.FailureScorerTimeout, "high", ""},
+			`{"gpt-5.6-sol":["none","low","medium","high"]}`, nil, smartroute.FailureScorerTimeout, "high", ""},
 		{"glm low", "glm-5.3", `"effort_mode":"follow","effort_min":"low","effort_max":"max"`, `{}`,
 			smartScored(smartLabels("plan", "high", "neutral"), 0.2), "", "low", ""},
 		{"glm high", "glm-5.3", `"effort_mode":"follow","effort_min":"low","effort_max":"max"`, `{}`,
@@ -1276,7 +1289,7 @@ func TestSmartRouteDistributeEffortLogShape(t *testing.T) {
 
 	t.Run("capability with only low and high raises medium to high", func(t *testing.T) {
 		tokenID := setupSmartEffortRoute(t, "gpt-5.4-mini", effortFixedMedium,
-			`{"gpt-5.4-mini":{"efforts":["low","high"]}}`)
+			`{"gpt-5.4-mini":["low","high"]}`)
 		installSmartScorerStub(t, smartLabels("analyze", "medium", "neutral"), "", nil)
 
 		_, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses", tokenID: tokenID, body: smartEffortResponsesBody("log-gap", "")})
@@ -1316,7 +1329,7 @@ func TestSmartRouteDistributeEffortInheritClientValue(t *testing.T) {
 		wantAbsent bool
 		wantLog    map[string]any
 	}{
-		{"client value lowered by capability", `{"gpt-5.4-mini":{"efforts":["none","low","medium","high"]}}`,
+		{"client value lowered by capability", `{"gpt-5.4-mini":["none","low","medium","high"]}`,
 			`"reasoning":{"effort":"xhigh"}`, "high", false, map[string]any{"value": "high", "source": "client", "from": "xhigh"}},
 		{"client did not send", `{}`, "", nil, true, map[string]any{"value": "", "source": "client_unset"}},
 		{"upper case client value", `{}`, `"reasoning":{"effort":"HIGH"}`, "high", false,
@@ -1446,7 +1459,7 @@ func TestSmartRouteDistributeEffortContinuationReusesSessionEffort(t *testing.T)
 }
 
 func TestSmartRouteDistributeEffortAdvisorKeepsClientValue(t *testing.T) {
-	tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{"eff-advisor":{"efforts":["high"]}}`)
+	tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{"eff-advisor":["high"]}`)
 	installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
 
 	recorder, seen := serveSmartRoute(t, smartRequest{
