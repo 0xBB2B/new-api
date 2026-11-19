@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -1927,4 +1928,239 @@ func TestSmartRouteDistributeSkipsChannelsThatRejectTheRequestFormat(t *testing.
 		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 		assert.Equal(t, codexID, seen.channelID)
 	})
+}
+
+const smartDowngradeBigBase64Len = 1 << 20
+
+func smartDowngradeBodies(imageBase64, longText string) map[string]struct{ path, body string } {
+	return map[string]struct{ path, body string }{
+		"chat":      {"/v1/chat/completions", fmt.Sprintf(`{"model":"auto-gpt","messages":[{"role":"user","content":"downgrade chat first turn"},{"role":"assistant","content":"ok"},{"role":"user","content":[{"type":"text","text":"look %s"},{"type":"image_url","image_url":{"url":"data:image/png;base64,%s"}}]}]}`, longText, imageBase64)},
+		"responses": {"/v1/responses", fmt.Sprintf(`{"model":"auto-gpt","input":[{"role":"user","content":"downgrade responses first turn"},{"role":"assistant","content":"ok"},{"role":"user","content":[{"type":"input_text","text":"look %s"},{"type":"input_image","image_url":"data:image/png;base64,%s"}]}]}`, longText, imageBase64)},
+		"messages":  {"/v1/messages", fmt.Sprintf(`{"model":"auto-gpt","max_tokens":64,"messages":[{"role":"user","content":"downgrade messages first turn"},{"role":"assistant","content":"ok"},{"role":"user","content":[{"type":"text","text":"look %s"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"%s"}}]}]}`, longText, imageBase64)},
+	}
+}
+
+func smartDowngradeBase64(n int) string {
+	raw := make([]byte, n*3/4)
+	for i := range raw {
+		raw[i] = byte(i*7919 ^ i>>3 ^ i*i)
+	}
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func smartSimpleLabels() *smartroute.ScorerLabels {
+	labels := smartLabels("rewrite", "low", "neutral")
+	labels.Workload = "one_step"
+	return labels
+}
+
+func serveSmartDowngrade(t *testing.T, tokenID int, path, body string) (*httptest.ResponseRecorder, *smartDistributeSeen) {
+	t.Helper()
+	inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath(path), []byte(body))
+	require.NoError(t, err)
+	key := smartroute.SessionKey(tokenID, inspection)
+	require.NotEmpty(t, key)
+	smartroute.SaveSessionAfterSuccess(key, true, "hard", smartroute.EffortDecision{})
+	return serveSmartRoute(t, smartRequest{path: path, body: body, auto: true, tokenID: tokenID})
+}
+
+func TestSmartRouteDistributeDowngradeIgnoresBinaryPayloads(t *testing.T) {
+	bigBase64 := smartDowngradeBase64(smartDowngradeBigBase64Len)
+	for _, format := range []string{"chat", "responses", "messages"} {
+		t.Run(format+" large image does not block downgrade", func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			installSmartScorerStub(t, smartSimpleLabels(), "", nil)
+			req := smartDowngradeBodies(bigBase64, "short")[format]
+
+			recorder, seen := serveSmartDowngrade(t, 9801, req.path, req.body)
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, "t-simple", seen.originalModel)
+			assert.NotEqual(t, "downgrade_blocked", seen.routeLog["reason"])
+		})
+	}
+
+	t.Run("responses reasoning encrypted_content does not block downgrade", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartSimpleLabels(), "", nil)
+		body := fmt.Sprintf(`{"model":"auto-gpt","input":[{"role":"user","content":"downgrade encrypted first turn"},{"type":"reasoning","encrypted_content":%q,"summary":[]},{"role":"assistant","content":"ok"},{"role":"user","content":"look short"}]}`, bigBase64)
+
+		recorder, seen := serveSmartDowngrade(t, 9802, "/v1/responses", body)
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "t-simple", seen.originalModel)
+		assert.NotEqual(t, "downgrade_blocked", seen.routeLog["reason"])
+	})
+}
+
+func TestSmartRouteDistributeDowngradeCountsConversationText(t *testing.T) {
+	longText := strings.Repeat("word ", 30000)
+	historyTokens := map[string]int{}
+	for _, format := range []string{"chat", "responses", "messages"} {
+		for _, imageLen := range []int{16, smartDowngradeBigBase64Len} {
+			t.Run(fmt.Sprintf("%s long text with %d byte image stays blocked", format, imageLen), func(t *testing.T) {
+				setupSmartRouteDistributeTest(t)
+				installSmartScorerStub(t, smartSimpleLabels(), "", nil)
+				req := smartDowngradeBodies(smartDowngradeBase64(imageLen), longText)[format]
+
+				recorder, seen := serveSmartDowngrade(t, 9803, req.path, req.body)
+
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				assert.Equal(t, "t-hard", seen.originalModel)
+				assert.Equal(t, "downgrade_blocked", seen.routeLog["reason"])
+				params, ok := seen.routeLog["reason_params"].(map[string]any)
+				require.True(t, ok)
+				tokens, ok := params["history_tokens"].(int)
+				require.True(t, ok)
+				assert.GreaterOrEqual(t, tokens, 4000)
+				key := fmt.Sprintf("%s/%d", format, imageLen)
+				historyTokens[key] = tokens
+			})
+		}
+	}
+
+	for _, format := range []string{"chat", "responses", "messages"} {
+		small, big := historyTokens[fmt.Sprintf("%s/16", format)], historyTokens[fmt.Sprintf("%s/%d", format, smartDowngradeBigBase64Len)]
+		assert.NotZero(t, small, format)
+		assert.Equal(t, small, big, "%s: image base64 length must not change the estimate", format)
+	}
+}
+
+func TestSmartRouteDistributeDowngradeCountsSystemAndToolText(t *testing.T) {
+	longText := strings.Repeat("word ", 30000)
+	user := func(text string) map[string]any { return map[string]any{"role": "user", "content": text} }
+	assistant := map[string]any{"role": "assistant", "content": "ok"}
+	cases := []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{"chat system message", "/v1/chat/completions", map[string]any{"model": "auto-gpt", "messages": []any{
+			map[string]any{"role": "system", "content": longText}, user("sys chat first turn"), assistant, user("short")}}},
+		{"chat tool_calls arguments", "/v1/chat/completions", map[string]any{"model": "auto-gpt", "messages": []any{
+			user("args chat first turn"),
+			map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "f", "arguments": longText}}}},
+			map[string]any{"role": "tool", "tool_call_id": "c1", "content": "done"}, user("short")}}},
+		{"chat tool message content", "/v1/chat/completions", map[string]any{"model": "auto-gpt", "messages": []any{
+			user("result chat first turn"),
+			map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "f", "arguments": "{}"}}}},
+			map[string]any{"role": "tool", "tool_call_id": "c1", "content": longText}, user("short")}}},
+		{"chat tools definition", "/v1/chat/completions", map[string]any{"model": "auto-gpt", "messages": []any{
+			user("tools chat first turn"), assistant, user("short")},
+			"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "f", "description": longText, "parameters": map[string]any{"type": "object"}}}}}},
+
+		{"responses instructions", "/v1/responses", map[string]any{"model": "auto-gpt", "instructions": longText, "input": []any{
+			user("sys responses first turn"), assistant, user("short")}}},
+		{"responses function_call arguments", "/v1/responses", map[string]any{"model": "auto-gpt", "input": []any{
+			user("args responses first turn"),
+			map[string]any{"type": "function_call", "call_id": "c1", "name": "f", "arguments": longText},
+			map[string]any{"type": "function_call_output", "call_id": "c1", "output": "done"}, user("short")}}},
+		{"responses function_call_output", "/v1/responses", map[string]any{"model": "auto-gpt", "input": []any{
+			user("result responses first turn"),
+			map[string]any{"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "c1", "output": longText}, user("short")}}},
+		{"responses tools definition", "/v1/responses", map[string]any{"model": "auto-gpt", "input": []any{
+			user("tools responses first turn"), assistant, user("short")},
+			"tools": []any{map[string]any{"type": "function", "name": "f", "description": longText, "parameters": map[string]any{"type": "object"}}}}},
+
+		{"messages system", "/v1/messages", map[string]any{"model": "auto-gpt", "max_tokens": 64, "system": longText, "messages": []any{
+			user("sys messages first turn"), assistant, user("short")}}},
+		{"messages tool_use input", "/v1/messages", map[string]any{"model": "auto-gpt", "max_tokens": 64, "messages": []any{
+			user("args messages first turn"),
+			map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "c1", "name": "f", "input": map[string]any{"q": longText}}}},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "c1", "content": "done"}, map[string]any{"type": "text", "text": "short"}}}}}},
+		{"messages tool_result content", "/v1/messages", map[string]any{"model": "auto-gpt", "max_tokens": 64, "messages": []any{
+			user("result messages first turn"),
+			map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "c1", "name": "f", "input": map[string]any{}}}},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "c1", "content": longText}, map[string]any{"type": "text", "text": "short"}}}}}},
+		{"messages tools definition", "/v1/messages", map[string]any{"model": "auto-gpt", "max_tokens": 64, "messages": []any{
+			user("tools messages first turn"), assistant, user("short")},
+			"tools": []any{map[string]any{"name": "f", "description": longText, "input_schema": map[string]any{"type": "object"}}}}},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name+" stays blocked", func(t *testing.T) {
+			setupSmartRouteDistributeTest(t)
+			installSmartScorerStub(t, smartSimpleLabels(), "", nil)
+			body, err := common.Marshal(tc.body)
+			require.NoError(t, err)
+
+			recorder, seen := serveSmartDowngrade(t, 9810+i, tc.path, string(body))
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, "t-hard", seen.originalModel)
+			assert.Equal(t, "downgrade_blocked", seen.routeLog["reason"])
+			params, ok := seen.routeLog["reason_params"].(map[string]any)
+			require.True(t, ok)
+			tokens, ok := params["history_tokens"].(int)
+			require.True(t, ok)
+			assert.GreaterOrEqual(t, tokens, 4000)
+		})
+	}
+}
+
+func TestSmartRouteDistributeDowngradeCountsFileAttachments(t *testing.T) {
+	user := func(text string) map[string]any { return map[string]any{"role": "user", "content": text} }
+	assistant := map[string]any{"role": "assistant", "content": "ok"}
+	repeat := func(n int, item map[string]any) []any {
+		items := []any{map[string]any{"type": "text", "text": "short"}}
+		for range n {
+			items = append(items, item)
+		}
+		return items
+	}
+	cases := []struct {
+		name string
+		path string
+		body func(n int, payload string) map[string]any
+	}{
+		{"messages document base64", "/v1/messages", func(n int, payload string) map[string]any {
+			doc := map[string]any{"type": "document", "source": map[string]any{"type": "base64", "media_type": "application/pdf", "data": payload}}
+			return map[string]any{"model": "auto-gpt", "max_tokens": 64, "messages": []any{
+				user("doc base64 first turn"), assistant, map[string]any{"role": "user", "content": repeat(n, doc)}}}
+		}},
+		{"messages document text", "/v1/messages", func(n int, payload string) map[string]any {
+			doc := map[string]any{"type": "document", "source": map[string]any{"type": "text", "media_type": "text/plain", "data": payload}}
+			return map[string]any{"model": "auto-gpt", "max_tokens": 64, "messages": []any{
+				user("doc text first turn"), assistant, map[string]any{"role": "user", "content": repeat(n, doc)}}}
+		}},
+		{"responses input_file file_data", "/v1/responses", func(n int, payload string) map[string]any {
+			file := map[string]any{"type": "input_file", "filename": "a.pdf", "file_data": "data:application/pdf;base64," + payload}
+			return map[string]any{"model": "auto-gpt", "input": []any{
+				user("file_data first turn"), assistant, map[string]any{"role": "user", "content": repeat(n, file)}}}
+		}},
+	}
+	smallPayload, bigPayload := smartDowngradeBase64(16), smartDowngradeBase64(smartDowngradeBigBase64Len)
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			measure := func(t *testing.T, count int, payload string) (string, int) {
+				setupSmartRouteDistributeTest(t)
+				installSmartScorerStub(t, smartSimpleLabels(), "", nil)
+				body, err := common.Marshal(tc.body(count, payload))
+				require.NoError(t, err)
+
+				recorder, seen := serveSmartDowngrade(t, 9830+i, tc.path, string(body))
+
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				reason, _ := seen.routeLog["reason"].(string)
+				params, _ := seen.routeLog["reason_params"].(map[string]any)
+				tokens, _ := params["history_tokens"].(int)
+				return reason, tokens
+			}
+			var small, big, two int
+			t.Run("one attachment blocks downgrade", func(t *testing.T) {
+				var reason string
+				reason, small = measure(t, 1, smallPayload)
+				assert.Equal(t, "downgrade_blocked", reason)
+				assert.GreaterOrEqual(t, small, 4096)
+			})
+			t.Run("1MB attachment", func(t *testing.T) {
+				_, big = measure(t, 1, bigPayload)
+			})
+			t.Run("two attachments", func(t *testing.T) {
+				_, two = measure(t, 2, smallPayload)
+			})
+			assert.Equal(t, small, big, "attachment size must not change the estimate")
+			assert.GreaterOrEqual(t, two, small+4096)
+		})
+	}
 }

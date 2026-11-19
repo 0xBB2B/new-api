@@ -9,6 +9,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/tokenkit"
 )
 
 const (
@@ -188,4 +191,57 @@ func sessionKey(owner string, in Inspection) string {
 	}
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
+}
+
+func EstimateInputTokens(endpoint string, body []byte, model string) int {
+	var req interface{ GetTokenCountMeta() *types.TokenCountMeta }
+	switch endpoint {
+	case endpointChat:
+		req = &dto.GeneralOpenAIRequest{}
+	case endpointResponses:
+		req = &dto.OpenAIResponsesRequest{}
+	case endpointAnthropic:
+		req = &dto.ClaudeRequest{}
+	default:
+		return 0
+	}
+	if err := common.Unmarshal(body, req); err != nil {
+		return 0
+	}
+	meta := req.GetTokenCountMeta()
+	tokens := tokenkit.Estimate(model, meta.CombineText)
+	// meta 漏记的文件附件：Claude 的 document 块、Responses 没有 file_url 的 input_file
+	switch r := req.(type) {
+	case *dto.ClaudeRequest:
+		for _, m := range r.Messages {
+			parts, err := m.ParseContent()
+			if err != nil {
+				continue
+			}
+			for _, part := range parts {
+				if part.Type == "document" {
+					meta.Files = append(meta.Files, &types.FileMeta{FileType: types.FileTypeFile})
+				}
+			}
+		}
+	case *dto.OpenAIResponsesRequest:
+		for _, in := range r.ParseInput() {
+			if in.Type == "input_file" && in.FileUrl == "" {
+				meta.Files = append(meta.Files, &types.FileMeta{FileType: types.FileTypeFile})
+			}
+		}
+	}
+	for _, file := range meta.Files {
+		switch file.FileType {
+		case types.FileTypeImage:
+			tokens += tokenkit.ImageTokens(model, tokenkit.Image{Detail: file.Detail})
+		case types.FileTypeAudio:
+			tokens += 256
+		case types.FileTypeVideo:
+			tokens += 4096 * 2
+		default:
+			tokens += 4096
+		}
+	}
+	return tokens
 }

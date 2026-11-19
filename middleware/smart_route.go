@@ -20,7 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
 )
 
@@ -121,7 +120,7 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 
 	inputTokens := 0
 	if isUserTurn && session != nil {
-		inputTokens = tokenkit.Estimate(route.Name, string(raw))
+		inputTokens = smartroute.EstimateInputTokens(endpoint, raw, route.Name)
 	}
 	decision := smartroute.DecideRoute(smartroute.DecideInput{
 		Cfg:           route,
