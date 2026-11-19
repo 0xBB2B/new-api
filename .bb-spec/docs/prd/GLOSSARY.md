@@ -42,3 +42,4 @@
 | model record | 模型管理页（/models/metadata）里的一行，按名称规则（完全匹配、前缀、包含、后缀）命中一个或多个模型名，存描述、图标、标签、厂商、接口配置和 model capability；一个名字被多条命中时完全匹配优先，其次前缀、后缀、包含 | 简体「模型记录」 |
 | model capability | model record 上的五项可选配置：输入模态、输出模态、上下文大小、最大输出 token、thinking capability；每项可以是未配置，通过 /v1/models 的 OpenAI 格式返回 | 简体「模型能力」 |
 | capabilities JSON | 模型管理页上查看、复制、下载全部完全匹配记录的 model capability，并整体替换保存的窗口，内容按模型名组织，写法与 /v1/models 一致 | 简体「能力配置 JSON」 |
+| upstream failure event | 上游在流式 Responses 回复里表示本次请求失败的事件：`type` 为 `error`、`response.failed`、`response.error`，或事件里 `response.status` 为 `failed` | 简体「上游失败事件」 |
