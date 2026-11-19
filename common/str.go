@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 	"unsafe"
 
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -21,7 +22,11 @@ func LocalLogPreview(content string) string {
 	if DebugEnabled || len(content) <= LocalLogContentLimit {
 		return content
 	}
-	return fmt.Sprintf("%s... [truncated, original_length=%d, limit=%d]", content[:LocalLogContentLimit], len(content), LocalLogContentLimit)
+	cut := LocalLogContentLimit
+	for cut > 0 && !utf8.RuneStart(content[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s... [truncated, original_length=%d, limit=%d]", content[:cut], len(content), LocalLogContentLimit)
 }
 
 var logLineBreakEscaper = strings.NewReplacer("\r", `\r`, "\n", `\n`)
