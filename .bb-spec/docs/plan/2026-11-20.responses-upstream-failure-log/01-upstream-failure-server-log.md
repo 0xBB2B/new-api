@@ -72,5 +72,5 @@ code、type、message 中只缺某一项时，那一项留空，例如 `code= ty
 - [ ] C4：`response.failed` 的 `response.error` 为 null，事件顶层也没有 code 和 message → 一行 `... (channel #7, event: response.failed): upstream gave no error detail`
 - [ ] C5：同一个流里先来 `{"type":"error","code":"rate_limit","message":"slow down"}`，再来 `response.failed` → 恰好两行，第一行 `event: error` 带 `code=rate_limit` 和 `message=slow down`
 - [ ] C6：消息有 5000 字节 → 日志里的消息只有前 2048 字节，并带 `original_length=5000`；`common.DebugEnabled=true` 时是全文
-- [ ] C7：消息里有 `sk-` 开头的密钥 → 日志里没有密钥原文
+- [ ] C7：消息里有 `api_key:abc123` 和上游地址 → 日志里两者都没有原文（`sk-` 裸密钥不在脱敏范围内，和 `channel error` 日志一致）
 - [ ] C8：不是失败的事件（`response.completed`、`response.output_text.delta`）→ 没有新增日志行；C1、C2 的用例里，客户端收到的字节、返回的 usage 和改动前一样（现有 `relay/channel/openai/relay_responses_billing_test.go`、`controller/responses_websocket_test.go` 全部通过）

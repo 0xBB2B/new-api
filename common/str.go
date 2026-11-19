@@ -24,6 +24,14 @@ func LocalLogPreview(content string) string {
 	return fmt.Sprintf("%s... [truncated, original_length=%d, limit=%d]", content[:LocalLogContentLimit], len(content), LocalLogContentLimit)
 }
 
+var logLineBreakEscaper = strings.NewReplacer("\r", `\r`, "\n", `\n`)
+
+// EscapeLogLineBreaks keeps upstream-supplied text on one log line, so a
+// line break inside it cannot forge a separate log entry.
+func EscapeLogLineBreaks(content string) string {
+	return logLineBreakEscaper.Replace(content)
+}
+
 func GetStringIfEmpty(str string, defaultValue string) string {
 	if str == "" {
 		return defaultValue

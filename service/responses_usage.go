@@ -5,10 +5,13 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/tokenkit"
+	"github.com/gin-gonic/gin"
 )
 
 // ResponsesUsageAccumulator owns the accounting facts for one Responses stream.
@@ -149,6 +152,47 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 	case event.Type == "response.completed" || event.Type == "response.done" || responseStatus == "completed":
 		info.StreamStatus.MarkCompleted()
 	}
+}
+
+func LogResponsesStreamFailure(c *gin.Context, info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) {
+	if event == nil {
+		return
+	}
+	var responseStatus string
+	if event.Response != nil {
+		_ = common.Unmarshal(event.Response.Status, &responseStatus)
+	}
+	if event.Type != "error" && event.Type != "response.failed" && event.Type != "response.error" && responseStatus != "failed" {
+		return
+	}
+	oaiErr := &types.OpenAIError{Message: event.Message, Code: event.Code}
+	if event.Response != nil {
+		if respErr := event.Response.GetOpenAIError(); respErr != nil {
+			oaiErr = respErr
+		}
+	}
+	LogResponsesUpstreamError(c, info, event.Type, oaiErr)
+}
+
+func LogResponsesUpstreamError(c *gin.Context, info *relaycommon.RelayInfo, eventType string, oaiErr *types.OpenAIError) {
+	eventType = common.EscapeLogLineBreaks(eventType)
+	channelID := 0
+	if info != nil {
+		channelID = info.ChannelId
+	}
+	var code, errType, message string
+	if oaiErr != nil {
+		if oaiErr.Code != nil {
+			code = common.EscapeLogLineBreaks(fmt.Sprint(oaiErr.Code))
+		}
+		errType = common.EscapeLogLineBreaks(oaiErr.Type)
+		message = common.EscapeLogLineBreaks(common.LocalLogPreview(common.MaskSensitiveInfo(oaiErr.Message, common.UpstreamAddresses(c)...)))
+	}
+	if code == "" && errType == "" && message == "" {
+		logger.LogError(c, common.LogText("upstream responses failure (channel #%d, event: %s): upstream gave no error detail", channelID, eventType))
+		return
+	}
+	logger.LogError(c, common.LogText("upstream responses failure (channel #%d, event: %s): code=%s type=%s message=%s", channelID, eventType, code, errType, message))
 }
 
 func ApplyResponsesUsage(dst *dto.Usage, src *dto.Usage) {

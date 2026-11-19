@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1120,4 +1121,128 @@ func TestOaiChatToResponsesStreamHandlerTagsMessageAndFunctionCallID(t *testing.
 	require.Nil(t, apiErr)
 
 	requireChatToolItemsTagged(t, nonReasoningItemsInSSE(t, recorder.Body.String()))
+}
+
+// The stream scanner logs from its own goroutine in debug mode, so the
+// captured log writer must be safe for concurrent writes.
+type lockedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func runResponsesFailureStream(t *testing.T, handler func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError), relayFormat types.RelayFormat, events ...string) (logLines []string, clientBody string, usage *dto.Usage) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	oldTimeout, oldWriter := constant.StreamingTimeout, gin.DefaultErrorWriter
+	logBuf := &lockedLogBuffer{}
+	constant.StreamingTimeout = 30
+	gin.DefaultErrorWriter = logBuf
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+		gin.DefaultErrorWriter = oldWriter
+	})
+
+	var body strings.Builder
+	for _, event := range events {
+		body.WriteString("data: " + event + "\n\n")
+	}
+	body.WriteString("data: [DONE]\n\n")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "responses-failure-log-test")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.1",
+		IsStream:        true,
+		DisablePing:     true,
+		StartTime:       time.Now(),
+		RelayFormat:     relayFormat,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 7, UpstreamModelName: "gpt-5.1"},
+	}
+	info.SetEstimatePromptTokens(100)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body.String())),
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+	usage, _ = handler(c, info, resp)
+	for line := range strings.SplitSeq(logBuf.String(), "\n") {
+		if strings.Contains(line, "upstream responses failure") {
+			logLines = append(logLines, line)
+		}
+	}
+	return logLines, w.Body.String(), usage
+}
+
+func TestResponsesStreamHandlersLogUpstreamFailure(t *testing.T) {
+	const failed = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`
+	const failedNoDetail = `{"type":"response.failed","response":{"status":"failed","error":null}}`
+	const flatError = `{"type":"error","code":"rate_limit","message":"slow down"}`
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	const delta = `{"type":"response.output_text.delta","delta":"hi"}`
+	const completed = `{"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
+	for _, handler := range []struct {
+		name   string
+		run    func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
+		format types.RelayFormat
+	}{
+		{"direct forward", OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses},
+		{"responses to chat", OaiResponsesToChatStreamHandler, types.RelayFormatOpenAI},
+	} {
+		for _, tc := range []struct {
+			name   string
+			events []string
+			want   [][]string
+		}{
+			{name: "response failed", events: []string{created, failed}, want: [][]string{{"upstream responses failure (channel #7, event: response.failed): code=server_error type=server_error message=boom", "responses-failure-log-test"}}},
+			{name: "no error detail", events: []string{created, failedNoDetail}, want: [][]string{{"upstream responses failure (channel #7, event: response.failed): upstream gave no error detail"}}},
+			{name: "flat error then response failed", events: []string{created, flatError, failed}, want: [][]string{
+				{"event: error): code=rate_limit", "message=slow down"},
+				{"event: response.failed): code=server_error"},
+			}},
+			{name: "non-failure events log nothing", events: []string{created, delta, completed}},
+		} {
+			t.Run(handler.name+"/"+tc.name, func(t *testing.T) {
+				lines, _, _ := runResponsesFailureStream(t, handler.run, handler.format, tc.events...)
+				require.Len(t, lines, len(tc.want))
+				for i, wants := range tc.want {
+					for _, want := range wants {
+						assert.Contains(t, lines[i], want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestOaiResponsesStreamHandlerFailureLogKeepsClientBody(t *testing.T) {
+	const failed = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`
+	lines, body, _ := runResponsesFailureStream(t, OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses, failed)
+	require.Len(t, lines, 1)
+	assert.Contains(t, body, failed+"\n\n")
+}
+
+func TestOaiResponsesStreamHandlerFailureLogKeepsUsage(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	const delta = `{"type":"response.output_text.delta","delta":"hi"}`
+	const failed = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`
+	_, _, usage := runResponsesFailureStream(t, OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses, created, delta, failed)
+	require.NotNil(t, usage)
+	wantCompletion := tokenkit.Count("gpt-5.1", "hi")
+	assert.Equal(t, 100, usage.PromptTokens)
+	assert.Equal(t, wantCompletion, usage.CompletionTokens)
+	assert.Equal(t, 100+wantCompletion, usage.TotalTokens)
 }
