@@ -364,6 +364,15 @@ func captureResponsesFailureLog(t *testing.T) (*gin.Context, *relaycommon.RelayI
 	return c, info, buf
 }
 
+func marshalRelayInfoObservable(info *relaycommon.RelayInfo) ([]byte, error) {
+	return common.Marshal(map[string]any{
+		"channel_meta":  info.ChannelMeta,
+		"stream_status": info.StreamStatus,
+		"is_stream":     info.IsStream,
+		"price_data":    info.PriceData,
+	})
+}
+
 func responsesFailureLines(buf *bytes.Buffer) []string {
 	var lines []string
 	for line := range strings.SplitSeq(buf.String(), "\n") {
@@ -437,11 +446,25 @@ func TestLogResponsesStreamFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, info, buf := captureResponsesFailureLog(t)
+			info.StreamStatus = relaycommon.NewStreamStatus()
 			common.DebugEnabled = tc.debug
 			for _, raw := range tc.events {
 				var event dto.ResponsesStreamResponse
 				require.NoError(t, common.UnmarshalJsonStr(raw, &event))
+				infoBefore, err := marshalRelayInfoObservable(info)
+				require.NoError(t, err)
+				eventBefore, err := common.Marshal(&event)
+				require.NoError(t, err)
+				outcomeBefore, endBefore := info.StreamStatus.ResponseOutcome(), info.StreamStatus.EndReason
 				LogResponsesStreamFailure(c, info, &event)
+				infoAfter, err := marshalRelayInfoObservable(info)
+				require.NoError(t, err)
+				eventAfter, err := common.Marshal(&event)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(infoBefore), string(infoAfter))
+				assert.JSONEq(t, string(eventBefore), string(eventAfter))
+				assert.Equal(t, outcomeBefore, info.StreamStatus.ResponseOutcome())
+				assert.Equal(t, endBefore, info.StreamStatus.EndReason)
 			}
 			lines := responsesFailureLines(buf)
 			require.Len(t, lines, len(tc.want))
@@ -490,7 +513,21 @@ func TestLogResponsesUpstreamError(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, info, buf := captureResponsesFailureLog(t)
+			info.StreamStatus = relaycommon.NewStreamStatus()
+			infoBefore, err := marshalRelayInfoObservable(info)
+			require.NoError(t, err)
+			errBefore, err := common.Marshal(tc.err)
+			require.NoError(t, err)
+			outcomeBefore, endBefore := info.StreamStatus.ResponseOutcome(), info.StreamStatus.EndReason
 			LogResponsesUpstreamError(c, info, tc.eventType, tc.err)
+			infoAfter, err := marshalRelayInfoObservable(info)
+			require.NoError(t, err)
+			errAfter, err := common.Marshal(tc.err)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(infoBefore), string(infoAfter))
+			assert.JSONEq(t, string(errBefore), string(errAfter))
+			assert.Equal(t, outcomeBefore, info.StreamStatus.ResponseOutcome())
+			assert.Equal(t, endBefore, info.StreamStatus.EndReason)
 			lines := responsesFailureLines(buf)
 			require.Len(t, lines, 1)
 			assert.Contains(t, lines[0], tc.want)

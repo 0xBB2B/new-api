@@ -1144,6 +1144,12 @@ func (b *lockedLogBuffer) String() string {
 
 func runResponsesFailureStream(t *testing.T, handler func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError), relayFormat types.RelayFormat, events ...string) (logLines []string, clientBody string, usage *dto.Usage) {
 	t.Helper()
+	logLines, clientBody, usage, _, _ = runResponsesFailureStreamFull(t, handler, relayFormat, events...)
+	return logLines, clientBody, usage
+}
+
+func runResponsesFailureStreamFull(t *testing.T, handler func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError), relayFormat types.RelayFormat, events ...string) (logLines []string, clientBody string, usage *dto.Usage, apiErr *types.NewAPIError, info *relaycommon.RelayInfo) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	oldTimeout, oldWriter := constant.StreamingTimeout, gin.DefaultErrorWriter
 	logBuf := &lockedLogBuffer{}
@@ -1164,7 +1170,7 @@ func runResponsesFailureStream(t *testing.T, handler func(*gin.Context, *relayco
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Set(common.RequestIdKey, "responses-failure-log-test")
-	info := &relaycommon.RelayInfo{
+	info = &relaycommon.RelayInfo{
 		OriginModelName: "gpt-5.1",
 		IsStream:        true,
 		DisablePing:     true,
@@ -1178,13 +1184,13 @@ func runResponsesFailureStream(t *testing.T, handler func(*gin.Context, *relayco
 		Body:       io.NopCloser(strings.NewReader(body.String())),
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 	}
-	usage, _ = handler(c, info, resp)
+	usage, apiErr = handler(c, info, resp)
 	for line := range strings.SplitSeq(logBuf.String(), "\n") {
 		if strings.Contains(line, "upstream responses failure") {
 			logLines = append(logLines, line)
 		}
 	}
-	return logLines, w.Body.String(), usage
+	return logLines, w.Body.String(), usage, apiErr, info
 }
 
 func TestResponsesStreamHandlersLogUpstreamFailure(t *testing.T) {
@@ -1235,14 +1241,82 @@ func TestOaiResponsesStreamHandlerFailureLogKeepsClientBody(t *testing.T) {
 	assert.Contains(t, body, failed+"\n\n")
 }
 
-func TestOaiResponsesStreamHandlerFailureLogKeepsUsage(t *testing.T) {
+func TestOaiResponsesToChatStreamHandlerFailureLogKeepsClientBody(t *testing.T) {
 	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
 	const delta = `{"type":"response.output_text.delta","delta":"hi"}`
 	const failed = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`
-	_, _, usage := runResponsesFailureStream(t, OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses, created, delta, failed)
-	require.NotNil(t, usage)
-	wantCompletion := tokenkit.Count("gpt-5.1", "hi")
-	assert.Equal(t, 100, usage.PromptTokens)
-	assert.Equal(t, wantCompletion, usage.CompletionTokens)
-	assert.Equal(t, 100+wantCompletion, usage.TotalTokens)
+	lines, body, _ := runResponsesFailureStream(t, OaiResponsesToChatStreamHandler, types.RelayFormatOpenAI, created, delta, failed)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], "upstream responses failure (channel #7, event: response.failed): code=server_error type=server_error message=boom")
+
+	chunks := strings.Split(body, "\n\n")
+	require.Len(t, chunks, 3)
+	assert.True(t, strings.HasPrefix(chunks[0], `data: {"id":"chatcmpl-responses-failure-log-test","object":"chat.completion.chunk"`))
+	assert.Contains(t, chunks[0], `"delta":{"content":"","role":"assistant"}`)
+	assert.Contains(t, chunks[1], `"delta":{"content":"hi"}`)
+	assert.Equal(t, `{"error":{"message":"boom","type":"server_error","param":"","code":"server_error"}}`, chunks[2])
+	assert.NotContains(t, body, "[DONE]")
+	assert.NotContains(t, body, "response.failed")
+}
+
+func TestResponsesStreamHandlersFailureSettlesUpstreamUsage(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	const delta = `{"type":"response.output_text.delta","delta":"hi"}`
+	const failedWithUsage = `{"type":"response.failed","response":{"status":"failed","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"error":{"code":"server_error","type":"server_error","message":"boom"}}}`
+	const failedNoUsage = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`
+	for _, handler := range []struct {
+		name            string
+		run             func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
+		format          types.RelayFormat
+		wantNoOutputErr bool
+	}{
+		{"direct forward", OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses, false},
+		{"responses to chat", OaiResponsesToChatStreamHandler, types.RelayFormatOpenAI, true},
+	} {
+		t.Run(handler.name+"/failure event carries usage", func(t *testing.T) {
+			lines, _, usage, apiErr, info := runResponsesFailureStreamFull(t, handler.run, handler.format, created, delta, failedWithUsage)
+			require.Len(t, lines, 1)
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			assert.Equal(t, 7, usage.PromptTokens)
+			assert.Equal(t, 3, usage.CompletionTokens)
+			assert.Equal(t, 10, usage.TotalTokens)
+			require.NotNil(t, info.StreamStatus)
+			assert.Equal(t, "failed", info.StreamStatus.ResponseOutcome())
+		})
+		t.Run(handler.name+"/failure without any output", func(t *testing.T) {
+			lines, _, usage, apiErr, info := runResponsesFailureStreamFull(t, handler.run, handler.format, created, failedNoUsage)
+			require.Len(t, lines, 1)
+			if handler.wantNoOutputErr {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+				relayErr, ok := apiErr.RelayError.(types.OpenAIError)
+				require.True(t, ok)
+				assert.Equal(t, "boom", relayErr.Message)
+				assert.Equal(t, "server_error", relayErr.Type)
+				assert.Equal(t, "server_error", relayErr.Code)
+				assert.Nil(t, usage)
+			} else {
+				require.Nil(t, apiErr)
+				require.NotNil(t, usage)
+				assert.Equal(t, 0, usage.PromptTokens)
+				assert.Equal(t, 0, usage.CompletionTokens)
+				assert.Equal(t, 0, usage.TotalTokens)
+			}
+			require.NotNil(t, info.StreamStatus)
+			assert.Equal(t, "failed", info.StreamStatus.ResponseOutcome())
+		})
+		t.Run(handler.name+"/failure event without usage", func(t *testing.T) {
+			lines, _, usage, apiErr, info := runResponsesFailureStreamFull(t, handler.run, handler.format, created, delta, failedNoUsage)
+			require.Len(t, lines, 1)
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			wantCompletion := tokenkit.Count("gpt-5.1", "hi")
+			assert.Equal(t, 100, usage.PromptTokens)
+			assert.Equal(t, wantCompletion, usage.CompletionTokens)
+			assert.Equal(t, 100+wantCompletion, usage.TotalTokens)
+			require.NotNil(t, info.StreamStatus)
+			assert.Equal(t, "failed", info.StreamStatus.ResponseOutcome())
+		})
+	}
 }
