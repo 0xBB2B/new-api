@@ -1,13 +1,20 @@
 package service
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/tokenkit"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -338,5 +345,205 @@ func TestResponsesUsageAccumulatorMissingUsageEstimation(t *testing.T) {
 			assert.Equal(t, tc.wantCompletion, usage.CompletionTokens)
 			assert.Equal(t, tc.wantPrompt+tc.wantCompletion, usage.TotalTokens)
 		})
+	}
+}
+
+func captureResponsesFailureLog(t *testing.T) (*gin.Context, *relaycommon.RelayInfo, *bytes.Buffer) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	buf := &bytes.Buffer{}
+	oldWriter, oldDebug := gin.DefaultErrorWriter, common.DebugEnabled
+	gin.DefaultErrorWriter = buf
+	t.Cleanup(func() {
+		gin.DefaultErrorWriter = oldWriter
+		common.DebugEnabled = oldDebug
+	})
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 7}}
+	return c, info, buf
+}
+
+func marshalRelayInfoObservable(info *relaycommon.RelayInfo) ([]byte, error) {
+	return common.Marshal(map[string]any{
+		"channel_meta":  info.ChannelMeta,
+		"stream_status": info.StreamStatus,
+		"is_stream":     info.IsStream,
+		"price_data":    info.PriceData,
+	})
+}
+
+func responsesFailureLines(buf *bytes.Buffer) []string {
+	var lines []string
+	for line := range strings.SplitSeq(buf.String(), "\n") {
+		if strings.Contains(line, "upstream responses failure") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func TestLogResponsesStreamFailure(t *testing.T) {
+	longMessage := strings.Repeat("a", 5000)
+	for _, tc := range []struct {
+		name   string
+		debug  bool
+		events []string
+		want   [][]string
+	}{
+		{
+			name:   "response failed carries error object",
+			events: []string{`{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`},
+			want:   [][]string{{"upstream responses failure (channel #7, event: response.failed): code=server_error type=server_error message=boom"}},
+		},
+		{
+			name:   "failed status on another event type",
+			events: []string{`{"type":"response.done","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`},
+			want:   [][]string{{"upstream responses failure (channel #7, event: response.done): code=server_error type=server_error message=boom"}},
+		},
+		{
+			name:   "response.error event type",
+			events: []string{`{"type":"response.error","code":"bad","message":"oops"}`},
+			want:   [][]string{{"upstream responses failure (channel #7, event: response.error): code=bad type= message=oops"}},
+		},
+		{
+			name:   "missing code leaves it empty",
+			events: []string{`{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"boom"}}}`},
+			want:   [][]string{{"upstream responses failure (channel #7, event: response.failed): code= type=server_error message=boom"}},
+		},
+		{
+			name:   "null response error and no top-level detail",
+			events: []string{`{"type":"response.failed","response":{"status":"failed","error":null}}`},
+			want:   [][]string{{"upstream responses failure (channel #7, event: response.failed): upstream gave no error detail"}},
+		},
+		{
+			name:   "flat error then response failed gives two lines",
+			events: []string{`{"type":"error","code":"rate_limit","message":"slow down"}`, `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`},
+			want: [][]string{
+				{"upstream responses failure (channel #7, event: error): code=rate_limit type= message=slow down"},
+				{"upstream responses failure (channel #7, event: response.failed): code=server_error type=server_error message=boom"},
+			},
+		},
+		{
+			name:   "oversized message truncated at 2048 bytes",
+			events: []string{`{"type":"error","code":"c","message":"` + longMessage + `"}`},
+			want:   [][]string{{"message=" + strings.Repeat("a", 2048), "original_length=5000"}},
+		},
+		{
+			name:   "debug keeps full message",
+			debug:  true,
+			events: []string{`{"type":"error","code":"c","message":"` + longMessage + `"}`},
+			want:   [][]string{{"message=" + longMessage}},
+		},
+		{
+			name:   "completed event logs nothing",
+			events: []string{`{"type":"response.completed","response":{"status":"completed"}}`},
+		},
+		{
+			name:   "delta event logs nothing",
+			events: []string{`{"type":"response.output_text.delta","delta":"hi"}`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, buf := captureResponsesFailureLog(t)
+			info.StreamStatus = relaycommon.NewStreamStatus()
+			common.DebugEnabled = tc.debug
+			for _, raw := range tc.events {
+				var event dto.ResponsesStreamResponse
+				require.NoError(t, common.UnmarshalJsonStr(raw, &event))
+				infoBefore, err := marshalRelayInfoObservable(info)
+				require.NoError(t, err)
+				eventBefore, err := common.Marshal(&event)
+				require.NoError(t, err)
+				outcomeBefore, endBefore := info.StreamStatus.ResponseOutcome(), info.StreamStatus.EndReason
+				LogResponsesStreamFailure(c, info, &event)
+				infoAfter, err := marshalRelayInfoObservable(info)
+				require.NoError(t, err)
+				eventAfter, err := common.Marshal(&event)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(infoBefore), string(infoAfter))
+				assert.JSONEq(t, string(eventBefore), string(eventAfter))
+				assert.Equal(t, outcomeBefore, info.StreamStatus.ResponseOutcome())
+				assert.Equal(t, endBefore, info.StreamStatus.EndReason)
+			}
+			lines := responsesFailureLines(buf)
+			require.Len(t, lines, len(tc.want))
+			for i, wants := range tc.want {
+				assert.True(t, strings.HasPrefix(lines[i], "[ERR]"))
+				for _, want := range wants {
+					assert.Contains(t, lines[i], want)
+				}
+			}
+			if tc.name == "oversized message truncated at 2048 bytes" {
+				assert.NotContains(t, lines[0], strings.Repeat("a", 2049))
+			}
+		})
+	}
+}
+
+func TestLogResponsesStreamFailureRedactsSecretsAndUpstreamAddress(t *testing.T) {
+	const secret = "abcdefghijklmnopqrstuvwxyz123456"
+	const host = "api.upstream-secret.example.com"
+	for _, debug := range []bool{false, true} {
+		c, info, buf := captureResponsesFailureLog(t)
+		common.DebugEnabled = debug
+		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://"+host)
+		var event dto.ResponsesStreamResponse
+		require.NoError(t, common.UnmarshalJsonStr(`{"type":"error","code":"invalid_api_key","message":"bad api_key:`+secret+` at https://`+host+`/v1/responses"}`, &event))
+		LogResponsesStreamFailure(c, info, &event)
+		lines := responsesFailureLines(buf)
+		require.Len(t, lines, 1)
+		assert.NotContains(t, lines[0], secret)
+		assert.NotContains(t, lines[0], host)
+		assert.Contains(t, lines[0], "code=invalid_api_key")
+	}
+}
+
+func TestLogResponsesUpstreamError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		eventType string
+		err       *types.OpenAIError
+		want      string
+	}{
+		{"terminal error frame", "error", &types.OpenAIError{Code: "rate_limit", Type: "server_error", Message: "slow down"}, "upstream responses failure (channel #7, event: error): code=rate_limit type=server_error message=slow down"},
+		{"missing type", "error", &types.OpenAIError{Code: "rate_limit", Message: "slow down"}, "upstream responses failure (channel #7, event: error): code=rate_limit type= message=slow down"},
+		{"nil error object", "error", nil, "upstream responses failure (channel #7, event: error): upstream gave no error detail"},
+		{"empty error object", "response.failed", &types.OpenAIError{}, "upstream responses failure (channel #7, event: response.failed): upstream gave no error detail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, buf := captureResponsesFailureLog(t)
+			info.StreamStatus = relaycommon.NewStreamStatus()
+			infoBefore, err := marshalRelayInfoObservable(info)
+			require.NoError(t, err)
+			errBefore, err := common.Marshal(tc.err)
+			require.NoError(t, err)
+			outcomeBefore, endBefore := info.StreamStatus.ResponseOutcome(), info.StreamStatus.EndReason
+			LogResponsesUpstreamError(c, info, tc.eventType, tc.err)
+			infoAfter, err := marshalRelayInfoObservable(info)
+			require.NoError(t, err)
+			errAfter, err := common.Marshal(tc.err)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(infoBefore), string(infoAfter))
+			assert.JSONEq(t, string(errBefore), string(errAfter))
+			assert.Equal(t, outcomeBefore, info.StreamStatus.ResponseOutcome())
+			assert.Equal(t, endBefore, info.StreamStatus.EndReason)
+			lines := responsesFailureLines(buf)
+			require.Len(t, lines, 1)
+			assert.Contains(t, lines[0], tc.want)
+		})
+	}
+}
+
+func TestLogResponsesUpstreamErrorEscapesLineBreaks(t *testing.T) {
+	c, info, buf := captureResponsesFailureLog(t)
+	LogResponsesUpstreamError(c, info, "x\n[ERR] fake", &types.OpenAIError{Code: "c\nx", Type: "t\ry", Message: "line1\nline2\r\n[ERR] fake"})
+	lines := responsesFailureLines(buf)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], `line1\nline2\r\n[ERR] fake`)
+	assert.Contains(t, lines[0], `code=c\nx type=t\ry`)
+	assert.Contains(t, lines[0], `event: x\n[ERR] fake)`)
+	for line := range strings.SplitSeq(buf.String(), "\n") {
+		assert.False(t, strings.HasPrefix(line, "[ERR] fake"), line)
 	}
 }

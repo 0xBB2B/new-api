@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1490,4 +1491,84 @@ func TestResponsesWebSocketReleasesChannelAffinityWhenLaterTurnFails(t *testing.
 		_, found := service.GetPreferredChannelByAffinity(newSessionContext(), "ws-billing", "default")
 		return !found
 	}, 2*time.Second, 20*time.Millisecond, "a failed later turn releases the session binding")
+}
+
+func TestResponsesWebSocketLogsUpstreamFailure(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"first","status":"in_progress"}}`
+	for _, tc := range []struct {
+		name         string
+		events       []string
+		want         []string
+		clientFrames []string
+	}{
+		{
+			name:   "terminal error frame",
+			events: []string{created, `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"boom"}}`},
+			want:   []string{"upstream responses failure (channel #%d, event: error): code=server_error type=server_error message=boom"},
+		},
+		{
+			name:   "terminal error frame with top-level detail only",
+			events: []string{created, `{"type":"error","code":"rate_limit","message":"slow down"}`},
+			want:   []string{"upstream responses failure (channel #%d, event: error): code=rate_limit type= message=slow down"},
+		},
+		{
+			name:         "terminal error frame before acceptance with top-level detail only",
+			events:       []string{`{"type":"error","code":"rate_limit","message":"slow down"}`},
+			want:         []string{"upstream responses failure (channel #%d, event: error): code=rate_limit type= message=slow down"},
+			clientFrames: []string{`{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"rate_limit","message":"slow down","param":""}}`},
+		},
+		{
+			name:   "response failed",
+			events: []string{created, `{"type":"response.failed","response":{"id":"first","status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`},
+			want:   []string{"upstream responses failure (channel #%d, event: response.failed): code=server_error type=server_error message=boom"},
+		},
+		{
+			name:   "response failed without detail",
+			events: []string{created, `{"type":"response.failed","response":{"id":"first","status":"failed","error":null}}`},
+			want:   []string{"upstream responses failure (channel #%d, event: response.failed): upstream gave no error detail"},
+		},
+		{
+			name:   "completed response logs nothing",
+			events: []string{created, `{"type":"response.completed","response":{"id":"first","status":"completed","usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logBuf := &bytes.Buffer{}
+			oldWriter := gin.DefaultErrorWriter
+			gin.DefaultErrorWriter = logBuf
+			t.Cleanup(func() { gin.DefaultErrorWriter = oldWriter })
+			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+				if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
+					return
+				}
+				for _, event := range tc.events {
+					if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(event))) {
+						return
+					}
+				}
+				_, _, _ = ws.ReadMessage()
+			})
+			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+			expectedFrames := tc.events
+			if tc.clientFrames != nil {
+				expectedFrames = tc.clientFrames
+			}
+			for _, expected := range expectedFrames {
+				actual, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
+				require.NoError(t, err)
+				assert.JSONEq(t, expected, string(actual), "upstream frames must be delivered once and unchanged")
+			}
+			fixture.closeAndWait(t)
+			var lines []string
+			for line := range strings.SplitSeq(logBuf.String(), "\n") {
+				if strings.Contains(line, "upstream responses failure") {
+					lines = append(lines, line)
+				}
+			}
+			require.Len(t, lines, len(tc.want))
+			for i, want := range tc.want {
+				assert.Contains(t, lines[i], fmt.Sprintf(want, fixture.channel.Id))
+			}
+		})
+	}
 }

@@ -526,6 +526,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						}
 						continue
 					}
+					upstreamErr := rejection.Error
+					if upstreamErr == nil {
+						upstreamErr = &types.OpenAIError{Message: event.Message, Code: event.Code}
+					}
+					service.LogResponsesUpstreamError(c, info, "error", upstreamErr)
 					if accepted {
 						if rejection.Error != nil {
 							code := ""
@@ -565,6 +570,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						responseID = event.Response.ID
 					}
 				}
+				service.LogResponsesStreamFailure(c, info, &event.ResponsesStreamResponse)
 				accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 			}
 			switch event.Type {

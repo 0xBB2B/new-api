@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,4 +279,30 @@ func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	other := model.NewLogOther()
 	AppendRelayLogAdminInfo(untouched, nil, other)
 	assert.NotContains(t, other.Snapshot()["admin_info"], "request_policy", "requests without decisions do not carry an empty record")
+}
+
+func TestProcessChannelErrorEscapesLineBreaksInServerLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	buf := &bytes.Buffer{}
+	oldWriter, oldAutoDisable, oldErrorLog := gin.DefaultErrorWriter, common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
+	gin.DefaultErrorWriter = buf
+	common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = false, false
+	t.Cleanup(func() {
+		gin.DefaultErrorWriter = oldWriter
+		common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = oldAutoDisable, oldErrorLog
+	})
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	apiErr := types.NewErrorWithStatusCode(errors.New("boom\n[ERR] fake"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+	ProcessChannelError(c, types.ChannelError{ChannelId: 9, ChannelName: "escape-test"}, apiErr, nil)
+
+	var channelLines int
+	for line := range strings.SplitSeq(buf.String(), "\n") {
+		assert.False(t, strings.HasPrefix(line, "[ERR] fake"), line)
+		if strings.Contains(line, "channel error (channel #") {
+			channelLines++
+			assert.Contains(t, line, `boom\n[ERR] fake`)
+		}
+	}
+	assert.Equal(t, 1, channelLines)
 }

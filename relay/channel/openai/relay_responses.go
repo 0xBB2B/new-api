@@ -92,6 +92,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if streamResponse.Response != nil {
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
+		service.LogResponsesStreamFailure(c, info, &streamResponse)
 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
 			sr.Stop(err)
