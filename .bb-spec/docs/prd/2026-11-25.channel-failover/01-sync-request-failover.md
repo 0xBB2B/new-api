@@ -66,7 +66,9 @@ date: 2026-11-25
 
 ## 约束
 - C1：同步请求包括 OpenAI、Claude、Gemini、Responses 各种格式的对话，以及向量、图片、语音、重排，还有 Responses WebSocket、Realtime 的建连。这类请求在上游还没给出任何正文时失败，并且现有判定认为可以重试，网关就换一个本次请求里还没试过的渠道或密钥再发。Responses WebSocket、Realtime 只在连接上游失败时换。
-- C2：流式回复里，上游在第一段正文之前发的开场事件（如 Responses 的 `response.created`、`response.in_progress`，Claude 的 `message_start`），网关先不发给客户端。等到第一段正文出现，再按原来的顺序一起发出。第一段正文出现之前上游报失败（Responses 的 `response.failed`、`error`，Claude 的 `error` 事件，Chat 流里的错误数据块），按 C1 换渠道，客户端收不到这次尝试的任何事件。正文指文字、思考内容和工具调用。
+- C2：Responses、Claude、OpenAI Chat 三种格式的流式回复里，开场事件网关先不发给客户端，等到正文开始再按原来的顺序一起发出。开场事件只认这份名单：Responses 的 `response.created`、`response.in_progress`、`response.queued`；Claude 的 `message_start`、`ping`；Chat 流里没有文字、思考、工具调用、结束原因和用量的数据块（通常只带 `role`）。名单外的事件一律算正文开始。正文开始之前上游报失败（Responses 的 `error`、`response.failed`、`response.error` 或 `response.status` 为 `failed`；Claude 的 `error` 事件；Chat 流里带 `error` 的数据块），按 C1 换渠道，客户端收不到这次尝试的任何事件。
+- C15：正文开始之前上游结束了流：收到过终止事件（Responses 的 `response.completed`、`response.done`、`response.incomplete`，Claude 的 `message_stop`，Chat 流的 `[DONE]`），就补发扣住的事件和终止事件，按正常结束处理；没收到终止事件就断开（包括一个事件都没有），算失败，按 C1 换渠道。
+- C16：一次尝试在正文开始前失败后，它的用量、工具调用次数、图片数都不计入结算；最终结算只用成功那次尝试的数据。
 - C3：一次请求里，每个渠道的每个启用密钥最多被用一次。单密钥渠道失败一次就算试过；多密钥渠道里的每个启用密钥都试过以后，这个渠道才算试过。
 - C4：同步请求不受「失败重试次数」限制。能选的渠道和密钥都试过以后才停下，然后返回错误，不再从头重试。
 - C5：所有尝试都失败时，返回给客户端的是最后一次尝试的错误（状态码和错误内容），不是"没有可用渠道"。
@@ -95,6 +97,8 @@ date: 2026-11-25
 - [ ] C12：令牌钉死渠道 A，A 返回 500 → 不换渠道，客户端收到 500
 - [ ] C13：A 失败并被自动禁用，B 也失败 → A 不会被再次选中
 - [ ] C14：模型没有任何可用渠道 → 返回的报错和改动前一样
+- [ ] C15：A 只发 `response.created` 再发 `response.completed`（没有正文）→ 客户端收到这两个事件，B 没被请求；A 只发 `response.created` 就断开 → 换到 B；A 一个事件都没发就断开 → 换到 B；Claude 流 `message_start` 后接 `message_stop`、Chat 流只有 role 块后接 `[DONE]`，结果同第一种
+- [ ] C16：A 在正文前失败前已经上报过 1 次内置工具调用，B 成功且上报 2 次 → 结算按 2 次；A 失败、B 成功时，消费日志里只有一条成功记录，金额只按 B 的用量算
 
 ## 验证路径
 1. 用 mock 上游配 4 个渠道，按主路径设置好，发流式对话请求 → 收到 D 的回复；mock 记录显示 A、B、C、D 各被请求一次，C 在 D 之前。
