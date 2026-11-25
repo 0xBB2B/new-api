@@ -270,6 +270,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	}
 
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if streamErr != nil {
 			stopStream(sr, streamErr)
@@ -317,6 +319,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	})
 
 	if streamErr != nil {
+		helper.RecordStreamFailure(c, streamErr)
 		if !upstreamFailed || state.UsageText() == "" {
 			return nil, streamErr
 		}

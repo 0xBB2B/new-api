@@ -341,9 +341,12 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		Usage:        &dto.Usage{},
 	}
 	var err *types.NewAPIError
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		err = HandleStreamResponseData(c, info, claudeInfo, data)
 		if err != nil {
+			helper.RecordStreamFailure(c, err)
 			sr.Stop(err)
 		}
 	})
@@ -351,8 +354,19 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	if err != nil {
 		return nil, err
 	}
+	// Gemini 格式的内容在 HandleStreamFinalResponse 才发出，要等它发完再判断。
+	if info.RelayFormat != types.RelayFormatGemini {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
+	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
+	if info.RelayFormat == types.RelayFormatGemini {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
+	}
 	return claudeInfo.Usage, nil
 }
 

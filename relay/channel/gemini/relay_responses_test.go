@@ -13,9 +13,11 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -298,4 +300,113 @@ func requireOrderedGeminiResponsesSubstrings(t *testing.T, s string, parts ...st
 		require.NotEqualf(t, -1, idx, "missing %q after byte offset %d", part, offset)
 		offset += idx + len(part)
 	}
+}
+
+func TestGeminiResponsesStreamHandlerPreBodyFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		upstream  string
+		wantErr   string
+		oldClient []string
+	}{
+		{name: "unparsable first frame", upstream: "data: {busy\n\n", wantErr: "unmarshal Gemini stream response", oldClient: []string{"event: response.failed", "unmarshal Gemini stream response"}},
+	} {
+		for _, mode := range []struct {
+			name  string
+			probe func(*types.NewAPIError) bool
+		}{
+			{"probe true", func(*types.NewAPIError) bool { return true }},
+			{"probe false", func(*types.NewAPIError) bool { return false }},
+			{"no probe", nil},
+		} {
+			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
+				gin.SetMode(gin.TestMode)
+				oldStreamingTimeout := constant.StreamingTimeout
+				constant.StreamingTimeout = 300
+				t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				if mode.probe != nil {
+					helper.SetFailoverProbe(c, mode.probe)
+				}
+
+				_, apiErr := GeminiResponsesStreamHandler(c, newGeminiResponsesRelayInfo(true), &http.Response{Body: io.NopCloser(strings.NewReader(tc.upstream))})
+
+				if mode.name == "probe true" {
+					assert.Empty(t, recorder.Body.String())
+					assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+					require.NotNil(t, apiErr)
+					assert.Contains(t, apiErr.Error(), tc.wantErr)
+					assert.False(t, types.IsSkipRetryError(apiErr))
+					return
+				}
+				assert.Nil(t, apiErr)
+				assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+				for _, want := range tc.oldClient {
+					assert.Contains(t, recorder.Body.String(), want)
+				}
+			})
+		}
+	}
+}
+
+func TestGeminiResponsesStreamHandlerProbeReceivesReturnedError(t *testing.T) {
+	for _, mode := range []struct {
+		name   string
+		answer bool
+	}{{"probe true", true}, {"probe false", false}} {
+		t.Run(mode.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			oldStreamingTimeout := constant.StreamingTimeout
+			constant.StreamingTimeout = 300
+			t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			var seen *types.NewAPIError
+			helper.SetFailoverProbe(c, func(err *types.NewAPIError) bool {
+				seen = err
+				return mode.answer
+			})
+
+			usage, apiErr := GeminiResponsesStreamHandler(c, newGeminiResponsesRelayInfo(true), &http.Response{Body: io.NopCloser(strings.NewReader("data: {busy\n\n"))})
+
+			if mode.answer {
+				assert.Empty(t, recorder.Body.String())
+				require.NotNil(t, apiErr)
+				require.NotNil(t, seen)
+				assert.Equal(t, apiErr.GetErrorCode(), seen.GetErrorCode())
+				assert.Equal(t, apiErr.StatusCode, seen.StatusCode)
+				return
+			}
+			assert.Nil(t, apiErr)
+			assert.NotNil(t, usage)
+			assert.Contains(t, recorder.Body.String(), "event: response.failed")
+		})
+	}
+}
+
+func TestGeminiResponsesStreamHandlerRealRuleProbeKeepsBadFrameBehavior(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	var seen *types.NewAPIError
+	helper.SetFailoverProbe(c, func(err *types.NewAPIError) bool {
+		seen = err
+		return !operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode())
+	})
+
+	usage, apiErr := GeminiResponsesStreamHandler(c, newGeminiResponsesRelayInfo(true), &http.Response{Body: io.NopCloser(strings.NewReader("data: {busy\n\n"))})
+
+	require.NotNil(t, seen)
+	assert.True(t, operation_setting.IsAlwaysSkipRetryCode(seen.GetErrorCode()))
+	assert.Nil(t, apiErr)
+	assert.NotNil(t, usage)
+	assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+	assert.Contains(t, recorder.Body.String(), "event: response.failed")
 }

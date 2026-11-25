@@ -123,11 +123,17 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
 
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if lastStreamData != "" {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
 				sr.Error(err)
+			}
+			if failure := helper.PreContentFailure(c); failure != nil {
+				sr.Stop(failure)
+				return
 			}
 		}
 		if len(data) > 0 {
@@ -181,6 +187,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 		}
 	}
+	streamEnded := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone
+	// Claude 和 Gemini 格式的最后一块在 HandleFinalResponse 才发出，有最后一块时要等它发完再判断。
+	if info.RelayFormat == types.RelayFormatOpenAI || lastStreamData == "" {
+		if failure := helper.FinishStreamHold(c, streamEnded); failure != nil {
+			return nil, failure
+		}
+	}
 
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
@@ -194,6 +207,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	if failure := helper.FinishStreamHold(c, streamEnded); failure != nil {
+		return nil, failure
+	}
 
 	return usage, nil
 }

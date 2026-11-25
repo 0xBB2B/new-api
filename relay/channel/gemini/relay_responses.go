@@ -130,10 +130,12 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	sendChunk := func(chunk *dto.GeminiChatResponse) bool {
 		results, err := service.ConvertStreamResponseChunk(c, info, state, chunk)
 		if err != nil {
-			if failResponsesStream(err) {
+			failure := types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			helper.RecordStreamFailure(c, failure)
+			if failResponsesStream(failure) {
 				return false
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = failure
 			return false
 		}
 		for _, result := range results {
@@ -149,12 +151,18 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		return true
 	}
 
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	usage, streamAPIError := geminiStreamHandler(c, info, resp, func(_ string, geminiResponse *dto.GeminiChatResponse) bool {
 		hostedBridge.Observe(geminiResponse)
 		return sendChunk(geminiResponse)
 	})
 	if streamAPIError != nil {
+		helper.RecordStreamFailure(c, streamAPIError)
 		if failResponsesStream(streamAPIError) && streamErr == nil {
+			if failure := helper.PreContentFailure(c); failure != nil {
+				return nil, failure
+			}
 			return usage, nil
 		}
 		return usage, streamAPIError
@@ -163,7 +171,13 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		if info.StreamStatus.EndReason != relaycommon.StreamEndReasonClientGone {
 			failResponsesStream(fmt.Errorf("gemini stream ended unexpectedly: %s", info.StreamStatus.Summary()))
 		}
+		if failure := helper.PreContentFailure(c); failure != nil {
+			return nil, failure
+		}
 		return usage, nil
+	}
+	if failure := helper.PreContentFailure(c); failure != nil {
+		return nil, failure
 	}
 	if streamErr != nil {
 		return nil, streamErr

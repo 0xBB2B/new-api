@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -374,5 +375,40 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		idx := strings.Index(s[offset:], part)
 		require.NotEqualf(t, -1, idx, "missing %q after byte offset %d", part, offset)
 		offset += idx + len(part)
+	}
+}
+
+func TestOaiChatToResponsesStreamHandlerFirstChunkError(t *testing.T) {
+	oldMode, oldTimeout := gin.Mode(), constant.StreamingTimeout
+	gin.SetMode(gin.TestMode)
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		gin.SetMode(oldMode)
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	body := `data: {"error":{"message":"boom","type":"server_error"}}` + "\n\n"
+	for _, mode := range probeModes {
+		t.Run(mode.name, func(t *testing.T) {
+			c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			if mode.probe != nil {
+				helper.SetFailoverProbe(c, mode.probe)
+			}
+
+			_, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+
+			if mode.name == "probe true" {
+				assert.Empty(t, recorder.Body.String())
+				assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+				require.NotNil(t, apiErr)
+				assert.False(t, types.IsSkipRetryError(apiErr))
+				return
+			}
+			assert.Contains(t, recorder.Body.String(), "event: response.failed")
+			assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+			require.NotNil(t, apiErr)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+		})
 	}
 }

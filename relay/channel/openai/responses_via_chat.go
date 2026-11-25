@@ -82,9 +82,9 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	streamErr := (*types.NewAPIError)(nil)
 	// upstreamFailure is the upstream or conversion failure the client was
-	// told about with response.failed.
+	// told about with response.failed. A failure before any content is held
+	// back from the client, so it stays retryable.
 	var upstreamFailure *types.NewAPIError
-
 	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
 		data, err := common.Marshal(event.Payload)
 		if err != nil {
@@ -122,6 +122,24 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return true
 	}
 
+	// failResponses 先把要返回的错误交给扣留层（探针看到的就是它），再发 response.failed。
+	failResponses := func(failure *types.NewAPIError) bool {
+		helper.RecordStreamFailure(c, failure)
+		if !failResponsesStream(failure) {
+			if helper.PreContentFailure(c) != nil {
+				streamErr = failure
+			}
+			return false
+		}
+		if helper.PreContentFailure(c) == nil {
+			types.ErrOptionWithSkipRetry()(failure)
+		}
+		upstreamFailure = failure
+		return true
+	}
+
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if streamErr != nil {
 			stopStream(sr, streamErr)
@@ -131,14 +149,15 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-				if failResponsesStream(fmt.Errorf("%s", oaiError.Message)) {
-					// The client got response.failed, so the request is never
+				if failResponses(types.WithOpenAIError(*oaiError, http.StatusInternalServerError)) {
+					// Once content reached the client the request is never
 					// retried; the recorded error keeps the stream failed.
-					upstreamFailure = types.WithOpenAIError(*oaiError, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 					sr.Stop(upstreamFailure)
 					return
 				}
-				streamErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+				if streamErr == nil {
+					streamErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+				}
 				stopStream(sr, streamErr)
 				return
 			}
@@ -147,12 +166,13 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var chunk dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
 			logger.LogError(c, common.LogText("failed to unmarshal chat stream response: %s", err.Error()))
-			if failResponsesStream(err) {
-				upstreamFailure = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+			if failResponses(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)) {
 				sr.Stop(upstreamFailure)
 				return
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			if streamErr == nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			}
 			stopStream(sr, streamErr)
 			return
 		}
@@ -160,12 +180,13 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		info.ObserveResponseModel(chunk.Model)
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &chunk)
 		if err != nil {
-			if failResponsesStream(err) {
-				upstreamFailure = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+			if failResponses(types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)) {
 				sr.Stop(upstreamFailure)
 				return
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			if streamErr == nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			}
 			stopStream(sr, streamErr)
 			return
 		}

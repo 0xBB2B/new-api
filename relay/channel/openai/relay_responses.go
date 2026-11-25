@@ -80,6 +80,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	accumulator := service.NewResponsesUsageAccumulator(info)
 
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
@@ -93,8 +95,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
 		service.LogResponsesStreamFailure(c, info, &streamResponse)
+		err := helper.ResponseChunkData(c, streamResponse, data)
+		if helper.PreContentFailure(c) != nil {
+			service.ObserveResponsesOutcome(info, &streamResponse)
+			return
+		}
 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
-		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
+		if err != nil {
 			sr.Stop(err)
 			return
 		}
@@ -106,6 +113,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
 	info.StreamStatus.RequireTerminal()
+	if failure := helper.FinishStreamHold(c, false); failure != nil {
+		return nil, failure
+	}
 	return accumulator.Finish(), nil
 }
 

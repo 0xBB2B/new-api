@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -218,31 +219,253 @@ func MarkOutputSent(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyStreamOutputSent, true)
 }
 
+const (
+	streamHoldKey    = "stream_hold"
+	failoverProbeKey = "stream_failover_probe"
+)
+
+type chunkKind int
+
+const (
+	chunkBody chunkKind = iota
+	chunkOpening
+	chunkFailure
+	chunkTerminal
+)
+
+// streamHold 扣住正文开始前的开场事件，让正文前失败的尝试对客户端无痕，可以换渠道重试。
+type streamHold struct {
+	queue     []func() error
+	bodyBegun bool
+	failure   *types.NewAPIError
+}
+
+func streamHoldOf(c *gin.Context) *streamHold {
+	value, _ := c.Get(streamHoldKey)
+	hold, _ := value.(*streamHold)
+	return hold
+}
+
+func (h *streamHold) flush() error {
+	queue := h.queue
+	h.queue = nil
+	for _, write := range queue {
+		if err := write(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// fail 处理正文前的失败：探针确认会换渠道则丢弃扣住的事件并记下失败，否则补发扣住的事件并结束扣留。
+func (h *streamHold) fail(c *gin.Context, failure *types.NewAPIError) (bool, error) {
+	if value, _ := c.Get(failoverProbeKey); value != nil {
+		if probe, ok := value.(func(*types.NewAPIError) bool); ok && probe(failure) {
+			h.queue = nil
+			h.failure = failure
+			return true, nil
+		}
+	}
+	h.bodyBegun = true
+	return false, h.flush()
+}
+
+func StartStreamHold(c *gin.Context) {
+	c.Set(streamHoldKey, &streamHold{})
+}
+
+func ResetStreamHold(c *gin.Context) {
+	c.Set(streamHoldKey, nil)
+}
+
+func SetFailoverProbe(c *gin.Context, probe func(*types.NewAPIError) bool) {
+	c.Set(failoverProbeKey, probe)
+}
+
+func PreContentFailure(c *gin.Context) *types.NewAPIError {
+	if hold := streamHoldOf(c); hold != nil {
+		return hold.failure
+	}
+	return nil
+}
+
+// RecordStreamFailure 记录不经过写出函数的正文前失败（如 Claude 原生流的 error 事件）。
+func RecordStreamFailure(c *gin.Context, failure *types.NewAPIError) {
+	if hold := streamHoldOf(c); hold != nil && !hold.bodyBegun && hold.failure == nil {
+		_, _ = hold.fail(c, failure)
+	}
+}
+
+// FinishStreamHold 在流结束时调用。ended 表示上游已发出不经过写出函数的终止标记（如 Chat 的 [DONE]）。
+func FinishStreamHold(c *gin.Context, ended bool) *types.NewAPIError {
+	hold := streamHoldOf(c)
+	if hold == nil || hold.bodyBegun || requestContextDone(c) || common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent) {
+		return nil
+	}
+	if hold.failure != nil {
+		return hold.failure
+	}
+	if !ended {
+		failure := types.NewOpenAIError(errors.New("upstream stream ended before any content"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+		if failover, _ := hold.fail(c, failure); failover {
+			return failure
+		}
+		return nil
+	}
+	hold.bodyBegun = true
+	_ = hold.flush()
+	return nil
+}
+
+func emit(c *gin.Context, classify func() chunkKind, failure func() *types.NewAPIError, write func() error) error {
+	hold := streamHoldOf(c)
+	if hold == nil || hold.bodyBegun {
+		return write()
+	}
+	if hold.failure != nil {
+		return nil
+	}
+	switch classify() {
+	case chunkOpening:
+		hold.queue = append(hold.queue, write)
+		return nil
+	case chunkFailure:
+		failover, err := hold.fail(c, failure())
+		if failover || err != nil {
+			return err
+		}
+		return write()
+	}
+	hold.bodyBegun = true
+	if err := hold.flush(); err != nil {
+		return err
+	}
+	return write()
+}
+
+func upstreamStatus(code any) int {
+	if status, err := strconv.Atoi(fmt.Sprint(code)); err == nil && status >= http.StatusBadRequest && status < 600 {
+		return status
+	}
+	return http.StatusInternalServerError
+}
+
+func claudeChunkKind(eventType string) chunkKind {
+	switch eventType {
+	case "message_start", "ping":
+		return chunkOpening
+	case "error":
+		return chunkFailure
+	case "message_stop":
+		return chunkTerminal
+	}
+	return chunkBody
+}
+
+func claudeStreamFailure(claudeError *types.ClaudeError) *types.NewAPIError {
+	if claudeError == nil {
+		claudeError = &types.ClaudeError{}
+	}
+	return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+}
+
+func responsesChunkKind(resp *dto.ResponsesStreamResponse) chunkKind {
+	if service.IsResponsesFailureEvent(resp) {
+		return chunkFailure
+	}
+	switch resp.Type {
+	case "response.created", "response.in_progress", "response.queued":
+		return chunkOpening
+	case "response.completed", "response.done", "response.incomplete":
+		return chunkTerminal
+	}
+	return chunkBody
+}
+
+func responsesStreamFailure(resp *dto.ResponsesStreamResponse) *types.NewAPIError {
+	if resp.Response != nil {
+		if oaiErr := resp.Response.GetOpenAIError(); oaiErr != nil {
+			return types.WithOpenAIError(*oaiErr, upstreamStatus(oaiErr.Code))
+		}
+	}
+	if resp.Message != "" {
+		return types.WithOpenAIError(types.OpenAIError{Message: resp.Message, Code: resp.Code}, upstreamStatus(resp.Code))
+	}
+	return types.NewOpenAIError(fmt.Errorf("responses stream error: %s", resp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+}
+
+func chatChunkKind(str string) chunkKind {
+	if str == "[DONE]" {
+		return chunkTerminal
+	}
+	if ojson.Get(str, "error.type").String() != "" || ojson.Get(str, "error.message").String() != "" {
+		return chunkFailure
+	}
+	var chunk dto.ChatCompletionsStreamResponse
+	if err := common.UnmarshalJsonStr(str, &chunk); err != nil || chunk.Usage != nil {
+		return chunkBody
+	}
+	if len(chunk.Choices) > 0 && !ojson.Get(str, "choices.0.delta").Exists() {
+		return chunkBody
+	}
+	for _, choice := range chunk.Choices {
+		if choice.Delta.GetContentString() != "" || choice.Delta.GetReasoningContent() != "" || len(choice.Delta.ToolCalls) > 0 ||
+			(choice.FinishReason != nil && *choice.FinishReason != "") {
+			return chunkBody
+		}
+	}
+	return chunkOpening
+}
+
+func chatChunkFailure(str string) *types.NewAPIError {
+	var chunk struct {
+		Error types.OpenAIError `json:"error"`
+	}
+	_ = common.UnmarshalJsonStr(str, &chunk)
+	return types.WithOpenAIError(chunk.Error, upstreamStatus(chunk.Error.Code))
+}
+
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	if requestContextDone(c) {
 		return nil
 	}
-	MarkOutputSent(c)
+	return emit(c,
+		func() chunkKind { return claudeChunkKind(resp.Type) },
+		func() *types.NewAPIError { return claudeStreamFailure(resp.GetClaudeError()) },
+		func() error {
+			MarkOutputSent(c)
 
-	jsonData, err := common.Marshal(resp)
-	if err != nil {
-		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
-	} else {
-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
-	}
-	_ = FlushWriter(c)
-	return nil
+			jsonData, err := common.Marshal(resp)
+			if err != nil {
+				common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
+			} else {
+				c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+				c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+			}
+			_ = FlushWriter(c)
+			return nil
+		})
 }
 
 const claudeSignatureBufferKey = "claude_signature_buffer"
 
 func writeClaudeEvent(c *gin.Context, eventType string, data string) {
-	MarkOutputSent(c)
-	data = string(service.TagClaudeThinkingEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventType)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
-	_ = FlushWriter(c)
+	_ = emit(c,
+		func() chunkKind { return claudeChunkKind(eventType) },
+		func() *types.NewAPIError {
+			return claudeStreamFailure(&types.ClaudeError{
+				Type:    ojson.Get(data, "error.type").String(),
+				Message: ojson.Get(data, "error.message").String(),
+			})
+		},
+		func() error {
+			MarkOutputSent(c)
+			tagged := string(service.TagClaudeThinkingEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
+			c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventType)})
+			c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", tagged)})
+			_ = FlushWriter(c)
+			return nil
+		})
 }
 
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
@@ -285,17 +508,28 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	MarkOutputSent(c)
-	event := common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)}
-	if err := event.Render(c.Writer); err != nil {
-		return err
-	}
-	data = string(service.TagResponsesItemEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
-	event.Data = fmt.Sprintf("data: %s", data)
-	if err := event.Render(c.Writer); err != nil {
-		return err
-	}
-	return FlushWriter(c)
+	return emit(c,
+		func() chunkKind { return responsesChunkKind(&resp) },
+		func() *types.NewAPIError {
+			full := resp
+			if resp.Response == nil {
+				_ = common.UnmarshalJsonStr(data, &full)
+			}
+			return responsesStreamFailure(&full)
+		},
+		func() error {
+			MarkOutputSent(c)
+			event := common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)}
+			if err := event.Render(c.Writer); err != nil {
+				return err
+			}
+			tagged := string(service.TagResponsesItemEvent([]byte(data), common.GetContextKeyInt(c, constant.ContextKeyChannelId)))
+			event.Data = fmt.Sprintf("data: %s", tagged)
+			if err := event.Render(c.Writer); err != nil {
+				return err
+			}
+			return FlushWriter(c)
+		})
 }
 
 func StringData(c *gin.Context, str string) error {
@@ -307,9 +541,14 @@ func StringData(c *gin.Context, str string) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	MarkOutputSent(c)
-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
-	return FlushWriter(c)
+	return emit(c,
+		func() chunkKind { return chatChunkKind(str) },
+		func() *types.NewAPIError { return chatChunkFailure(str) },
+		func() error {
+			MarkOutputSent(c)
+			c.Render(-1, common.CustomEvent{Data: "data: " + str})
+			return FlushWriter(c)
+		})
 }
 
 func PingData(c *gin.Context) error {
