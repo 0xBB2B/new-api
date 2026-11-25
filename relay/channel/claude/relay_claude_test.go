@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -804,6 +805,7 @@ type claudeStreamRun struct {
 	sent   bool
 	ctx    *gin.Context
 	w      *httptest.ResponseRecorder
+	info   *relaycommon.RelayInfo
 }
 
 func runClaudeStream(t *testing.T, handler func(*gin.Context, *http.Response, *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError), format types.RelayFormat, events []string, probe func(*types.NewAPIError) bool) claudeStreamRun {
@@ -830,7 +832,7 @@ func runClaudeStream(t *testing.T, handler func(*gin.Context, *http.Response, *r
 	info.SetEstimatePromptTokens(10)
 	resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(upstream.String())), Header: http.Header{"Content-Type": {"text/event-stream"}}}
 	_, apiErr := handler(c, resp, info)
-	return claudeStreamRun{body: w.Body.String(), apiErr: apiErr, sent: common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent), ctx: c, w: w}
+	return claudeStreamRun{body: w.Body.String(), apiErr: apiErr, sent: common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent), ctx: c, w: w, info: info}
 }
 
 var claudeProbeModes = []struct {
@@ -926,6 +928,38 @@ func TestClaudeResponsesStreamHandlerPreBodyFailure(t *testing.T) {
 			assert.Contains(t, run.body, "event: response.created")
 			assert.Contains(t, run.body, "event: response.failed")
 			assert.Contains(t, run.body, "busy")
+		})
+	}
+}
+
+func TestClaudeResponsesStreamHandlerFailureAfterBodyDoesNotPanic(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []string
+	}{
+		{"error event after body", []string{claudeStart, claudeDelta, claudeFail}},
+		{"unparsable line after body", []string{claudeStart, claudeDelta, "{not json"}},
+		{"hosted tool conversion error after body", []string{claudeStart, claudeDelta, `{"type":"content_block_start","index":1,"content_block":{"type":"mcp_tool_use","id":"t1"}}`}},
+		{"ordinary conversion error after body", []string{claudeStart, claudeDelta, `{"type":"content_block_start","content_block":{"type":"text","text":""}}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			common.LogWriterMu.Lock()
+			prevErr, prevOut := gin.DefaultErrorWriter, gin.DefaultWriter
+			gin.DefaultErrorWriter, gin.DefaultWriter = &logs, &logs
+			common.LogWriterMu.Unlock()
+			t.Cleanup(func() {
+				common.LogWriterMu.Lock()
+				gin.DefaultErrorWriter, gin.DefaultWriter = prevErr, prevOut
+				common.LogWriterMu.Unlock()
+			})
+
+			run := runClaudeStream(t, ClaudeResponsesStreamHandler, types.RelayFormatOpenAIResponses, tc.events, nil)
+
+			assert.Contains(t, run.body, "event: response.failed")
+			assert.NotContains(t, strings.ToLower(logs.String()), "panic")
+			require.NotNil(t, run.info.StreamStatus)
+			assert.True(t, run.info.StreamStatus.HasErrors(), "the failure must be recorded so the consume log marks the stream as error")
 		})
 	}
 }

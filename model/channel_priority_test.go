@@ -336,6 +336,21 @@ func TestSubscriptionChannelOrdering(t *testing.T) {
 	}
 }
 
+func TestInitChannelCacheToleratesGroupWithoutAbilities(t *testing.T) {
+	f := newSubscriptionFixture(t, "sqlite", false)
+	channel := Channel{Name: "orphan-group", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Group: "default,orphan", Models: "m1"}
+	require.NoError(t, f.db.Create(&channel).Error)
+	require.NoError(t, f.db.Create(&Ability{Group: "default", Model: "m1", ChannelId: channel.Id, Enabled: true}).Error)
+
+	common.MemoryCacheEnabled = true
+	require.NotPanics(t, InitChannelCache)
+
+	got, err := GetRandomSatisfiedChannel("default", "m1", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, channel.Id, got.Id)
+}
+
 func TestGetUntriedSatisfiedChannelNormalizedModelAndFilters(t *testing.T) {
 	openAIOnly := []dto.ChannelFilter{{
 		Kind: dto.FilterTaskPluginIdentity, TaskPluginKey: "any", TaskPluginChannelTypes: []int{constant.ChannelTypeOpenAI},

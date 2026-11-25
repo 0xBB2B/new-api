@@ -66,6 +66,9 @@ func InitChannelCache() {
 		groups := strings.SplitSeq(channel.Group, ",")
 		for group := range groups {
 			models := channel.GetModels()
+			if newGroup2model2channels[group] == nil {
+				newGroup2model2channels[group] = make(map[string][]int)
+			}
 			for _, model := range models {
 				if _, ok := newGroup2model2channels[group][model]; !ok {
 					newGroup2model2channels[group][model] = make([]int, 0)
