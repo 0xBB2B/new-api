@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -120,6 +121,90 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
+func splitChannelTiers[T any](items []T, key func(T) (subscription bool, priority int64)) [][]T {
+	sorted := slices.Clone(items)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		subI, priI := key(sorted[i])
+		subJ, priJ := key(sorted[j])
+		if subI != subJ {
+			return subI
+		}
+		return priI > priJ
+	})
+	var tiers [][]T
+	var lastSub bool
+	var lastPri int64
+	for i, item := range sorted {
+		sub, pri := key(item)
+		if i == 0 || sub != lastSub || pri != lastPri {
+			tiers = append(tiers, nil)
+			lastSub, lastPri = sub, pri
+		}
+		tiers[len(tiers)-1] = append(tiers[len(tiers)-1], item)
+	}
+	return tiers
+}
+
+// cachedChannelTiers 调用方须持有 channelSyncLock 读锁。
+func cachedChannelTiers(group, model string, filters []dto.ChannelFilter) ([][]*Channel, error) {
+	// First, try to find channels with the exact model name.
+	ids, _ := filterCandidateIDs(group2model2channels[group][model], model, filters)
+
+	// If no channels found, try to find channels with the normalized model name.
+	if len(ids) == 0 {
+		normalizedModel := ratio_setting.RoutingMatchModelName(model)
+		ids, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
+	}
+
+	channels := make([]*Channel, 0, len(ids))
+	for _, id := range ids {
+		channel, ok := channelsIDM[id]
+		if !ok {
+			return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", id)
+		}
+		channels = append(channels, channel)
+	}
+	return splitChannelTiers(channels, func(channel *Channel) (bool, int64) {
+		return IsSubscriptionChannelType(channel.Type), channel.GetPriority()
+	}), nil
+}
+
+func pickWeightedChannel(channels []*Channel) (*Channel, error) {
+	sumWeight := 0
+	for _, channel := range channels {
+		sumWeight += channel.GetWeight()
+	}
+
+	// smoothing factor and adjustment
+	smoothingFactor := 1
+	smoothingAdjustment := 0
+
+	if sumWeight == 0 {
+		// when all channels have weight 0, set sumWeight to the number of channels and set smoothing adjustment to 100
+		// each channel's effective weight = 100
+		sumWeight = len(channels) * 100
+		smoothingAdjustment = 100
+	} else if sumWeight/len(channels) < 10 {
+		// when the average weight is less than 10, set smoothing factor to 100
+		smoothingFactor = 100
+	}
+
+	// Calculate the total weight of all channels up to endIdx
+	totalWeight := sumWeight * smoothingFactor
+
+	// Generate a random value in the range [0, totalWeight)
+	randomWeight := rand.Intn(totalWeight)
+
+	// Find a channel based on its weight
+	for _, channel := range channels {
+		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+		if randomWeight < 0 {
+			return channel, nil
+		}
+	}
+	return nil, errors.New("channel not found")
+}
+
 func GetRandomSatisfiedChannel(
 	group string,
 	model string,
@@ -134,92 +219,41 @@ func GetRandomSatisfiedChannel(
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
-	// First, try to find channels with the exact model name.
-	channels, _ := filterCandidateIDs(group2model2channels[group][model], model, filters)
-
-	// If no channels found, try to find channels with the normalized model name.
-	if len(channels) == 0 {
-		normalizedModel := ratio_setting.RoutingMatchModelName(model)
-		channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
+	tiers, err := cachedChannelTiers(group, model, filters)
+	if err != nil {
+		return nil, err
 	}
-
-	if len(channels) == 0 {
+	if len(tiers) == 0 {
 		return nil, nil
 	}
+	return pickWeightedChannel(tiers[min(retry, len(tiers)-1)])
+}
 
-	if len(channels) == 1 {
-		if channel, ok := channelsIDM[channels[0]]; ok {
-			return channel, nil
-		}
-		return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channels[0])
+// GetUntriedSatisfiedChannel 按档顺序在第一个还有未试渠道的档里按权重选一个；全部试完返回 nil, nil。
+func GetUntriedSatisfiedChannel(
+	group string,
+	model string,
+	filters []dto.ChannelFilter,
+	tried func(channelID int) bool,
+) (*Channel, error) {
+	if !common.MemoryCacheEnabled {
+		return GetUntriedChannel(group, model, filters, tried)
 	}
 
-	uniquePriorities := make(map[int]bool)
-	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			uniquePriorities[int(channel.GetPriority())] = true
-		} else {
-			return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channelId)
-		}
-	}
-	var sortedUniquePriorities []int
-	for priority := range uniquePriorities {
-		sortedUniquePriorities = append(sortedUniquePriorities, priority)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sortedUniquePriorities)))
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
 
-	if retry >= len(uniquePriorities) {
-		retry = len(uniquePriorities) - 1
+	tiers, err := cachedChannelTiers(group, model, filters)
+	if err != nil {
+		return nil, err
 	}
-	targetPriority := int64(sortedUniquePriorities[retry])
-
-	// get the priority for the given retry number
-	var sumWeight = 0
-	var targetChannels []*Channel
-	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
-				targetChannels = append(targetChannels, channel)
-			}
-		} else {
-			return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channelId)
+	for _, tier := range tiers {
+		untried := slices.DeleteFunc(slices.Clone(tier), func(channel *Channel) bool { return tried(channel.Id) })
+		if len(untried) > 0 {
+			return pickWeightedChannel(untried)
 		}
 	}
-
-	if len(targetChannels) == 0 {
-		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
-	}
-
-	// smoothing factor and adjustment
-	smoothingFactor := 1
-	smoothingAdjustment := 0
-
-	if sumWeight == 0 {
-		// when all channels have weight 0, set sumWeight to the number of channels and set smoothing adjustment to 100
-		// each channel's effective weight = 100
-		sumWeight = len(targetChannels) * 100
-		smoothingAdjustment = 100
-	} else if sumWeight/len(targetChannels) < 10 {
-		// when the average weight is less than 10, set smoothing factor to 100
-		smoothingFactor = 100
-	}
-
-	// Calculate the total weight of all channels up to endIdx
-	totalWeight := sumWeight * smoothingFactor
-
-	// Generate a random value in the range [0, totalWeight)
-	randomWeight := rand.Intn(totalWeight)
-
-	// Find a channel based on its weight
-	for _, channel := range targetChannels {
-		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
-		if randomWeight < 0 {
-			return channel, nil
-		}
-	}
-	// return null if no channel is not found
-	return nil, errors.New("channel not found")
+	return nil, nil
 }
 
 func CacheGetChannel(id int) (*Channel, error) {

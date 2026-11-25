@@ -2,11 +2,16 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -206,4 +211,283 @@ func TestChannelPriorityDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, nullable.Items, restored.Items)
 		})
 	}
+}
+
+type subscriptionFixture struct {
+	db                *gorm.DB
+	group, model      string
+	a, b, c, d, s     int
+	multiKeyChannelID int
+}
+
+func newSubscriptionFixture(t *testing.T, dialect string, cacheOn bool) *subscriptionFixture {
+	t.Helper()
+	var driver gorm.Dialector
+	switch dialect {
+	case "sqlite":
+		driver = sqlite.Open(":memory:")
+	case "mysql":
+		dsn := os.Getenv("TEST_MYSQL_DSN")
+		if dsn == "" {
+			t.Skip("TEST_MYSQL_DSN not configured")
+		}
+		driver = mysql.Open(dsn)
+	case "postgres":
+		dsn := os.Getenv("TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("TEST_POSTGRES_DSN not configured")
+		}
+		driver = postgres.Open(dsn)
+	}
+	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "subscription_test_"}})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previousDB, previousType, previousCache := DB, common.MainDatabaseType(), common.MemoryCacheEnabled
+	DB = db
+	common.SetMainDatabaseType(common.DatabaseType(dialect))
+	initCol()
+	t.Cleanup(func() {
+		require.NoError(t, db.Migrator().DropTable(&Ability{}, &Channel{}))
+		DB = previousDB
+		common.SetMainDatabaseType(previousType)
+		common.MemoryCacheEnabled = previousCache
+		initCol()
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}))
+
+	f := &subscriptionFixture{db: db, group: "g", model: "m"}
+	weight := uint(10)
+	add := func(name string, channelType int, priority int64) int {
+		channel := Channel{Name: name, Type: channelType, Priority: &priority, Weight: &weight, Status: common.ChannelStatusEnabled, Group: f.group, Models: f.model}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, db.Create(&Ability{Group: f.group, Model: f.model, ChannelId: channel.Id, Priority: &priority, Weight: weight, Enabled: true}).Error)
+		return channel.Id
+	}
+	f.a = add("claude-sub", constant.ChannelTypeClaudeSubscription, 0)
+	f.b = add("codex-sub", constant.ChannelTypeCodex, 0)
+	f.c = add("openai-c", constant.ChannelTypeOpenAI, 10)
+	f.d = add("openai-d", constant.ChannelTypeOpenAI, 5)
+	f.s = add("sub2api", constant.ChannelTypeSub2API, 20)
+
+	multiKey := Channel{
+		Name: "multi", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Group: "multi", Models: "multi",
+		Key: "k0\nk1\nk2", Weight: &weight,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModePolling, MultiKeyPollingIndex: 1,
+			MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	require.NoError(t, db.Create(&multiKey).Error)
+	require.NoError(t, db.Create(&Ability{Group: "multi", Model: "multi", ChannelId: multiKey.Id, Weight: weight, Enabled: true}).Error)
+	f.multiKeyChannelID = multiKey.Id
+
+	common.MemoryCacheEnabled = cacheOn
+	InitChannelCache()
+	return f
+}
+
+func TestSubscriptionChannelOrdering(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, cacheOn := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/cache=%v", dialect, cacheOn), func(t *testing.T) {
+				f := newSubscriptionFixture(t, dialect, cacheOn)
+
+				for retry, want := range map[int][]int{
+					0: {f.a, f.b},
+					1: {f.s},
+					2: {f.c},
+					3: {f.d},
+					9: {f.d},
+				} {
+					got, err := GetRandomSatisfiedChannel(f.group, f.model, retry, nil)
+					require.NoError(t, err)
+					require.NotNil(t, got, "retry %d", retry)
+					assert.Contains(t, want, got.Id, "retry %d", retry)
+				}
+
+				tried := map[int]bool{}
+				isTried := func(id int) bool { return tried[id] }
+				for _, step := range []struct {
+					mark []int
+					want []int
+				}{
+					{nil, []int{f.a, f.b}},
+					{[]int{f.a, f.b}, []int{f.s}},
+					{[]int{f.s, f.c}, []int{f.d}},
+					{[]int{f.d}, nil},
+				} {
+					for _, id := range step.mark {
+						tried[id] = true
+					}
+					got, err := GetUntriedSatisfiedChannel(f.group, f.model, nil, isTried)
+					require.NoError(t, err)
+					if step.want == nil {
+						assert.Nil(t, got)
+						continue
+					}
+					require.NotNil(t, got)
+					assert.Contains(t, step.want, got.Id)
+				}
+			})
+		}
+	}
+}
+
+func TestGetUntriedSatisfiedChannelNormalizedModelAndFilters(t *testing.T) {
+	openAIOnly := []dto.ChannelFilter{{
+		Kind: dto.FilterTaskPluginIdentity, TaskPluginKey: "any", TaskPluginChannelTypes: []int{constant.ChannelTypeOpenAI},
+	}}
+	for _, cacheOn := range []bool{false, true} {
+		for _, tc := range []struct {
+			name    string
+			model   string
+			filters []dto.ChannelFilter
+			want    func(f *subscriptionFixture) []int
+		}{
+			{"exact model without filters", "m", nil, func(f *subscriptionFixture) []int { return []int{f.a, f.b} }},
+			{"normalized fallback without filters", "m@effort:high", nil, func(f *subscriptionFixture) []int { return []int{f.a, f.b} }},
+			{"exact model with excluding filter", "m", openAIOnly, func(f *subscriptionFixture) []int { return []int{f.c} }},
+			{"normalized fallback with excluding filter", "m@effort:high", openAIOnly, func(f *subscriptionFixture) []int { return []int{f.c} }},
+		} {
+			t.Run(fmt.Sprintf("cache=%v/%s", cacheOn, tc.name), func(t *testing.T) {
+				f := newSubscriptionFixture(t, "sqlite", cacheOn)
+				want := tc.want(f)
+				for range 30 {
+					got, err := GetUntriedSatisfiedChannel(f.group, tc.model, tc.filters, func(int) bool { return false })
+					require.NoError(t, err)
+					require.NotNil(t, got)
+					assert.Contains(t, want, got.Id)
+				}
+			})
+		}
+	}
+}
+
+func TestPriorityWithoutSubscriptionChannelsKeepsOrder(t *testing.T) {
+	for _, cacheOn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache=%v", cacheOn), func(t *testing.T) {
+			f := newSubscriptionFixture(t, "sqlite", cacheOn)
+			require.NoError(t, f.db.Where("id IN ?", []int{f.a, f.b}).Delete(&Channel{}).Error)
+			require.NoError(t, f.db.Where("channel_id IN ?", []int{f.a, f.b}).Delete(&Ability{}).Error)
+			InitChannelCache()
+
+			for retry, want := range []int{f.s, f.c, f.d} {
+				got, err := GetRandomSatisfiedChannel(f.group, f.model, retry, nil)
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, want, got.Id, "retry %d", retry)
+			}
+		})
+	}
+}
+
+func TestIsSubscriptionChannelType(t *testing.T) {
+	assert.True(t, IsSubscriptionChannelType(constant.ChannelTypeCodex))
+	assert.True(t, IsSubscriptionChannelType(constant.ChannelTypeClaudeSubscription))
+	assert.False(t, IsSubscriptionChannelType(constant.ChannelTypeSub2API))
+	assert.False(t, IsSubscriptionChannelType(constant.ChannelTypeOpenAI))
+}
+
+func TestEnabledKeyIndexes(t *testing.T) {
+	multi := &Channel{
+		Key: "k0\nk1\nk2",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey: true, MultiKeySize: 3,
+			MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	assert.Equal(t, []int{0, 2}, multi.EnabledKeyIndexes())
+	assert.Equal(t, []int{0}, (&Channel{Key: "single"}).EnabledKeyIndexes())
+}
+
+func TestGetNextUntriedEnabledKey(t *testing.T) {
+	multiKeyChannel := func(mode constant.MultiKeyMode) *Channel {
+		return &Channel{
+			Id:  987001,
+			Key: "k0\nk1\nk2",
+			ChannelInfo: ChannelInfo{
+				IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: mode,
+				MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled},
+			},
+		}
+	}
+	requireExhausted := func(t *testing.T, apiErr *types.NewAPIError) {
+		t.Helper()
+		require.NotNil(t, apiErr)
+		assert.NotEqual(t, types.ErrorCodeChannelNoAvailableKey, apiErr.GetErrorCode())
+		assert.False(t, strings.HasPrefix(string(apiErr.GetErrorCode()), "channel:"))
+	}
+
+	t.Run("random skips tried and disabled", func(t *testing.T) {
+		channel := multiKeyChannel(constant.MultiKeyModeRandom)
+		key, index, apiErr := channel.GetNextUntriedEnabledKey(map[int]bool{0: true})
+		require.Nil(t, apiErr)
+		assert.Equal(t, 2, index)
+		assert.Equal(t, "k2", key)
+
+		_, _, apiErr = channel.GetNextUntriedEnabledKey(map[int]bool{0: true, 2: true})
+		requireExhausted(t, apiErr)
+	})
+
+	t.Run("single key", func(t *testing.T) {
+		channel := &Channel{Key: "only"}
+		key, index, apiErr := channel.GetNextUntriedEnabledKey(nil)
+		require.Nil(t, apiErr)
+		assert.Equal(t, "only", key)
+		assert.Equal(t, 0, index)
+
+		_, _, apiErr = channel.GetNextUntriedEnabledKey(map[int]bool{0: true})
+		requireExhausted(t, apiErr)
+	})
+
+	t.Run("polling advances position", func(t *testing.T) {
+		for _, cacheOn := range []bool{false, true} {
+			t.Run(fmt.Sprintf("cache=%v", cacheOn), func(t *testing.T) {
+				f := newSubscriptionFixture(t, "sqlite", cacheOn)
+				var channel Channel
+				require.NoError(t, f.db.First(&channel, f.multiKeyChannelID).Error)
+				require.Equal(t, 1, channel.ChannelInfo.MultiKeyPollingIndex)
+
+				key, index, apiErr := channel.GetNextUntriedEnabledKey(map[int]bool{0: true})
+				require.Nil(t, apiErr)
+				assert.Equal(t, 2, index)
+				assert.Equal(t, "k2", key)
+				assert.Equal(t, 0, channel.ChannelInfo.MultiKeyPollingIndex)
+
+				_, _, apiErr = channel.GetNextUntriedEnabledKey(map[int]bool{0: true, 2: true})
+				requireExhausted(t, apiErr)
+			})
+		}
+	})
+}
+
+func TestGetNextUntriedEnabledKeyPollingPersistsWithoutMemoryCache(t *testing.T) {
+	f := newSubscriptionFixture(t, "sqlite", false)
+	var channel Channel
+	require.NoError(t, f.db.First(&channel, f.multiKeyChannelID).Error)
+	require.Equal(t, 1, channel.ChannelInfo.MultiKeyPollingIndex)
+
+	_, index, apiErr := channel.GetNextUntriedEnabledKey(map[int]bool{0: true})
+	require.Nil(t, apiErr)
+	require.Equal(t, 2, index)
+
+	var reloaded Channel
+	require.NoError(t, f.db.First(&reloaded, f.multiKeyChannelID).Error)
+	assert.Equal(t, 0, reloaded.ChannelInfo.MultiKeyPollingIndex)
+}
+
+func TestGetNextEnabledKeyUnchanged(t *testing.T) {
+	channel := &Channel{
+		Key: "k0\nk1",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled, 1: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	_, _, apiErr := channel.GetNextEnabledKey()
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeChannelNoAvailableKey, apiErr.GetErrorCode())
 }

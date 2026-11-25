@@ -216,13 +216,43 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
-func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
-	// If not in multi-key mode, return the original key string directly.
+func IsSubscriptionChannelType(channelType int) bool {
+	return channelType == constant.ChannelTypeCodex || channelType == constant.ChannelTypeClaudeSubscription
+}
+
+func (channel *Channel) keyEnabled(idx int) bool {
+	status, ok := channel.ChannelInfo.MultiKeyStatusList[idx]
+	return !ok || status == common.ChannelStatusEnabled
+}
+
+// EnabledKeyIndexes 返回当前启用的密钥下标，单密钥渠道为 [0]。
+func (channel *Channel) EnabledKeyIndexes() []int {
 	if !channel.ChannelInfo.IsMultiKey {
+		return []int{0}
+	}
+	keys := channel.GetKeys()
+	indexes := make([]int, 0, len(keys))
+	for i := range keys {
+		if channel.keyEnabled(i) {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	return channel.GetNextUntriedEnabledKey(nil)
+}
+
+// GetNextUntriedEnabledKey 取一个启用且下标不在 tried 里的密钥；启用的密钥都试过时返回 ErrorCodeAllKeysTried。
+func (channel *Channel) GetNextUntriedEnabledKey(tried map[int]bool) (string, int, *types.NewAPIError) {
+	if !channel.ChannelInfo.IsMultiKey {
+		if tried[0] {
+			return "", 0, types.NewError(errors.New("all keys have been tried"), types.ErrorCodeAllKeysTried)
+		}
 		return channel.Key, 0, nil
 	}
 
-	// Obtain all keys (split by \n)
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
 		// No keys available, return error, should disable the channel
@@ -233,40 +263,28 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	statusList := channel.ChannelInfo.MultiKeyStatusList
-	// helper to get key status, default to enabled when missing
-	getStatus := func(idx int) int {
-		if statusList == nil {
-			return common.ChannelStatusEnabled
-		}
-		if status, ok := statusList[idx]; ok {
-			return status
-		}
-		return common.ChannelStatusEnabled
-	}
-
-	// Collect indexes of enabled keys
-	enabledIdx := make([]int, 0, len(keys))
-	for i := range keys {
-		if getStatus(i) == common.ChannelStatusEnabled {
-			enabledIdx = append(enabledIdx, i)
-		}
-	}
+	enabledIdx := channel.EnabledKeyIndexes()
 	// If no specific status list or none enabled, return an explicit error so caller can
 	// properly handle a channel with no available keys (e.g. mark channel disabled).
 	// Returning the first key here caused requests to keep using an already-disabled key.
 	if len(enabledIdx) == 0 {
 		return "", 0, types.NewError(errors.New("no enabled keys"), types.ErrorCodeChannelNoAvailableKey)
 	}
+	untriedIdx := make([]int, 0, len(enabledIdx))
+	for _, idx := range enabledIdx {
+		if !tried[idx] {
+			untriedIdx = append(untriedIdx, idx)
+		}
+	}
+	if len(untriedIdx) == 0 {
+		return "", 0, types.NewError(errors.New("all enabled keys have been tried"), types.ErrorCodeAllKeysTried)
+	}
 
 	switch channel.ChannelInfo.MultiKeyMode {
 	case constant.MultiKeyModeRandom:
-		// Randomly pick one enabled key
-		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
+		selectedIdx := untriedIdx[rand.Intn(len(untriedIdx))]
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
-		// Use channel-specific lock to ensure thread-safe polling
-
 		channelInfo, err := CacheGetChannelInfo(channel.Id)
 		if err != nil {
 			return "", 0, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -281,24 +299,23 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 				// CacheUpdateChannel(channel)
 			}
 		}()
-		// Start from the saved polling index and look for the next enabled key
+		// Start from the saved polling index and look for the next untried enabled key
 		start := channelInfo.MultiKeyPollingIndex
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
 		for i := range keys {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
+			if slices.Contains(untriedIdx, idx) {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
 			}
 		}
-		// Fallback – should not happen, but return first enabled key
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		return keys[untriedIdx[0]], untriedIdx[0], nil
 	default:
-		// Unknown mode, default to first enabled key (or original key string)
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		// Unknown mode, default to first untried enabled key
+		return keys[untriedIdx[0]], untriedIdx[0], nil
 	}
 }
 
