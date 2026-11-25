@@ -234,21 +234,21 @@ func GetUntriedSatisfiedChannel(
 	group string,
 	model string,
 	filters []dto.ChannelFilter,
-	tried func(channelID int) bool,
+	tried func(*Channel) bool,
 ) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetUntriedChannel(group, model, filters, tried)
 	}
 
 	channelSyncLock.RLock()
-	defer channelSyncLock.RUnlock()
-
 	tiers, err := cachedChannelTiers(group, model, filters)
+	channelSyncLock.RUnlock()
 	if err != nil {
 		return nil, err
 	}
+	// tried 要拿渠道的密钥锁，必须在释放 channelSyncLock 之后调用，避免锁顺序反转和递归读锁。
 	for _, tier := range tiers {
-		untried := slices.DeleteFunc(slices.Clone(tier), func(channel *Channel) bool { return tried(channel.Id) })
+		untried := slices.DeleteFunc(slices.Clone(tier), tried)
 		if len(untried) > 0 {
 			return pickWeightedChannel(untried)
 		}

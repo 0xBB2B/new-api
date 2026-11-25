@@ -191,7 +191,7 @@ func GetUntriedChannel(
 	group string,
 	model string,
 	filters []dto.ChannelFilter,
-	tried func(channelID int) bool,
+	tried func(*Channel) bool,
 ) (*Channel, error) {
 	abilities, err := queryEnabledAbilities(group, model, filters)
 	if err != nil {
@@ -207,7 +207,7 @@ func GetUntriedChannel(
 	for _, tier := range tiers {
 		var untried []*Channel
 		for _, ability := range tier {
-			if channel, ok := channelsByID[ability.ChannelId]; ok && !tried(channel.Id) {
+			if channel, ok := channelsByID[ability.ChannelId]; ok && !tried(channel) {
 				untried = append(untried, channel)
 			}
 		}

@@ -309,7 +309,7 @@ func TestSubscriptionChannelOrdering(t *testing.T) {
 				}
 
 				tried := map[int]bool{}
-				isTried := func(id int) bool { return tried[id] }
+				isTried := func(channel *Channel) bool { return tried[channel.Id] }
 				for _, step := range []struct {
 					mark []int
 					want []int
@@ -356,7 +356,7 @@ func TestGetUntriedSatisfiedChannelNormalizedModelAndFilters(t *testing.T) {
 				f := newSubscriptionFixture(t, "sqlite", cacheOn)
 				want := tc.want(f)
 				for range 30 {
-					got, err := GetUntriedSatisfiedChannel(f.group, tc.model, tc.filters, func(int) bool { return false })
+					got, err := GetUntriedSatisfiedChannel(f.group, tc.model, tc.filters, func(*Channel) bool { return false })
 					require.NoError(t, err)
 					require.NotNil(t, got)
 					assert.Contains(t, want, got.Id)
@@ -490,4 +490,19 @@ func TestGetNextEnabledKeyUnchanged(t *testing.T) {
 	_, _, apiErr := channel.GetNextEnabledKey()
 	require.NotNil(t, apiErr)
 	assert.Equal(t, types.ErrorCodeChannelNoAvailableKey, apiErr.GetErrorCode())
+}
+
+func TestGetUntriedSatisfiedChannelTriedCallbackRunsOutsideCacheLock(t *testing.T) {
+	f := newSubscriptionFixture(t, "sqlite", true)
+
+	called := 0
+	_, err := GetUntriedSatisfiedChannel(f.group, f.model, nil, func(*Channel) bool {
+		called++
+		if assert.True(t, channelSyncLock.TryLock(), "the cache read lock is still held while tried runs") {
+			channelSyncLock.Unlock()
+		}
+		return false
+	})
+	require.NoError(t, err)
+	assert.Positive(t, called)
 }
