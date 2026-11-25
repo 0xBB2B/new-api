@@ -32,6 +32,7 @@ description: 同步请求的尝试记录（已试渠道与密钥）、排除已�
 | `(*FailoverLedger) Record` | 记一次（渠道，密钥下标） |
 | `(*FailoverLedger) TriedKeys` | 返回某渠道已试的密钥下标集合 |
 | `(*FailoverLedger) ChannelExhausted` | 结合 `Channel.EnabledKeyIndexes` 判断渠道是否试完 |
+| `HasFailoverChannel` | 只看不改：按与 `PickFailoverChannel` 相同的规则判断是否还有下一个可试的渠道或密钥，不改 auto 分组下标等任何状态 |
 | `PickFailoverChannel` | 按上面的分组与 auto 分组规则选下一个渠道，返回渠道、所选分组、是否试完、错误 |
 
 ### middleware/distributor.go
@@ -51,5 +52,6 @@ description: 同步请求的尝试记录（已试渠道与密钥）、排除已�
   - 多密钥订阅渠道 F 有 3 个启用密钥：记录里已有 F 的下标 0 → `PickFailoverChannel` 仍可返回 F，经 `SetupContextForSelectedChannel` 取到的下标不是 0；F 的 3 个下标都记过 → 不再返回 F。
   - auto 分组 g1（C、订阅 A）、g2（订阅 B），已用 A：开跨组 → 依次 C、B；关跨组 → C 之后"试完了"。g1 与 g2 之间插入一个对 m 没有渠道的分组 gx → 开跨组时跳过 gx。
   - 过滤条件排除了 B → 永远不返回 B。
+  - `HasFailoverChannel` 的结果与紧接着调用 `PickFailoverChannel` 是否返回渠道一致，且调用前后 `ContextKeyAutoGroupIndex`、`ContextKeyAutoGroup` 不变。
   - context 上没有记录时（模拟异步任务）调用 `SetupContextForSelectedChannel` → 取密钥行为与改动前一致（轮询位置照旧推进）。
 - [ ] 上述用例全部通过；`go test ./service/ ./middleware/` 全绿

@@ -18,6 +18,10 @@ Responses、Claude、OpenAI Chat 三种格式的流式回复，在正文开始�
 - 失败事件：Responses 的 `error`、`response.failed`、`response.error`，或事件里 `response.status` 为 `failed`（判定口径与 `service/responses_usage.go` 的失败判定一致）；Claude 的 `error` 事件；Chat 流里带 `error` 对象（type 或 message 非空）的数据块。正文开始前遇到失败事件：不发给客户端，记成"正文前失败"（可重试的上游错误，状态码取事件里的，没有时用 500），handler 随即返回这个错误。正文开始后遇到失败事件：行为与改动前一致。
 - 终止事件：Responses 的 `response.completed`、`response.done`、`response.incomplete`；Claude 的 `message_stop`；Chat 的 `[DONE]`。正文开始前遇到终止事件：先补发扣住的事件，再发终止事件，按正常结束处理。
 - 正文开始前流结束且没有终止事件（包括一个事件都没有）：不发任何东西，handler 返回可重试的上游错误（状态码 502）。
+- **只在确定会换渠道时才扣下失败**（PRD C17）：正文开始前出现失败事件、或没有终止事件就结束时，先问 context 上的"会换渠道"探针（由重试循环设置，传入这次的错误，返回真表示现有判定可以重试、而且还有没试过的渠道或密钥）。探针返回真：按上面的规则不发、返回可重试错误。探针返回假或没有设置探针：先按原顺序补发扣住的事件，再按改动前的方式处理这个失败事件或断开（发出失败事件、handler 的返回值与改动前一致），计费与改动前一致。
+- handler 返回时（无论成功失败）清掉本次尝试的扣留状态，不能让残留状态吞掉之后的写出（例如全部失败后 `writeRelayStreamError` 写的错误事件、`[DONE]`）。
+- 正文前失败交给重试循环的错误，要保留上游给的错误内容（code、message），不能只剩事件类型。
+- 客户端要 Claude 或 Gemini 格式、上游是 Chat 流时，最后一块内容在 `HandleFinalResponse` 里才转换发出；判断"正文是否开始"必须在它发出之后，或对这条路径按实际发出的内容判断，不能把有正文的流误判成空流。
 - 心跳（`PingData`）照旧，可以在扣住期间提交响应头；之后换渠道成功的回复照常写在同一个流里，全部失败时由现有 `writeRelayStreamError` 在流里返回错误。
 - 格式转换路径也要遵守：Responses 客户端←Chat 上游（`relay/channel/openai/responses_via_chat.go`）、Responses 客户端←Claude 上游（`relay/channel/claude/relay_responses.go`）、Responses 客户端←Gemini 上游（`relay/channel/gemini/relay_responses.go`）现在会先发 `response.failed` 并带"跳过重试"标记：改为正文开始前失败时不发、返回可重试错误；正文开始后照旧。Chat 客户端←Responses 上游（`chat_via_responses.go`）已在没输出时返回错误，确认开场块被扣住后仍成立。
 - Gemini 格式的输出（直接 `c.Render` 的路径）不在本 plan 范围内。
@@ -37,6 +41,7 @@ Responses、Claude、OpenAI Chat 三种格式的流式回复，在正文开始�
 |---|---|
 | `StartStreamHold` | 在 context 上开启扣留状态（待发队列、正文是否开始、正文前失败） |
 | `ResetStreamHold` | 清空扣留状态，供 plan 03 每次重试前调用 |
+| `SetFailoverProbe` | 在 context 上设置"会换渠道"探针，供 plan 03 的重试循环调用；未设置时等同返回假 |
 | `PreContentFailure` | 返回本次尝试记下的正文前失败（没有则 nil） |
 | `FinishStreamHold` | 流结束时调用：见过终止事件则补发；正文没开始且没见过终止事件则记下可重试错误并返回 |
 | `ClaudeData` / `writeClaudeEvent` / `ResponseChunkData` / `StringData` | 修改：写出前按上面的名单分类，开场事件入队、失败事件记录、其他事件先清队列再写并置输出标记 |
@@ -55,7 +60,12 @@ Responses、Claude、OpenAI Chat 三种格式的流式回复，在正文开始�
 
 ## 验证方式
 - 测试入口：`go test ./relay/channel/openai/ ./relay/channel/claude/ ./relay/helper/`，用 `gin.CreateTestContext` + httptest 记录器（沿用 `relay_responses_billing_test.go` 的夹具，`DisablePing: true`）喂上游 SSE。
-- 测试输入与预期（每条断言客户端收到的字节、handler 返回的错误、`ContextKeyStreamOutputSent`）：
+- 测试输入与预期（每条断言客户端收到的字节、handler 返回的错误、`ContextKeyStreamOutputSent`）。下列"正文前失败 → 0 字节、返回可重试错误"的用例都在探针返回真的前提下；另加探针返回假、未设置探针两组，断言与改动前完全一致（补发开场事件 + 失败事件，返回值不变）：
+  - 探针为真、正文前失败后，同一 context 再调用写出函数（模拟 `writeRelayStreamError` 写错误块和 `[DONE]`）→ 这些字节照常发给客户端。
+  - Claude→Responses、Gemini→Responses 正文前失败（探针为真）→ 0 字节，返回的错误消息含上游原话。
+  - 客户端要 Claude 格式、上游 Chat 流只有一个"role + 正文 + finish_reason"块后 EOF（没有 `[DONE]`）→ 与改动前一致，正常返回；Gemini 格式同样。
+  - Chat 正文后出现错误块 → 与改动前逐字节一致。
+  - Chat 只带 usage、只带 finish_reason、只带 tool_calls 的块各算正文开始。
   - Responses：`response.created` → `response.failed`(code=server_error) → 客户端 0 字节，返回可重试错误，输出标记为假。
   - Responses：`response.created` → `response.output_text.delta` → `response.completed` → 客户端收到三个事件，顺序和内容与改动前一致，返回 nil。
   - Responses：`response.created` → `response.completed` → 客户端收到这两个事件，返回 nil。
