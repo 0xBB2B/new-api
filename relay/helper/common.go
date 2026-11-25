@@ -222,6 +222,8 @@ func MarkOutputSent(c *gin.Context) {
 const (
 	streamHoldKey    = "stream_hold"
 	failoverProbeKey = "stream_failover_probe"
+	// 上游只发心跳或开场事件却迟迟没有正文时，超过这个条数就放行，避免客户端长时间收不到任何字节。
+	maxHeldEvents = 64
 )
 
 type chunkKind int
@@ -329,7 +331,11 @@ func emit(c *gin.Context, classify func() chunkKind, failure func() *types.NewAP
 	switch classify() {
 	case chunkOpening:
 		hold.queue = append(hold.queue, write)
-		return nil
+		if len(hold.queue) <= maxHeldEvents {
+			return nil
+		}
+		hold.bodyBegun = true
+		return hold.flush()
 	case chunkFailure:
 		failover, err := hold.fail(c, failure())
 		if failover || err != nil {
@@ -344,9 +350,17 @@ func emit(c *gin.Context, classify func() chunkKind, failure func() *types.NewAP
 	return write()
 }
 
-func upstreamStatus(code any) int {
+// 流内错误事件常常没有数字状态码；请求本身的问题要报 400，才不会被当成上游故障换渠道重试。
+func UpstreamErrorStatus(code any, errType string) int {
 	if status, err := strconv.Atoi(fmt.Sprint(code)); err == nil && status >= http.StatusBadRequest && status < 600 {
 		return status
+	}
+	if errType == "invalid_request_error" {
+		return http.StatusBadRequest
+	}
+	switch fmt.Sprint(code) {
+	case "context_length_exceeded", "string_above_max_length", "invalid_prompt", "invalid_value", "unsupported_value":
+		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
 }
@@ -367,7 +381,7 @@ func claudeStreamFailure(claudeError *types.ClaudeError) *types.NewAPIError {
 	if claudeError == nil {
 		claudeError = &types.ClaudeError{}
 	}
-	return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+	return types.WithClaudeError(*claudeError, UpstreamErrorStatus(nil, claudeError.Type))
 }
 
 func responsesChunkKind(resp *dto.ResponsesStreamResponse) chunkKind {
@@ -386,11 +400,11 @@ func responsesChunkKind(resp *dto.ResponsesStreamResponse) chunkKind {
 func responsesStreamFailure(resp *dto.ResponsesStreamResponse) *types.NewAPIError {
 	if resp.Response != nil {
 		if oaiErr := resp.Response.GetOpenAIError(); oaiErr != nil {
-			return types.WithOpenAIError(*oaiErr, upstreamStatus(oaiErr.Code))
+			return types.WithOpenAIError(*oaiErr, UpstreamErrorStatus(oaiErr.Code, oaiErr.Type))
 		}
 	}
 	if resp.Message != "" {
-		return types.WithOpenAIError(types.OpenAIError{Message: resp.Message, Code: resp.Code}, upstreamStatus(resp.Code))
+		return types.WithOpenAIError(types.OpenAIError{Message: resp.Message, Code: resp.Code}, UpstreamErrorStatus(resp.Code, ""))
 	}
 	return types.NewOpenAIError(fmt.Errorf("responses stream error: %s", resp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 }
@@ -423,7 +437,7 @@ func chatChunkFailure(str string) *types.NewAPIError {
 		Error types.OpenAIError `json:"error"`
 	}
 	_ = common.UnmarshalJsonStr(str, &chunk)
-	return types.WithOpenAIError(chunk.Error, upstreamStatus(chunk.Error.Code))
+	return types.WithOpenAIError(chunk.Error, UpstreamErrorStatus(chunk.Error.Code, chunk.Error.Type))
 }
 
 // RecordChatChunkFailure 记录 Chat 流里的错误块；Claude 格式转换会丢掉原始错误字段，要在转换前检查。

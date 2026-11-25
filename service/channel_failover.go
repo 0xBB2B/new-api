@@ -38,6 +38,12 @@ func (l *FailoverLedger) Record(channelID, keyIndex int) {
 	l.tried[channelID][keyIndex] = true
 }
 
+func (l *FailoverLedger) ExhaustChannel(channel *model.Channel) {
+	for index := range channel.GetKeys() {
+		l.Record(channel.Id, index)
+	}
+}
+
 func (l *FailoverLedger) TriedKeys(channelID int) map[int]bool {
 	return l.tried[channelID]
 }

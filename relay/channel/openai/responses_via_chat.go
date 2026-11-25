@@ -85,6 +85,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	// told about with response.failed. A failure before any content is held
 	// back from the client, so it stays retryable.
 	var upstreamFailure *types.NewAPIError
+	finishSeen := false
 	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
 		data, err := common.Marshal(event.Payload)
 		if err != nil {
@@ -149,7 +150,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-				if failResponses(types.WithOpenAIError(*oaiError, http.StatusInternalServerError)) {
+				if failResponses(types.WithOpenAIError(*oaiError, helper.UpstreamErrorStatus(oaiError.Code, oaiError.Type))) {
 					// Once content reached the client the request is never
 					// retried; the recorded error keeps the stream failed.
 					sr.Stop(upstreamFailure)
@@ -175,6 +176,12 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 			stopStream(sr, streamErr)
 			return
+		}
+
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				finishSeen = true
+			}
 		}
 
 		info.ObserveResponseModel(chunk.Model)
@@ -206,6 +213,12 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	if failure := helper.PreContentFailure(c); failure != nil {
+		return nil, failure
+	}
+	if failure := helper.FinishStreamHold(c, finishSeen || info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone); failure != nil {
+		return nil, failure
 	}
 
 	usage := state.Usage()

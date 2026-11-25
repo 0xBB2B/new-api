@@ -96,8 +96,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		service.LogResponsesStreamFailure(c, info, &streamResponse)
 		err := helper.ResponseChunkData(c, streamResponse, data)
-		if helper.PreContentFailure(c) != nil {
+		if failure := helper.PreContentFailure(c); failure != nil {
 			service.ObserveResponsesOutcome(info, &streamResponse)
+			sr.Stop(failure)
 			return
 		}
 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
@@ -188,12 +189,12 @@ func OaiResponsesBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 		case "response.failed", "response.error", "error":
 			if event.Response != nil {
 				if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil {
-					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+					streamErr = types.WithOpenAIError(*oaiErr, helper.UpstreamErrorStatus(oaiErr.Code, oaiErr.Type))
 					break
 				}
 			}
 			if event.Type == "error" && event.Message != "" {
-				streamErr = types.WithOpenAIError(types.OpenAIError{Message: event.Message, Code: event.Code, Param: event.Param}, http.StatusInternalServerError)
+				streamErr = types.WithOpenAIError(types.OpenAIError{Message: event.Message, Code: event.Code, Param: event.Param}, helper.UpstreamErrorStatus(event.Code, ""))
 				break
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", event.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)

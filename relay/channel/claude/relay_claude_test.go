@@ -963,3 +963,144 @@ func TestClaudeResponsesStreamHandlerFailureAfterBodyDoesNotPanic(t *testing.T) 
 		})
 	}
 }
+
+func TestClaudeConvertedStreamsFailOverOnOpeningOnlyEOF(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		handler          func(*gin.Context, *http.Response, *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError)
+		format           types.RelayFormat
+		events           []string
+		noFailoverMarker string // 探针为假或未设置时，客户端收到的内容
+	}{
+		{name: "responses client message_start only", handler: ClaudeResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, events: []string{claudeStart}, noFailoverMarker: "event: response.created"},
+		{name: "responses client ping and message_start", handler: ClaudeResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, events: []string{claudePing, claudeStart}, noFailoverMarker: "event: response.created"},
+		{name: "responses client no event", handler: ClaudeResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, noFailoverMarker: "event: response.completed"},
+		{name: "gemini client message_start only", handler: ClaudeStreamHandler, format: types.RelayFormatGemini, events: []string{claudeStart}, noFailoverMarker: `"candidates"`},
+		{name: "gemini client no event", handler: ClaudeStreamHandler, format: types.RelayFormatGemini},
+	} {
+		for _, mode := range claudeProbeModes {
+			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
+				run := runClaudeStream(t, tc.handler, tc.format, tc.events, mode.probe)
+				if mode.name == "probe true" {
+					assert.Empty(t, run.body)
+					assert.False(t, run.sent)
+					require.NotNil(t, run.apiErr)
+					assert.Equal(t, http.StatusBadGateway, run.apiErr.StatusCode)
+					assert.False(t, types.IsSkipRetryError(run.apiErr))
+					return
+				}
+				assert.Nil(t, run.apiErr)
+				assert.Equal(t, tc.noFailoverMarker != "", run.sent)
+				if tc.noFailoverMarker == "" {
+					assert.Empty(t, run.body)
+					return
+				}
+				assert.Contains(t, run.body, tc.noFailoverMarker)
+			})
+		}
+	}
+}
+
+func TestClaudeStreamReleasesHeldEventsAfterQueueLimit(t *testing.T) {
+	pings := func(n int) []string {
+		events := make([]string, n)
+		for i := range events {
+			events[i] = claudePing
+		}
+		return events
+	}
+	probeTrue := func(*types.NewAPIError) bool { return true }
+	for _, tc := range []struct {
+		name     string
+		events   []string
+		released bool
+	}{
+		{name: "below the limit stays held and fails over", events: pings(10), released: false},
+		{name: "beyond the limit is released to the client", events: pings(100), released: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := runClaudeStream(t, ClaudeStreamHandler, types.RelayFormatClaude, append([]string{claudeStart}, tc.events...), probeTrue)
+			assert.Equal(t, tc.released, run.sent)
+			assert.Equal(t, tc.released, run.body != "")
+			assert.Equal(t, !tc.released, run.apiErr != nil)
+		})
+	}
+}
+
+func TestClaudeStreamFailureStatusFollowsErrorType(t *testing.T) {
+	errEvent := func(errType string) string {
+		return `{"type":"error","error":{"type":"` + errType + `","message":"upstream said no"}}`
+	}
+	for _, tc := range []struct {
+		name        string
+		handler     func(*gin.Context, *http.Response, *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError)
+		format      types.RelayFormat
+		errType     string
+		wantStatus  int
+		wantMarker  string // 不换渠道时客户端收到的内容
+		errReturned bool   // 不换渠道时错误由 handler 返回，不写进响应体
+	}{
+		{"claude client invalid_request_error", ClaudeStreamHandler, types.RelayFormatClaude, "invalid_request_error", http.StatusBadRequest, "event: message_start", true},
+		{"claude client api_error", ClaudeStreamHandler, types.RelayFormatClaude, "api_error", http.StatusInternalServerError, "", false},
+		{"responses client invalid_request_error", ClaudeResponsesStreamHandler, types.RelayFormatOpenAIResponses, "invalid_request_error", http.StatusBadRequest, "event: response.failed", false},
+		{"responses client api_error", ClaudeResponsesStreamHandler, types.RelayFormatOpenAIResponses, "api_error", http.StatusInternalServerError, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decider, _ := gin.CreateTestContext(httptest.NewRecorder())
+			var seen *types.NewAPIError
+			probe := func(err *types.NewAPIError) bool {
+				seen = err
+				return service.DecideRelayRetry(decider, err, 1).Action == "retry"
+			}
+
+			run := runClaudeStream(t, tc.handler, tc.format, []string{claudeStart, errEvent(tc.errType)}, probe)
+
+			require.NotNil(t, seen)
+			assert.Equal(t, tc.wantStatus, seen.StatusCode)
+			if tc.wantMarker == "" {
+				assert.Empty(t, run.body)
+				assert.False(t, run.sent)
+				require.NotNil(t, run.apiErr)
+				return
+			}
+			assert.True(t, run.sent)
+			assert.Contains(t, run.body, tc.wantMarker)
+			if tc.format == types.RelayFormatClaude {
+				// The native Claude handler returns the upstream error; the relay controller writes it to the client.
+				require.NotNil(t, run.apiErr)
+				assert.Contains(t, run.apiErr.Error(), "upstream said no")
+				return
+			}
+			assert.Contains(t, run.body, "upstream said no")
+		})
+	}
+}
+
+func TestClaudeNonStreamErrorStatusFollowsErrorType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name       string
+		errType    string
+		wantStatus int
+		wantRetry  bool
+	}{
+		{"invalid_request_error", "invalid_request_error", http.StatusBadRequest, false},
+		{"api_error", "api_error", http.StatusInternalServerError, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatClaude, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-4-8"}}
+			body := `{"type":"error","error":{"type":"` + tc.errType + `","message":"upstream said no"}}`
+			resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": {"application/json"}}}
+
+			_, apiErr := ClaudeHandler(c, resp, info)
+
+			require.NotNil(t, apiErr)
+			assert.Contains(t, apiErr.Error(), "upstream said no")
+			assert.Equal(t, tc.wantStatus, apiErr.StatusCode)
+			decider, _ := gin.CreateTestContext(httptest.NewRecorder())
+			assert.Equal(t, tc.wantRetry, service.DecideRelayRetry(decider, apiErr, 1).Action == "retry")
+		})
+	}
+}

@@ -283,6 +283,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.ResetForFailoverAttempt()
 		helper.ResetStreamHold(c)
 		c.Set(string(constant.ContextKeyStreamOutputSent), nil)
+		c.Set(string(constant.ContextKeyResponseStreamStatus), nil)
+		c.Writer.Header().Del("X-Codex-Turn-State")
+		c.Writer.Header().Del("X-Reasoning-Included")
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -365,33 +368,43 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		service.RequestPolicy(c).BeginAttempt(channel, info.UsingGroup)
 		return channel, nil
 	}
-	var channel *model.Channel
-	var selectGroup string
-	var err error
-	if failover {
-		var exhausted bool
-		channel, selectGroup, exhausted, err = service.PickFailoverChannel(retryParam)
-		if exhausted {
-			return nil, nil
+	for {
+		var channel *model.Channel
+		var selectGroup string
+		var err error
+		if failover {
+			var exhausted bool
+			channel, selectGroup, exhausted, err = service.PickFailoverChannel(retryParam)
+			if exhausted {
+				return nil, nil
+			}
+		} else {
+			channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(retryParam)
 		}
-	} else {
-		channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(retryParam)
-	}
-	if err != nil {
-		return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryGetChannelFailed, map[string]any{"Group": selectGroup, "Model": info.OriginModelName, "Error": err.Error()})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
-	}
-	if channel == nil {
-		return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryNoAvailableChannel, map[string]any{"Group": selectGroup, "Model": info.OriginModelName})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
-	}
+		if err != nil {
+			return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryGetChannelFailed, map[string]any{"Group": selectGroup, "Model": info.OriginModelName, "Error": err.Error()})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+		if channel == nil {
+			return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryNoAvailableChannel, map[string]any{"Group": selectGroup, "Model": info.OriginModelName})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
 
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 
-	service.RequestPolicy(c).BeginAttempt(channel, selectGroup)
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
-	if newAPIError != nil {
-		return nil, newAPIError
+		newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+		code := types.ErrorCode("")
+		if newAPIError != nil {
+			code = newAPIError.GetErrorCode()
+		}
+		if newAPIError == nil || !failover || (code != types.ErrorCodeChannelNoAvailableKey && code != types.ErrorCodeAllKeysTried) {
+			service.RequestPolicy(c).BeginAttempt(channel, selectGroup)
+			if newAPIError != nil {
+				return nil, newAPIError
+			}
+			return channel, nil
+		}
+		// 选中后才发现没有可用密钥：当作试完，换下一个渠道
+		service.GetFailoverLedger(c).ExhaustChannel(channel)
 	}
-	return channel, nil
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {

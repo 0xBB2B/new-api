@@ -1323,6 +1323,7 @@ func TestResponsesStreamHandlersFailureSettlesUpstreamUsage(t *testing.T) {
 }
 
 type streamRun struct {
+	usage  *dto.Usage
 	body   string
 	apiErr *types.NewAPIError
 	sent   bool
@@ -1351,6 +1352,11 @@ var probeModes = []probeMode{
 
 func runRawStream(t *testing.T, handler streamHandler, relayFormat types.RelayFormat, path, upstream string, probe func(*types.NewAPIError) bool) streamRun {
 	t.Helper()
+	return runRawStreamTuned(t, handler, relayFormat, path, upstream, probe, nil)
+}
+
+func runRawStreamTuned(t *testing.T, handler streamHandler, relayFormat types.RelayFormat, path, upstream string, probe func(*types.NewAPIError) bool, tune func(*relaycommon.RelayInfo)) streamRun {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	oldTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
@@ -1375,13 +1381,16 @@ func runRawStream(t *testing.T, handler streamHandler, relayFormat types.RelayFo
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
 	}
 	info.SetEstimatePromptTokens(100)
+	if tune != nil {
+		tune(info)
+	}
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(strings.NewReader(upstream)),
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 	}
-	_, apiErr := handler(c, info, resp)
-	return streamRun{body: w.Body.String(), apiErr: apiErr, sent: common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent), info: info, ctx: c, w: w}
+	usage, apiErr := handler(c, info, resp)
+	return streamRun{usage: usage, body: w.Body.String(), apiErr: apiErr, sent: common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent), info: info, ctx: c, w: w}
 }
 
 func responsesSSE(events ...string) string {
@@ -1724,4 +1733,295 @@ func TestFailoverProbeRealRuleKeepsInvalidJSONBehavior(t *testing.T) {
 	assert.True(t, run.sent)
 	assert.Contains(t, run.body, "event: response.failed")
 	assert.True(t, types.IsSkipRetryError(run.apiErr))
+}
+
+func TestConvertedStreamsFailOverOnOpeningOnlyEOF(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	for _, tc := range []struct {
+		name             string
+		handler          streamHandler
+		format           types.RelayFormat
+		path             string
+		upstream         string
+		noFailoverMarker string // 探针为假或未设置时，客户端收到的内容
+	}{
+		{name: "responses upstream to chat, created only", handler: OaiResponsesToChatStreamHandler, format: types.RelayFormatOpenAI, path: "/v1/chat/completions", upstream: responsesSSE(created), noFailoverMarker: `"role":"assistant"`},
+		{name: "responses upstream to chat, no event", handler: OaiResponsesToChatStreamHandler, format: types.RelayFormatOpenAI, path: "/v1/chat/completions", noFailoverMarker: `"role":"assistant"`},
+		{name: "responses upstream to claude, created only", handler: OaiResponsesToChatStreamHandler, format: types.RelayFormatClaude, path: "/v1/messages", upstream: responsesSSE(created), noFailoverMarker: `"type":"message_start"`},
+		{name: "responses upstream to gemini, created only", handler: OaiResponsesToChatStreamHandler, format: types.RelayFormatGemini, path: "/v1beta/models/gpt-5.1:streamGenerateContent", upstream: responsesSSE(created), noFailoverMarker: `"candidates"`},
+		{name: "chat upstream to responses, role only", handler: OaiChatToResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, path: "/v1/responses", upstream: responsesSSE(chatRole), noFailoverMarker: "event: response.created"},
+		{name: "chat upstream to responses, no chunk", handler: OaiChatToResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, path: "/v1/responses", noFailoverMarker: "event: response.completed"},
+	} {
+		for _, mode := range probeModes {
+			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
+				run := runRawStream(t, tc.handler, tc.format, tc.path, tc.upstream, mode.probe)
+				if mode.name == "probe true" {
+					assert.Empty(t, run.body)
+					assert.False(t, run.sent)
+					require.NotNil(t, run.apiErr)
+					assert.False(t, types.IsSkipRetryError(run.apiErr))
+					return
+				}
+				assert.Nil(t, run.apiErr)
+				assert.True(t, run.sent)
+				assert.Contains(t, run.body, tc.noFailoverMarker)
+			})
+		}
+	}
+}
+
+func TestChatToResponsesStreamUsageBeforeFailureIsNotSettled(t *testing.T) {
+	run := runRawStream(t, OaiChatToResponsesStreamHandler, types.RelayFormatOpenAIResponses, "/v1/responses", responsesSSE(chatUsage, chatErrChunk), failoverProbe(true))
+
+	assert.Empty(t, run.body)
+	assert.False(t, run.sent)
+	require.NotNil(t, run.apiErr)
+	assert.Nil(t, run.usage, "a failed attempt that will be replaced must not return usage to settle")
+}
+
+func TestStreamFailureStatusFromStringCodeKeepsNonRetryableOutcome(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	failedWith := func(errorJSON string) string {
+		return `{"type":"response.failed","response":{"status":"failed","error":` + errorJSON + `}}`
+	}
+	for _, tc := range []struct {
+		name       string
+		handler    streamHandler
+		format     types.RelayFormat
+		path       string
+		events     []string
+		wantStatus int
+	}{
+		{name: "responses failed with context_length_exceeded code", handler: OaiResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, path: "/v1/responses",
+			events: []string{created, failedWith(`{"code":"context_length_exceeded","message":"too long"}`)}, wantStatus: http.StatusBadRequest},
+		{name: "responses failed with invalid_request_error type", handler: OaiResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, path: "/v1/responses",
+			events: []string{created, failedWith(`{"code":"bad_param","type":"invalid_request_error","message":"bad"}`)}, wantStatus: http.StatusBadRequest},
+		{name: "responses flat error with context_length_exceeded code", handler: OaiResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, path: "/v1/responses",
+			events: []string{created, `{"type":"error","code":"context_length_exceeded","message":"too long"}`}, wantStatus: http.StatusBadRequest},
+		{name: "responses failed with server_error code stays retryable", handler: OaiResponsesStreamHandler, format: types.RelayFormatOpenAIResponses, path: "/v1/responses",
+			events: []string{created, failedWith(`{"code":"server_error","type":"server_error","message":"boom"}`)}, wantStatus: http.StatusInternalServerError},
+		{name: "chat error chunk with context_length_exceeded code", handler: OaiStreamHandler, format: types.RelayFormatOpenAI, path: "/v1/chat/completions",
+			events: []string{chatRole, `{"error":{"message":"too long","type":"invalid_request_error","code":"context_length_exceeded"}}`}, wantStatus: http.StatusBadRequest},
+		{name: "chat error chunk with server_error type stays retryable", handler: OaiStreamHandler, format: types.RelayFormatOpenAI, path: "/v1/chat/completions",
+			events: []string{chatRole, chatErrChunk}, wantStatus: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decider, _ := gin.CreateTestContext(httptest.NewRecorder())
+			var seen *types.NewAPIError
+			probe := func(err *types.NewAPIError) bool {
+				seen = err
+				return service.DecideRelayRetry(decider, err, 1).Action == "retry"
+			}
+
+			run := runRawStream(t, tc.handler, tc.format, tc.path, responsesSSE(tc.events...), probe)
+
+			require.NotNil(t, seen)
+			assert.Equal(t, tc.wantStatus, seen.StatusCode)
+			if tc.wantStatus == http.StatusInternalServerError {
+				assert.Empty(t, run.body)
+				require.NotNil(t, run.apiErr)
+				return
+			}
+			assert.True(t, run.sent)
+			assert.Nil(t, run.apiErr)
+			for _, event := range tc.events {
+				assert.Contains(t, run.body, event[:len(event)-1], "the client receives the original events")
+			}
+		})
+	}
+}
+
+func TestChatToResponsesStreamFailureMessageIgnoresMetadata(t *testing.T) {
+	const withMetadata = `{"error":{"message":"boom","type":"server_error","metadata":{"raw":"secret-detail"}}}`
+	for _, mode := range []probeMode{{"probe false", failoverProbe(false)}, {"no probe", nil}} {
+		t.Run(mode.name, func(t *testing.T) {
+			run := runRawStream(t, OaiChatToResponsesStreamHandler, types.RelayFormatOpenAIResponses, "/v1/responses", responsesSSE(withMetadata), mode.probe)
+
+			require.NotNil(t, run.apiErr)
+			assert.Equal(t, "boom", run.apiErr.Error())
+			assert.NotContains(t, run.body, "secret-detail")
+			failed := ""
+			for _, block := range strings.Split(run.body, "\n\n") {
+				if strings.HasPrefix(block, "event: response.failed\n") {
+					failed = strings.TrimPrefix(strings.SplitN(block, "\n", 2)[1], "data: ")
+				}
+			}
+			require.NotEmpty(t, failed, run.body)
+			var event struct {
+				Response struct {
+					Error map[string]any `json:"error"`
+				} `json:"response"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(failed, &event))
+			assert.Equal(t, map[string]any{"code": "server_error", "message": "boom"}, event.Response.Error)
+		})
+	}
+}
+
+func TestOaiStreamHandlerFailsOverWithFormatRewriteEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tune func(*relaycommon.RelayInfo)
+	}{
+		{name: "neither", tune: nil},
+		{name: "force_format", tune: func(info *relaycommon.RelayInfo) { info.ChannelSetting.ForceFormat = true }},
+		{name: "thinking_to_content", tune: func(info *relaycommon.RelayInfo) { info.ChannelSetting.ThinkingToContent = true }},
+		{name: "both", tune: func(info *relaycommon.RelayInfo) {
+			info.ChannelSetting.ForceFormat = true
+			info.ChannelSetting.ThinkingToContent = true
+		}},
+	} {
+		for _, upstream := range []struct{ name, body string }{
+			{"error chunk first", responsesSSE(chatErrChunk)},
+			{"error chunk after role", responsesSSE(chatRole, chatErrChunk)},
+			{"error chunk then DONE", responsesSSE(chatErrChunk, "[DONE]")},
+			{"role then EOF", responsesSSE(chatRole)},
+		} {
+			t.Run(tc.name+"/"+upstream.name, func(t *testing.T) {
+				run := runRawStreamTuned(t, OaiStreamHandler, types.RelayFormatOpenAI, "/v1/chat/completions", upstream.body, failoverProbe(true), tc.tune)
+
+				assert.Empty(t, run.body)
+				assert.False(t, run.sent)
+				require.NotNil(t, run.apiErr)
+				assert.False(t, types.IsSkipRetryError(run.apiErr))
+			})
+		}
+	}
+}
+
+func TestResponsesStreamFailureReturnsWithoutWaitingForUpstreamClose(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	const failed = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"server_error","message":"boom"}}}`
+	for _, tc := range []struct {
+		name    string
+		handler streamHandler
+		format  types.RelayFormat
+	}{
+		{"responses client", OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses},
+		{"chat client", OaiResponsesToChatStreamHandler, types.RelayFormatOpenAI},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			oldTimeout := constant.StreamingTimeout
+			constant.StreamingTimeout = 30
+			t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+			pr, pw := io.Pipe()
+			t.Cleanup(func() { _ = pw.Close() })
+			go func() { _, _ = io.WriteString(pw, responsesSSE(created, failed)) }()
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			helper.SetFailoverProbe(c, failoverProbe(true))
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "gpt-5.1", IsStream: true, DisablePing: true, StartTime: time.Now(), RelayFormat: tc.format,
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+			}
+			info.SetEstimatePromptTokens(100)
+			resp := &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+			returned := make(chan *types.NewAPIError, 1)
+			go func() {
+				_, apiErr := tc.handler(c, info, resp)
+				returned <- apiErr
+			}()
+
+			select {
+			case apiErr := <-returned:
+				require.NotNil(t, apiErr)
+				assert.Empty(t, w.Body.String())
+			case <-time.After(2 * time.Second):
+				require.FailNow(t, "the handler kept waiting for the upstream to close the connection")
+			}
+		})
+	}
+}
+
+func TestConvertedStreamFailureStatusFollowsErrorType(t *testing.T) {
+	const created = `{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`
+	failedWith := func(errType string) string {
+		return `{"type":"response.failed","response":{"status":"failed","error":{"type":"` + errType + `","message":"upstream said no"}}}`
+	}
+	chatError := func(errType string) string {
+		return `{"error":{"message":"upstream said no","type":"` + errType + `"}}`
+	}
+	for _, tc := range []struct {
+		name        string
+		handler     streamHandler
+		format      types.RelayFormat
+		path        string
+		events      []string
+		wantStatus  int
+		wantMarker  string // 不换渠道时客户端收到的内容
+		errReturned bool   // 不换渠道时错误由 handler 返回，不写进响应体
+	}{
+		{"responses to chat invalid_request_error", OaiResponsesToChatStreamHandler, types.RelayFormatOpenAI, "/v1/chat/completions", []string{created, failedWith("invalid_request_error")}, http.StatusBadRequest, `"role":"assistant"`, true},
+		{"responses to chat server_error", OaiResponsesToChatStreamHandler, types.RelayFormatOpenAI, "/v1/chat/completions", []string{created, failedWith("server_error")}, http.StatusInternalServerError, "", false},
+		{"chat to responses invalid_request_error", OaiChatToResponsesStreamHandler, types.RelayFormatOpenAIResponses, "/v1/responses", []string{chatError("invalid_request_error")}, http.StatusBadRequest, "event: response.failed", false},
+		{"chat to responses server_error", OaiChatToResponsesStreamHandler, types.RelayFormatOpenAIResponses, "/v1/responses", []string{chatError("server_error")}, http.StatusInternalServerError, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decider, _ := gin.CreateTestContext(httptest.NewRecorder())
+			var seen *types.NewAPIError
+			probe := func(err *types.NewAPIError) bool {
+				seen = err
+				return service.DecideRelayRetry(decider, err, 1).Action == "retry"
+			}
+
+			run := runRawStream(t, tc.handler, tc.format, tc.path, responsesSSE(tc.events...), probe)
+
+			require.NotNil(t, seen)
+			assert.Equal(t, tc.wantStatus, seen.StatusCode)
+			if tc.wantMarker == "" {
+				assert.Empty(t, run.body)
+				assert.False(t, run.sent)
+				require.NotNil(t, run.apiErr)
+				return
+			}
+			assert.True(t, run.sent)
+			assert.Contains(t, run.body, tc.wantMarker)
+			if tc.errReturned {
+				require.NotNil(t, run.apiErr)
+				assert.Equal(t, tc.wantStatus, run.apiErr.StatusCode)
+				assert.Contains(t, run.apiErr.Error(), "upstream said no")
+				return
+			}
+			assert.Contains(t, run.body, "upstream said no")
+		})
+	}
+}
+
+func TestAggregatedResponsesFailureStatusFollowsErrorType(t *testing.T) {
+	failedWith := func(errorJSON string) string {
+		return responsesSSE(`{"type":"response.failed","response":{"status":"failed","error":` + errorJSON + `}}`)
+	}
+	for _, handler := range []struct {
+		name string
+		run  streamHandler
+		path string
+	}{
+		{"responses buffered", OaiResponsesBufferedStreamHandler, "/v1/responses"},
+		{"chat client buffered", OaiResponsesToChatBufferedStreamHandler, "/v1/chat/completions"},
+	} {
+		for _, tc := range []struct {
+			name       string
+			errorJSON  string
+			wantStatus int
+			wantRetry  bool
+		}{
+			{"invalid_request_error type", `{"code":"bad_param","type":"invalid_request_error","message":"upstream said no"}`, http.StatusBadRequest, false},
+			{"context_length_exceeded code", `{"code":"context_length_exceeded","message":"upstream said no"}`, http.StatusBadRequest, false},
+			{"server_error type", `{"code":"server_error","type":"server_error","message":"upstream said no"}`, http.StatusInternalServerError, true},
+		} {
+			t.Run(handler.name+"/"+tc.name, func(t *testing.T) {
+				decider, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+				run := runRawStream(t, handler.run, types.RelayFormatOpenAI, handler.path, failedWith(tc.errorJSON), nil)
+
+				require.NotNil(t, run.apiErr)
+				assert.Contains(t, run.apiErr.Error(), "upstream said no")
+				assert.Equal(t, tc.wantStatus, run.apiErr.StatusCode)
+				assert.Equal(t, tc.wantRetry, service.DecideRelayRetry(decider, run.apiErr, 1).Action == "retry")
+			})
+		}
+	}
 }

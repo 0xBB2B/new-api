@@ -410,3 +410,55 @@ func TestGeminiResponsesStreamHandlerRealRuleProbeKeepsBadFrameBehavior(t *testi
 	assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
 	assert.Contains(t, recorder.Body.String(), "event: response.failed")
 }
+
+func TestGeminiResponsesStreamHandlerFailsOverWithoutFinishOrBody(t *testing.T) {
+	const usageFrame = `{"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":0,"totalTokenCount":3}}`
+	const finishFrame = `{"candidates":[{"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":3,"totalTokenCount":3}}`
+	const blockedFrame = `{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":3,"totalTokenCount":3}}`
+	for _, tc := range []struct {
+		name     string
+		upstream string
+		failover bool
+	}{
+		{name: "usage frame then EOF", upstream: "data: " + usageFrame + "\n\n", failover: true},
+		{name: "no frame then EOF", failover: true},
+		{name: "finishReason without body is a normal end", upstream: "data: " + finishFrame + "\n\n"},
+		{name: "blocked prompt is a normal end", upstream: "data: " + blockedFrame + "\n\n"},
+	} {
+		for _, mode := range []struct {
+			name  string
+			probe func(*types.NewAPIError) bool
+		}{
+			{"probe true", func(*types.NewAPIError) bool { return true }},
+			{"probe false", func(*types.NewAPIError) bool { return false }},
+			{"no probe", nil},
+		} {
+			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
+				gin.SetMode(gin.TestMode)
+				oldStreamingTimeout := constant.StreamingTimeout
+				constant.StreamingTimeout = 300
+				t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				if mode.probe != nil {
+					helper.SetFailoverProbe(c, mode.probe)
+				}
+
+				_, apiErr := GeminiResponsesStreamHandler(c, newGeminiResponsesRelayInfo(true), &http.Response{Body: io.NopCloser(strings.NewReader(tc.upstream))})
+
+				if tc.failover && mode.name == "probe true" {
+					assert.Empty(t, recorder.Body.String())
+					assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+					require.NotNil(t, apiErr)
+					assert.False(t, types.IsSkipRetryError(apiErr))
+					return
+				}
+				assert.Nil(t, apiErr)
+				assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyStreamOutputSent))
+				assert.Contains(t, recorder.Body.String(), "event: response.created")
+				assert.Contains(t, recorder.Body.String(), "event: response.completed")
+			})
+		}
+	}
+}

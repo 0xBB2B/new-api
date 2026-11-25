@@ -134,7 +134,10 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil && channel != nil {
+			abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -633,6 +636,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	// 先取密钥：没有可用密钥时不能留下该渠道的上下文
+	var key string
+	var index int
+	var newAPIError *types.NewAPIError
+	if ledger := service.GetFailoverLedger(c); ledger != nil {
+		key, index, newAPIError = channel.GetNextUntriedEnabledKey(ledger.TriedKeys(channel.Id))
+		if newAPIError == nil {
+			ledger.Record(channel.Id, index)
+		}
+	} else {
+		key, index, newAPIError = channel.GetNextEnabledKey()
+	}
+	if newAPIError != nil {
+		return newAPIError
+	}
 	if index, matched := pinnedEndpointCandidateForChannel(c, channel, expectedPlugin); matched {
 		previousPlugin := ""
 		var selected *jsplugin.LoadedPlugin
@@ -715,20 +733,6 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	var key string
-	var index int
-	var newAPIError *types.NewAPIError
-	if ledger := service.GetFailoverLedger(c); ledger != nil {
-		key, index, newAPIError = channel.GetNextUntriedEnabledKey(ledger.TriedKeys(channel.Id))
-		if newAPIError == nil {
-			ledger.Record(channel.Id, index)
-		}
-	} else {
-		key, index, newAPIError = channel.GetNextEnabledKey()
-	}
-	if newAPIError != nil {
-		return newAPIError
-	}
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
 		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)

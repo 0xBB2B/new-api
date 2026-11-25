@@ -30,6 +30,8 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return helper.StringData(c, data)
 	}
 
+	helper.RecordChatChunkFailure(c, data)
+
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err

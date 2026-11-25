@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -1558,6 +1560,62 @@ func TestResponsesWebSocketFailoverDial(t *testing.T) {
 			assertResponsesWSAccounting(t, fixture, nil)
 		})
 	}
+}
+
+func TestResponsesWebSocketFailoverDialTriesEveryChannelOfAutoGroupBeforeNext(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousRetry := common.RetryTimes
+	common.RetryTimes = 0
+	previousAutoGroups := setting.AutoGroups2JsonString()
+	previousUsable := setting.UserUsableGroups2JSONString()
+	previousRatios := ratio_setting.GroupRatio2JSONString()
+	previousMaxAutoGroups := setting.GetMaxTokenAutoGroups()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateMaxTokenAutoGroups(strconv.Itoa(previousMaxAutoGroups)))
+		common.RetryTimes = previousRetry
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousUsable))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousRatios))
+	})
+	fixture := newFailoverFixture(t)
+	require.NoError(t, setting.UpdateMaxTokenAutoGroups("3"))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["g1","g2"]`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto","g1":"G1","g2":"G2"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"g1":1,"g2":1}`))
+	require.NoError(t, model.DB.Model(fixture.token).Updates(map[string]any{"group": "auto", "auto_groups": `["g1","g2"]`, "cross_group_retry": true}).Error)
+	require.NoError(t, common.RDB.FlushAll(context.Background()).Err(), "the fixture's handshake cached the token with its old group")
+	upstreams := &failoverUpstreams{}
+	for _, spec := range []failoverChannel{
+		{name: "G1A", group: "g1", priority: 20, respond: failoverFail(http.StatusInternalServerError)},
+		{name: "G1B", group: "g1", priority: 10, respond: failoverFail(http.StatusInternalServerError)},
+		{name: "G2A", group: "g2", priority: 0, respond: failoverWebSocket},
+	} {
+		spec.channelType, spec.websocket = constant.ChannelTypeOpenAI, true
+		addFailoverChannel(t, upstreams, spec)
+	}
+
+	// 令牌分组在握手时确定，所以要在改完令牌后另开一条连接。
+	engine := gin.New()
+	engine.GET("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
+		c.Set(common.RequestIdKey, "responses-ws-auto-group")
+		ResponsesWebSocket(c)
+	})
+	gateway := httptest.NewServer(engine)
+	t.Cleanup(gateway.Close)
+	client, handshake, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(gateway.URL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer sk-" + fixture.token.Key}})
+	rejection := ""
+	if handshake != nil && err != nil {
+		body, _ := io.ReadAll(handshake.Body)
+		rejection = fmt.Sprintf("%d %s", handshake.StatusCode, body)
+	}
+	require.NoError(t, err, "handshake rejected: %s", rejection)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+	event := readResponsesWSTestEvent(t, client)
+
+	assert.Equal(t, []string{"G1A", "G1B", "G2A"}, upstreams.channels())
+	assert.Equal(t, "response.completed", event["type"])
 }
 
 func TestResponsesWebSocketLogsUpstreamFailure(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -25,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -431,6 +433,7 @@ func (u *failoverUpstreams) credentials() []string {
 
 type failoverChannel struct {
 	name        string
+	group       string // 空表示 default
 	channelType int
 	priority    int64
 	keys        []string
@@ -504,9 +507,13 @@ func addFailoverChannel(t *testing.T, upstreams *failoverUpstreams, spec failove
 	if len(keys) == 0 {
 		keys = []string{defaultFailoverKey(spec.channelType, spec.name)}
 	}
+	group := spec.group
+	if group == "" {
+		group = "default"
+	}
 	channel := &model.Channel{
 		Name: spec.name, Key: strings.Join(keys, "\n"), Status: common.ChannelStatusEnabled, Type: spec.channelType,
-		Group: "default", Models: "ws-billing", BaseURL: &server.URL,
+		Group: group, Models: "ws-billing", BaseURL: &server.URL,
 		Priority: common.GetPointer(spec.priority), Weight: common.GetPointer(uint(1)),
 	}
 	if len(keys) > 1 {
@@ -554,6 +561,12 @@ func newFailoverGateway(t *testing.T) *failoverGateway {
 // post returns once the relay handler has finished, settlement included.
 func (g *failoverGateway) post(t *testing.T, path, tokenKey, body string) (int, string) {
 	t.Helper()
+	status, _, payload := g.postWithHeader(t, path, tokenKey, body)
+	return status, payload
+}
+
+func (g *failoverGateway) postWithHeader(t *testing.T, path, tokenKey, body string) (int, http.Header, string) {
+	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, g.url+path, strings.NewReader(body))
 	require.NoError(t, err)
 	request.Header.Set("Authorization", "Bearer sk-"+tokenKey)
@@ -569,7 +582,7 @@ func (g *failoverGateway) post(t *testing.T, path, tokenKey, body string) (int, 
 	case <-time.After(3 * time.Second):
 		t.Fatal("relay handler did not finish")
 	}
-	return response.StatusCode, string(payload)
+	return response.StatusCode, response.Header, string(payload)
 }
 
 const failoverChatBody = `{"model":"ws-billing","messages":[{"role":"user","content":"hello"}]}`
@@ -921,4 +934,146 @@ func TestRelaySyncFailoverStopsAfterClientDisconnect(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{"A"}, upstreams.channels(), "a disconnected client must not start further attempts")
+}
+
+func failoverHeaderSSE(headers map[string]string, events func(name string) []string) func(string, http.ResponseWriter, *http.Request) {
+	return func(name string, w http.ResponseWriter, r *http.Request) {
+		for key, value := range headers {
+			w.Header().Set(key, value)
+		}
+		failoverResponsesSSE(events)(name, w, r)
+	}
+}
+
+func TestRelaySyncFailoverDropsFailedAttemptHeaders(t *testing.T) {
+	failedAttempt := func(string) []string {
+		return []string{
+			`{"type":"response.created","response":{"id":"resp_A","status":"in_progress"}}`,
+			`{"type":"response.failed","response":{"id":"resp_A","status":"failed","error":{"code":"server_error","message":"upstream A failed"}}}`,
+		}
+	}
+	succeeded := func(string) []string {
+		return []string{
+			`{"type":"response.created","response":{"id":"resp_B","status":"in_progress"}}`,
+			`{"type":"response.output_text.delta","delta":"hello"}`,
+			`{"type":"response.completed","response":{"id":"resp_B","status":"completed","usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}}`,
+		}
+	}
+	for _, tc := range []struct {
+		name        string
+		secondEmits map[string]string
+		wantTurn    []string
+	}{
+		{name: "second channel sends no codex headers", wantTurn: nil},
+		{name: "second channel sends its own turn state", secondEmits: map[string]string{"X-Codex-Turn-State": "B"}, wantTurn: []string{"B"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newFailoverFixture(t)
+			upstreams := &failoverUpstreams{}
+			addFailoverChannel(t, upstreams, failoverChannel{name: "A", channelType: constant.ChannelTypeCodex, priority: 0,
+				respond: failoverHeaderSSE(map[string]string{"X-Codex-Turn-State": "A", "X-Reasoning-Included": "true"}, failedAttempt)})
+			addFailoverChannel(t, upstreams, failoverChannel{name: "B", channelType: constant.ChannelTypeOpenAI, priority: 0,
+				respond: failoverHeaderSSE(tc.secondEmits, succeeded)})
+			gateway := newFailoverGateway(t)
+
+			status, header, body := gateway.postWithHeader(t, "/v1/responses", fixture.token.Key, `{"model":"ws-billing","input":"hello","stream":true}`)
+
+			assert.Equal(t, http.StatusOK, status)
+			assert.Contains(t, body, `"id":"resp_B"`)
+			requireAttemptGroups(t, upstreams.channels(), []string{"A"}, []string{"B"})
+			assert.Equal(t, tc.wantTurn, header.Values("X-Codex-Turn-State"))
+			assert.Empty(t, header.Values("X-Reasoning-Included"))
+		})
+	}
+}
+
+func TestRelaySyncFailoverCountsSuccessForRateLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		firstFails  bool
+		wantChannel [][]string
+	}{
+		{name: "success after a failed channel", firstFails: true, wantChannel: [][]string{{"A"}, {"B"}}},
+		{name: "success on the first channel", firstFails: false, wantChannel: [][]string{{"B"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, i18n.Init())
+			fixture := newFailoverFixture(t)
+			setting.ModelRequestRateLimitEnabled = true
+			setting.ModelRequestRateLimitDurationMinutes = 1
+			setting.ModelRequestRateLimitCount = 0
+			setting.ModelRequestRateLimitSuccessCount = 1
+			upstreams := &failoverUpstreams{}
+			if tc.firstFails {
+				addFailoverChannel(t, upstreams, failoverChannel{name: "A", channelType: constant.ChannelTypeOpenAI, priority: 10,
+					respond: failoverResponsesSSE(func(string) []string {
+						return []string{
+							`{"type":"response.created","response":{"id":"resp_A","status":"in_progress"}}`,
+							`{"type":"response.failed","response":{"id":"resp_A","status":"failed","error":{"code":"server_error","message":"upstream A failed"}}}`,
+						}
+					})})
+			}
+			addFailoverChannel(t, upstreams, failoverChannel{name: "B", channelType: constant.ChannelTypeAnthropic, priority: 5,
+				respond: func(_ string, w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					for _, event := range []string{
+						`{"type":"message_start","message":{"id":"msg_B","type":"message","role":"assistant","model":"ws-billing","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}`,
+						`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+						`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`,
+						`{"type":"content_block_stop","index":0}`,
+						`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+						`{"type":"message_stop"}`,
+					} {
+						_, _ = io.WriteString(w, "data: "+event+"\n\n")
+						w.(http.Flusher).Flush()
+					}
+				}})
+			gateway := newFailoverGateway(t)
+			body := `{"model":"ws-billing","input":"hello","stream":true}`
+
+			status, _ := gateway.post(t, "/v1/responses", fixture.token.Key, body)
+			require.Equal(t, http.StatusOK, status)
+			requireAttemptGroups(t, upstreams.channels(), tc.wantChannel...)
+
+			request, err := http.NewRequest(http.MethodPost, gateway.url+"/v1/responses", strings.NewReader(body))
+			require.NoError(t, err)
+			request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+
+			assert.Equal(t, http.StatusTooManyRequests, response.StatusCode, "the first request succeeded and counts as one success")
+		})
+	}
+}
+
+func TestDistributeAbortsWhenSelectedChannelHasNoEnabledKey(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	fixture := newFailoverFixture(t)
+	upstreams := &failoverUpstreams{}
+	channel := addFailoverChannel(t, upstreams, failoverChannel{name: "F", channelType: constant.ChannelTypeOpenAI, keys: []string{"sk-k1", "sk-k2"}, respond: failoverOK})
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusAutoDisabled, 1: common.ChannelStatusAutoDisabled}
+	require.NoError(t, model.DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error)
+	gateway := newFailoverGateway(t)
+
+	request, err := http.NewRequest(http.MethodPost, gateway.url+"/v1/chat/completions", strings.NewReader(failoverChatBody))
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	require.NoError(t, err, "the gateway must answer instead of panicking")
+	payload, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+
+	assert.GreaterOrEqual(t, response.StatusCode, http.StatusBadRequest, string(payload))
+	var failure struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, common.Unmarshal(payload, &failure), string(payload))
+	assert.Equal(t, string(types.ErrorCodeChannelNoAvailableKey), failure.Error.Code, "the key failure must be reported, not an attempt to call an unconfigured upstream")
+	assert.Empty(t, upstreams.channels(), "no upstream request may be sent without a key")
 }

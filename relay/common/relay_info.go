@@ -288,6 +288,8 @@ func (info *RelayInfo) ResetForFailoverAttempt() {
 		}
 	}
 	info.ReceivedResponseCount = 0
+	info.isFirstResponse = true
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

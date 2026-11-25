@@ -104,7 +104,7 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 			return
 		}
 		if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-			failure := types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+			failure := types.WithClaudeError(*claudeError, helper.UpstreamErrorStatus(nil, claudeError.Type))
 			if failWith(failure) {
 				sr.Stop(failure)
 				return
@@ -173,6 +173,11 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 	}
 	if failure := helper.PreContentFailure(c); failure != nil {
 		return nil, failure
+	}
+	if info.StreamStatus.ResponseOutcome() == "" {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
 	}
 	if streamFailed {
 		return claudeInfo.Usage, nil

@@ -153,7 +153,16 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 
 	helper.StartStreamHold(c)
 	defer helper.ResetStreamHold(c)
+	terminalSeen := false
 	usage, streamAPIError := geminiStreamHandler(c, info, resp, func(_ string, geminiResponse *dto.GeminiChatResponse) bool {
+		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
+			terminalSeen = true
+		}
+		for _, candidate := range geminiResponse.Candidates {
+			if candidate.FinishReason != nil && *candidate.FinishReason != "" {
+				terminalSeen = true
+			}
+		}
 		hostedBridge.Observe(geminiResponse)
 		return sendChunk(geminiResponse)
 	})
@@ -181,6 +190,11 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	if !terminalSeen {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
 	}
 	hostedEvents, err := hostedBridge.Finalize(state)
 	if err != nil {

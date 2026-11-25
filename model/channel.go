@@ -306,7 +306,7 @@ func (channel *Channel) GetNextUntriedEnabledKey(tried map[int]bool) (string, in
 		}
 		for i := range keys {
 			idx := (start + i) % len(keys)
-			if slices.Contains(untriedIdx, idx) {
+			if channel.keyEnabled(idx) && !tried[idx] {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
