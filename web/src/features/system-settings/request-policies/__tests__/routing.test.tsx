@@ -144,7 +144,7 @@ it('opens global affinity settings and the complete rules table without switchin
   ).toBeVisible()
   expect(
     screen.getByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     })
   ).toBeVisible()
   expect(
@@ -184,13 +184,18 @@ it('session rules sit between the session defaults and the retry budget', async 
   const defaults = screen.getByRole('switch', {
     name: 'Enable session affinity',
   })
-  const retries = screen.getByRole('spinbutton', { name: 'Maximum retries' })
+  const retries = screen.getByRole('spinbutton', {
+    name: 'Maximum retries for async tasks',
+  })
   const follows = (first: Element, second: Element) =>
     Boolean(
       first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
     )
   expect(follows(defaults, table)).toBe(true)
   expect(follows(table, retries)).toBe(true)
+  expect(retries).toHaveAccessibleDescription(
+    'Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.'
+  )
   expect(
     screen.queryByRole('complementary', { name: 'Policy preview' })
   ).not.toBeInTheDocument()
@@ -198,7 +203,7 @@ it('session rules sit between the session defaults and the retry budget', async 
 it('editing a rule and retries saves one draft without dropping transforms or extension fields', async () => {
   show()
   const retries = await screen.findByRole('spinbutton', {
-    name: 'Maximum retries',
+    name: 'Maximum retries for async tasks',
   })
   fireEvent.change(retries, { target: { value: '5' } })
   await userEvent.click(screen.getByRole('button', { name: 'Edit Rule' }))
@@ -300,7 +305,7 @@ it('a failed save retains the edited retries and rules for another save', async 
   })
   show()
   const retries = await screen.findByRole('spinbutton', {
-    name: 'Maximum retries',
+    name: 'Maximum retries for async tasks',
   })
   fireEvent.change(retries, { target: { value: '5' } })
   await userEvent.click(screen.getByRole('button', { name: 'Edit Rule' }))
@@ -387,7 +392,7 @@ it('switching between visual and JSON editing preserves the shared draft', async
   show()
   fireEvent.change(
     await screen.findByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     }),
     { target: { value: '7' } }
   )
@@ -400,7 +405,7 @@ it('switching between visual and JSON editing preserves the shared draft', async
   expect(screen.getByRole('table')).toHaveTextContent('JSON rule')
   expect(
     screen.getByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     })
   ).toHaveValue(7)
   await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -422,7 +427,7 @@ it('editing a rule without a session mode saves the chosen override with the ret
   await screen.findByRole('table')
   fireEvent.change(
     await screen.findByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     }),
     { target: { value: '4' } }
   )
@@ -543,7 +548,7 @@ it('refreshing settings preserves unsaved rule and retry edits', async () => {
   show()
   fireEvent.change(
     await screen.findByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     }),
     { target: { value: '7' } }
   )
@@ -563,7 +568,7 @@ it('refreshing settings preserves unsaved rule and retry edits', async () => {
   })
   expect(
     screen.getByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     })
   ).toHaveValue(7)
   await userEvent.click(
@@ -588,7 +593,7 @@ it('disabling global affinity preserves every rule and saves zero retries as zer
   show()
   fireEvent.change(
     await screen.findByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     }),
     { target: { value: '0' } }
   )

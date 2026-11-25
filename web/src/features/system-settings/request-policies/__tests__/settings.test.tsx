@@ -252,7 +252,7 @@ describe('request policy settings', () => {
     })
     await renderPolicies('/system-settings/request-policies/retry')
     const retries = await screen.findByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     })
     fireEvent.change(retries, { target: { value: '4' } })
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -272,7 +272,7 @@ describe('request policy settings', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(
       await screen.findByRole('spinbutton', {
-        name: 'Maximum retries',
+        name: 'Maximum retries for async tasks',
       })
     ).toHaveValue(2)
     expect(api.put).not.toHaveBeenCalled()
