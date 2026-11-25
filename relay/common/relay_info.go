@@ -278,6 +278,18 @@ func (info *RelayInfo) RequestedImageCount() int {
 	return 1
 }
 
+func (info *RelayInfo) ResetForFailoverAttempt() {
+	if info.ClaudeConvertInfo != nil {
+		info.ClaudeConvertInfo = &ClaudeConvertInfo{LastMessagesType: LastMessageTypeNone}
+	}
+	if info.ResponsesUsageInfo != nil {
+		for _, tool := range info.ResponsesUsageInfo.BuiltInTools {
+			tool.CallCount = 0
+		}
+	}
+	info.ReceivedResponseCount = 0
+}
+
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.ResponseModel = nil
 	info.FinalRequestRelayFormat = ""

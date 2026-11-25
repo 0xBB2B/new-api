@@ -1493,6 +1493,73 @@ func TestResponsesWebSocketReleasesChannelAffinityWhenLaterTurnFails(t *testing.
 	}, 2*time.Second, 20*time.Millisecond, "a failed later turn releases the session binding")
 }
 
+func failoverWebSocket(name string, w http.ResponseWriter, r *http.Request) {
+	ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer ws.Close()
+	for {
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		terminal := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_%s","status":"completed","model":"ws-billing","output":[],"usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`, name)
+		if ws.WriteMessage(websocket.TextMessage, []byte(terminal)) != nil {
+			return
+		}
+	}
+}
+
+func TestResponsesWebSocketFailoverDial(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retryTimes int
+		lastUp     bool
+	}{
+		{name: "third channel connects", retryTimes: 0, lastUp: true},
+		{name: "retry times does not limit dials", retryTimes: 1, lastUp: true},
+		{name: "every channel down returns the dial error once each", retryTimes: 5, lastUp: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousRetry := common.RetryTimes
+			common.RetryTimes = tc.retryTimes
+			t.Cleanup(func() { common.RetryTimes = previousRetry })
+			fixture := newFailoverFixture(t)
+			upstreams := &failoverUpstreams{}
+			last := failoverChannel{name: "W3", channelType: constant.ChannelTypeOpenAI, priority: 10, websocket: true, respond: failoverFail(http.StatusInternalServerError)}
+			if tc.lastUp {
+				last.respond = failoverWebSocket
+			}
+			for _, spec := range []failoverChannel{
+				{name: "W1", channelType: constant.ChannelTypeOpenAI, priority: 30, websocket: true, respond: failoverFail(http.StatusInternalServerError)},
+				{name: "W2", channelType: constant.ChannelTypeOpenAI, priority: 20, websocket: true, respond: failoverFail(http.StatusInternalServerError)},
+				last,
+			} {
+				addFailoverChannel(t, upstreams, spec)
+			}
+
+			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+			event := readResponsesWSTestEvent(t, fixture.client)
+
+			assert.Equal(t, []string{"W1", "W2", "W3"}, upstreams.channels())
+			if tc.lastUp {
+				assert.Equal(t, "response.completed", event["type"])
+				response, _ := event["response"].(map[string]any)
+				assert.Equal(t, "resp_W3", response["id"])
+				fixture.closeAndWait(t)
+				assertResponsesWSAccounting(t, fixture, []int{1000})
+				return
+			}
+			assert.Equal(t, "error", event["type"])
+			encoded, err := common.Marshal(event)
+			require.NoError(t, err)
+			assert.NotContains(t, strings.ToLower(string(encoded)), "no available channel")
+			fixture.closeAndWait(t)
+			assertResponsesWSAccounting(t, fixture, nil)
+		})
+	}
+}
+
 func TestResponsesWebSocketLogsUpstreamFailure(t *testing.T) {
 	const created = `{"type":"response.created","response":{"id":"first","status":"in_progress"}}`
 	for _, tc := range []struct {

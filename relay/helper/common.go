@@ -276,6 +276,7 @@ func StartStreamHold(c *gin.Context) {
 
 func ResetStreamHold(c *gin.Context) {
 	c.Set(streamHoldKey, nil)
+	c.Set(claudeSignatureBufferKey, nil)
 }
 
 func SetFailoverProbe(c *gin.Context, probe func(*types.NewAPIError) bool) {
@@ -423,6 +424,13 @@ func chatChunkFailure(str string) *types.NewAPIError {
 	}
 	_ = common.UnmarshalJsonStr(str, &chunk)
 	return types.WithOpenAIError(chunk.Error, upstreamStatus(chunk.Error.Code))
+}
+
+// RecordChatChunkFailure 记录 Chat 流里的错误块；Claude 格式转换会丢掉原始错误字段，要在转换前检查。
+func RecordChatChunkFailure(c *gin.Context, data string) {
+	if chatChunkKind(data) == chunkFailure {
+		RecordStreamFailure(c, chatChunkFailure(data))
+	}
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {

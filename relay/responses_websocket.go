@@ -339,10 +339,19 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		}
 	} else {
 		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0)}
-		for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
+		service.StartFailoverLedger(c)
+		for ; ; retry.IncreaseRetry() {
+			if retry.GetRetry() > 0 && c.Request.Context().Err() != nil {
+				return apiErr
+			}
 			var channel *appmodel.Channel
-			channel, apiErr = selectResponsesWSChannel(c, modelName, retry)
-			if apiErr != nil {
+			var selectErr *types.NewAPIError
+			channel, selectErr = selectResponsesWSChannel(c, modelName, retry)
+			if selectErr != nil {
+				return selectErr
+			}
+			if channel == nil {
+				// 渠道和密钥都试完：返回最后一次建连错误
 				return apiErr
 			}
 			service.AppendUsedChannel(c, channel.Id)
@@ -377,7 +386,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
-				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
+				decision := service.DecideRelayRetry(c, apiErr, 1)
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
 				if decision.Action == "retry" {
@@ -1122,7 +1131,21 @@ func selectResponsesWSChannel(c *gin.Context, modelName string, retryParam *serv
 	}) {
 		constraints.AddFilter(appdto.ChannelFilter{Kind: appdto.FilterResponsesWebSocket})
 	}
-	channel, _, selectErr := service.SelectChannelForRequest(c, modelName, retryParam)
+	var channel *appmodel.Channel
+	var selectErr *service.ChannelSelectError
+	if retryParam.GetRetry() > 0 {
+		var exhausted bool
+		var err error
+		channel, _, exhausted, err = service.PickFailoverChannel(retryParam)
+		if exhausted {
+			return nil, nil
+		}
+		if err != nil {
+			selectErr = &service.ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: err.Error()}
+		}
+	} else {
+		channel, _, selectErr = service.SelectChannelForRequest(c, modelName, retryParam)
+	}
 	if selectErr != nil {
 		message := selectErr.Message
 		if selectErr.MessageID != "" {
