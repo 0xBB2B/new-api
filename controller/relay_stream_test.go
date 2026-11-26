@@ -91,7 +91,7 @@ func TestRelayKeepAliveDuringImagePreparation(t *testing.T) {
 	select {
 	case <-imageRequested:
 	default:
-		t.Fatal("the request never reached image preparation")
+		require.FailNow(t, "the request never reached image preparation")
 	}
 	releaseOnce.Do(func() { close(releaseImage) })
 	remaining, err := io.ReadAll(reader)
@@ -160,7 +160,7 @@ func TestRelayKeepAliveAcrossUpstreamRetries(t *testing.T) {
 	select {
 	case <-retryStarted:
 	case <-time.After(time.Second):
-		t.Fatal("the upstream retry did not start")
+		require.FailNow(t, "the upstream retry did not start")
 	}
 	reader := bufio.NewReader(response.Body)
 	for range 2 {
@@ -326,7 +326,7 @@ func TestStreamKeepAliveCancellation(t *testing.T) {
 	select {
 	case <-stopped:
 	case <-time.After(time.Second):
-		t.Fatal("keepalive did not stop after client cancellation")
+		require.FailNow(t, "keepalive did not stop after client cancellation")
 	}
 	_, err := c.Writer.WriteString("data: done\n\n")
 	require.NoError(t, err)

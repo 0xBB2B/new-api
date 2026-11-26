@@ -24,7 +24,6 @@ import (
 )
 
 func TestGeminiResponsesHandlerReturnsOpenAIResponsesJSON(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -71,7 +70,6 @@ func TestGeminiResponsesHandlerReturnsOpenAIResponsesJSON(t *testing.T) {
 }
 
 func TestGeminiResponsesHandlerTagsReasoningID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -120,7 +118,6 @@ func TestGeminiResponsesHandlerTagsReasoningID(t *testing.T) {
 }
 
 func TestGeminiResponsesHandlerTagsMessageID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -166,7 +163,6 @@ func TestGeminiResponsesHandlerTagsMessageID(t *testing.T) {
 }
 
 func TestGeminiResponsesHandlerClosesBodyOnReadError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -181,7 +177,6 @@ func TestGeminiResponsesHandlerClosesBodyOnReadError(t *testing.T) {
 }
 
 func TestGeminiResponsesStreamHandlerReturnsOpenAIResponsesSSE(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -320,7 +315,6 @@ func TestGeminiResponsesStreamHandlerPreBodyFailure(t *testing.T) {
 			{"no probe", nil},
 		} {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
-				gin.SetMode(gin.TestMode)
 				oldStreamingTimeout := constant.StreamingTimeout
 				constant.StreamingTimeout = 300
 				t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
@@ -357,7 +351,6 @@ func TestGeminiResponsesStreamHandlerProbeReceivesReturnedError(t *testing.T) {
 		answer bool
 	}{{"probe true", true}, {"probe false", false}} {
 		t.Run(mode.name, func(t *testing.T) {
-			gin.SetMode(gin.TestMode)
 			oldStreamingTimeout := constant.StreamingTimeout
 			constant.StreamingTimeout = 300
 			t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
@@ -388,7 +381,6 @@ func TestGeminiResponsesStreamHandlerProbeReceivesReturnedError(t *testing.T) {
 }
 
 func TestGeminiResponsesStreamHandlerRealRuleProbeKeepsBadFrameBehavior(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	oldStreamingTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 300
 	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
@@ -434,7 +426,6 @@ func TestGeminiResponsesStreamHandlerFailsOverWithoutFinishOrBody(t *testing.T) 
 			{"no probe", nil},
 		} {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
-				gin.SetMode(gin.TestMode)
 				oldStreamingTimeout := constant.StreamingTimeout
 				constant.StreamingTimeout = 300
 				t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
