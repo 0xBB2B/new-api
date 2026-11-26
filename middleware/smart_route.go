@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -175,28 +176,23 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	realModel, groups := tierModel(finalTier)
 
 	client := clientEffort(endpoint, raw)
-	var effort smartroute.EffortDecision
+	tierConfig := route.Tiers[finalTier]
+	sessionEffort, sessionSource := "", ""
 	if finalTier == smartroute.RouteAdvisor {
-		effort = smartroute.EffortDecision{Value: client, Source: smartroute.EffortSourceClient}
-		if client == "" {
-			effort.Source = smartroute.EffortSourceUnset
-		}
-	} else {
-		sessionEffort, sessionSource := "", ""
-		if state.CurrentRoute == finalTier {
-			sessionEffort, sessionSource = state.Effort, state.EffortSource
-		}
-		effort = smartroute.ResolveTierEffort(smartroute.EffortInput{
-			Tier:          route.Tiers[finalTier],
-			IsUserTurn:    isUserTurn,
-			Labels:        outcome.Labels,
-			ScorerFailed:  outcome.Failure != "",
-			ClientEffort:  client,
-			SessionEffort: sessionEffort,
-			SessionSource: sessionSource,
-			Capability:    smartroute.EffectiveThinkingCapability(realModel),
-		})
+		tierConfig = operation_setting.SmartRouteTier{}
+	} else if state.CurrentRoute == finalTier {
+		sessionEffort, sessionSource = state.Effort, state.EffortSource
 	}
+	effort := smartroute.ResolveTierEffort(smartroute.EffortInput{
+		Tier:          tierConfig,
+		IsUserTurn:    isUserTurn,
+		Labels:        outcome.Labels,
+		ScorerFailed:  outcome.Failure != "",
+		ClientEffort:  client,
+		SessionEffort: sessionEffort,
+		SessionSource: sessionSource,
+		Capability:    smartroute.EffectiveThinkingCapability(realModel),
+	})
 
 	scorerBilled := outcome.Settle != nil
 	if scorerBilled {
@@ -252,7 +248,8 @@ func clientEffort(endpoint string, raw []byte) string {
 		}
 		return ojson.GetBytes(raw, "output_config.effort").String()
 	}
-	return ojson.GetBytes(raw, "reasoning_effort").String()
+	effort, _ := relaycommon.ReasoningEffortFromJSON(types.RelayFormatOpenAI, raw)
+	return effort
 }
 
 func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byte, endpoint, realModel string, effort smartroute.EffortDecision, client string) error {
@@ -301,6 +298,9 @@ func rewriteSmartRouteEffort(body []byte, endpoint, realModel string, effort sma
 		return ojson.SetRawBytes(body, "reasoning", encoded)
 	case string(constant.EndpointTypeAnthropic):
 		if !effort.Drop && reasoning.IsKnownClaudeModel(realModel) {
+			if effort.Source == smartroute.EffortSourceClient && !ojson.GetBytes(body, "thinking").Exists() {
+				return ojson.SetBytes(body, "output_config.effort", effort.Value)
+			}
 			return renderClaudeEffort(body, realModel, effort.Value)
 		}
 		switch {

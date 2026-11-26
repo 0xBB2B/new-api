@@ -1081,6 +1081,39 @@ func TestSmartRouteDistributeEffortOverrideCoversReasoningObject(t *testing.T) {
 		assert.NotContains(t, string(seen.body), `"reasoning":`)
 	})
 
+	t.Run("chat drops the whole reasoning object even with duplicate keys", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/chat/completions", auto: true, tokenID: 9119,
+			body: `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}],"reasoning":{"effort":"low","effort":"low","max_tokens":100,"exclude":true}}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning_effort"))
+		assert.Nil(t, smartBodyField(t, seen.body, "reasoning"))
+		assert.Zero(t, strings.Count(string(seen.body), `"effort"`))
+		assert.NotContains(t, string(seen.body), `"max_tokens"`)
+		assert.NotContains(t, string(seen.body), `"exclude"`)
+	})
+
+	t.Run("chat drops differently cased reasoning keys", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/chat/completions", auto: true, tokenID: 9120,
+			body: `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}],"reasoning":{"MAX_TOKENS":30000,"Effort":"xhigh"}}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning_effort"))
+		assert.Nil(t, smartBodyField(t, seen.body, "reasoning"))
+		assert.NotContains(t, strings.ToLower(string(seen.body)), `"max_tokens"`)
+		assert.NotContains(t, string(seen.body), `"Effort"`)
+	})
+
 	t.Run("responses rewrites the whole reasoning object", func(t *testing.T) {
 		setupSmartRouteDistributeTest(t)
 		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
@@ -1108,20 +1141,24 @@ const (
 
 type effortTier struct{ model, fields string }
 
-func setupSmartEffortRoute(t *testing.T, upstreamModel, tierFields, capabilities string) int {
+func setupSmartEffortRoute(t *testing.T, upstreamModel, tierFields, capabilities string, advisorModel ...string) int {
 	t.Helper()
 	tier := effortTier{upstreamModel, tierFields}
-	return setupSmartEffortTiers(t, tier, tier, tier, capabilities)
+	return setupSmartEffortTiers(t, tier, tier, tier, capabilities, advisorModel...)
 }
 
-func setupSmartEffortTiers(t *testing.T, simple, normal, hard effortTier, capabilities string) int {
+func setupSmartEffortTiers(t *testing.T, simple, normal, hard effortTier, capabilities string, advisorModel ...string) int {
 	t.Helper()
+	advisor := "eff-advisor"
+	if len(advisorModel) > 0 {
+		advisor = advisorModel[0]
+	}
 	setupSmartRouteDistributeTest(t)
 
 	priority := int64(0)
 	weight := uint(100)
 	var models []string
-	for _, name := range []string{simple.model, normal.model, hard.model, "eff-advisor"} {
+	for _, name := range []string{simple.model, normal.model, hard.model, advisor} {
 		if !slices.Contains(models, name) {
 			models = append(models, name)
 		}
@@ -1144,9 +1181,9 @@ func setupSmartEffortTiers(t *testing.T, simple, normal, hard effortTier, capabi
 	operation_setting.LoadSmartRoutesFromJSONString(fmt.Sprintf(`[{"name":"eff","endpoints":["openai-response","openai","anthropic"],
  "tiers":{"simple":%s,"normal":%s,"hard":%s},
  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
- "advisor":{"model":"eff-advisor","groups":["default"],"after_dissatisfied":1},
+ "advisor":{"model":%q,"groups":["default"],"after_dissatisfied":1},
  "downgrade_max_history_tokens":4000,"confidence_threshold":0.6,"simple_max_message_chars":500}]`,
-		tierJSON(simple), tierJSON(normal), tierJSON(hard)))
+		tierJSON(simple), tierJSON(normal), tierJSON(hard), advisor))
 
 	recordEfforts := map[string][]string{
 		"gpt-5.6-sol":  {"none", "low", "medium", "high", "xhigh", "max"},
@@ -1460,19 +1497,173 @@ func TestSmartRouteDistributeEffortContinuationReusesSessionEffort(t *testing.T)
 	}
 }
 
-func TestSmartRouteDistributeEffortAdvisorKeepsClientValue(t *testing.T) {
-	tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{"eff-advisor":["high"]}`)
+func TestSmartRouteDistributeEffortAdvisorClampsClientValue(t *testing.T) {
+	const lowToMax = `{"eff-advisor":["low","medium","high","xhigh","max"]}`
+	for _, tc := range []struct {
+		name, capabilities, path, extra string
+		wantEffort                      any
+		wantLog                         map[string]any
+	}{
+		{"none moves to the lowest supported", lowToMax, "/v1/responses", `"reasoning":{"effort":"none"}`,
+			"low", map[string]any{"value": "low", "source": "client", "from": "none"}},
+		{"anthropic disabled thinking moves to the lowest supported", lowToMax, "/v1/messages", `"thinking":{"type":"disabled"}`,
+			"low", map[string]any{"value": "low", "source": "client", "from": "none"}},
+		{"supported value kept", lowToMax, "/v1/responses", `"reasoning":{"effort":"high"}`,
+			"high", map[string]any{"value": "high", "source": "client"}},
+		{"minimal moves to low", lowToMax, "/v1/responses", `"reasoning":{"effort":"minimal"}`,
+			"low", map[string]any{"value": "low", "source": "client", "from": "minimal"}},
+		{"max moves to the highest supported", `{"eff-advisor":["low","medium","high"]}`, "/v1/responses", `"reasoning":{"effort":"max"}`,
+			"high", map[string]any{"value": "high", "source": "client", "from": "max"}},
+		{"tie between two supported picks the higher", `{"eff-advisor":["low","high"]}`, "/v1/responses", `"reasoning":{"effort":"medium"}`,
+			"high", map[string]any{"value": "high", "source": "client", "from": "medium"}},
+		{"model without thinking drops the effort", `{"eff-advisor":[]}`, "/v1/responses", `"reasoning":{"effort":"medium"}`,
+			nil, map[string]any{"value": "", "source": "no_thinking"}},
+		{"client did not send", lowToMax, "/v1/responses", ``,
+			nil, map[string]any{"value": "", "source": "client_unset"}},
+		{"unknown client value kept", lowToMax, "/v1/responses", `"reasoning":{"effort":"turbo"}`,
+			"turbo", map[string]any{"value": "turbo", "source": "client"}},
+		{"unconfirmed capability falls back to low medium high", `{}`, "/v1/responses", `"reasoning":{"effort":"xhigh"}`,
+			"high", map[string]any{"value": "high", "source": "client", "from": "xhigh"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, tc.capabilities)
+			installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
+			body := smartEffortResponsesBody("advisor-effort-"+tc.name, tc.extra)
+			effortPath := []string{"reasoning", "effort"}
+			if tc.path == "/v1/messages" {
+				body = smartEffortMessagesBody("advisor-effort-"+tc.name, tc.extra)
+				effortPath = []string{"output_config", "effort"}
+			}
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, tokenID: tokenID, body: body})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, "eff-advisor", seen.originalModel)
+			assert.Equal(t, tc.wantEffort, smartBodyField(t, seen.body, effortPath...))
+			assert.Equal(t, tc.wantLog, seen.routeLog["effort"])
+			if tc.path == "/v1/messages" {
+				assert.Nil(t, smartBodyField(t, seen.body, "thinking"))
+			}
+		})
+	}
+}
+
+func TestSmartRouteDistributeEffortChatReasoningObjectClamped(t *testing.T) {
+	const lowToMax = `{"eff-advisor":["low","medium","high","xhigh","max"],"gpt-5.6-sol":["low","medium","high","xhigh","max"]}`
+	const noThinking = `{"eff-advisor":[],"gpt-5.6-sol":[]}`
+	fromNone := map[string]any{"value": "low", "source": "client", "from": "none"}
+	noThinkingLog := map[string]any{"value": "", "source": "no_thinking"}
+	for _, tc := range []struct {
+		name, tierFields, capabilities, extra string
+		advisor                               bool
+		wantEffort                            any
+		wantLog                               map[string]any
+		wantReasoning                         map[string]any
+	}{
+		{"advisor none moves to low", effortFollowMediumXhigh, lowToMax, `"reasoning":{"effort":"none"}`, true, "low", fromNone, nil},
+		{"inherit none moves to low", `"effort_mode":""`, lowToMax, `"reasoning":{"effort":"none"}`, false, "low", fromNone, nil},
+		{"advisor disabled reasoning counts as none", effortFollowMediumXhigh, lowToMax, `"reasoning":{"enabled":false}`, true, "low", fromNone, nil},
+		{"inherit disabled reasoning counts as none", `"effort_mode":""`, lowToMax, `"reasoning":{"enabled":false}`, false, "low", fromNone, nil},
+		{"advisor zero token budget counts as none", effortFollowMediumXhigh, lowToMax, `"reasoning":{"max_tokens":0}`, true, "low", fromNone, nil},
+		{"advisor large token budget counts as high and moves to medium", effortFollowMediumXhigh, `{"eff-advisor":["low","medium"]}`, `"reasoning":{"max_tokens":20000}`, true, "medium",
+			map[string]any{"value": "medium", "source": "client", "from": "high"}, nil},
+		{"advisor without thinking drops the reasoning object", effortFollowMediumXhigh, noThinking, `"reasoning":{"effort":"medium"}`, true, nil, noThinkingLog, nil},
+		{"inherit without thinking drops the reasoning object", `"effort_mode":""`, noThinking, `"reasoning":{"effort":"medium"}`, false, nil, noThinkingLog, nil},
+		{"advisor enabled reasoning counts as high and drops the whole reasoning object", effortFollowMediumXhigh, `{"eff-advisor":["low","medium"]}`, `"reasoning":{"enabled":true,"exclude":true}`, true, "medium",
+			map[string]any{"value": "medium", "source": "client", "from": "high"}, nil},
+		{"advisor supported effort leaves the reasoning object untouched", effortFollowMediumXhigh, lowToMax, `"reasoning":{"enabled":true,"exclude":true}`, true, nil,
+			map[string]any{"value": "high", "source": "client"}, map[string]any{"enabled": true, "exclude": true}},
+		{"inherit zero token budget counts as none", `"effort_mode":""`, lowToMax, `"reasoning":{"max_tokens":0}`, false, "low", fromNone, nil},
+		{"advisor without thinking drops the token budget", effortFollowMediumXhigh, noThinking, `"reasoning":{"max_tokens":2000}`, true, nil, noThinkingLog, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", tc.tierFields, tc.capabilities)
+			scorer := smartLabels("plan", "high", "neutral")
+			if tc.advisor {
+				scorer = smartLabels("chat_qa", "low", "dissatisfied")
+			}
+			installSmartScorerStub(t, scorer, "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{
+				path: "/v1/chat/completions", tokenID: tokenID,
+				body: fmt.Sprintf(`{"model":"eff","messages":[{"role":"user","content":%q}],%s}`, "chat-reasoning-"+tc.name, tc.extra),
+			})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			if tc.advisor {
+				assert.Equal(t, "eff-advisor", seen.originalModel)
+			}
+			assert.Equal(t, tc.wantEffort, smartBodyField(t, seen.body, "reasoning_effort"))
+			if tc.wantReasoning == nil {
+				assert.Nil(t, smartBodyField(t, seen.body, "reasoning"))
+			} else {
+				assert.Equal(t, tc.wantReasoning, smartBodyField(t, seen.body, "reasoning"))
+			}
+			assert.Equal(t, tc.wantLog, seen.routeLog["effort"])
+			assert.NotContains(t, string(seen.body), `"none"`)
+		})
+	}
+}
+
+func TestSmartRouteDistributeEffortAnthropicOutputConfigOnly(t *testing.T) {
+	const sonnetCaps = `{"eff-advisor":["low","medium","high","max"],"claude-sonnet-4-6":["low","medium","high","max"],"gpt-5.6-sol":["low","medium","high","max"]}`
+	const extra = `"output_config":{"effort":"xhigh"},"temperature":0.3`
+	for _, tc := range []struct {
+		name, model, tierFields string
+		advisorModel            string
+		wantEffort              any
+		wantThinking            any
+		wantTemperature         any
+	}{
+		{"advisor moves xhigh to max", "gpt-5.6-sol", effortFollowMediumXhigh, "claude-sonnet-4-6", "max", nil, 0.3},
+		{"inherit moves xhigh to max", "claude-sonnet-4-6", `"effort_mode":""`, "", "max", nil, 0.3},
+		{"fixed keeps the pre-change handling", "claude-sonnet-4-6", effortFixedMedium, "", "medium", map[string]any{"type": "adaptive"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var advisorModel []string
+			scorer := smartLabels("plan", "high", "neutral")
+			if tc.advisorModel != "" {
+				advisorModel = []string{tc.advisorModel}
+				scorer = smartLabels("chat_qa", "low", "dissatisfied")
+			}
+			tokenID := setupSmartEffortRoute(t, tc.model, tc.tierFields, sonnetCaps, advisorModel...)
+			installSmartScorerStub(t, scorer, "", nil)
+
+			recorder, seen := serveSmartRoute(t, smartRequest{
+				path: "/v1/messages", tokenID: tokenID,
+				body: smartEffortMessagesBody("anthropic-output-config-"+tc.name, extra),
+			})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			if tc.advisorModel != "" {
+				assert.Equal(t, tc.advisorModel, seen.originalModel)
+			}
+			assert.Equal(t, tc.wantEffort, smartBodyField(t, seen.body, "output_config", "effort"))
+			assert.Equal(t, tc.wantThinking, smartBodyField(t, seen.body, "thinking"))
+			assert.Equal(t, tc.wantTemperature, smartBodyField(t, seen.body, "temperature"))
+		})
+	}
+}
+
+func TestSmartRouteDistributeEffortAdvisorToolContinuationClampsClientValue(t *testing.T) {
+	tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{"eff-advisor":["low","medium","high"]}`)
 	installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
+
+	first, _ := serveSmartRoute(t, smartRequest{
+		path: "/v1/responses", tokenID: tokenID,
+		body: smartEffortResponsesBody("advisor-continue-clamp", `"reasoning":{"effort":"high"}`),
+	})
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 
 	recorder, seen := serveSmartRoute(t, smartRequest{
 		path: "/v1/responses", tokenID: tokenID,
-		body: smartEffortResponsesBody("advisor-effort", `"reasoning":{"effort":"low"}`),
+		body: `{"model":"eff","input":[{"role":"user","content":"advisor-continue-clamp"},{"type":"function_call_output","call_id":"c1","output":"ok"}],"reasoning":{"effort":"none"}}`,
 	})
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.Equal(t, "eff-advisor", seen.originalModel)
 	assert.Equal(t, "low", smartBodyField(t, seen.body, "reasoning", "effort"))
-	assert.Equal(t, map[string]any{"value": "low", "source": "client"}, seen.routeLog["effort"])
+	assert.Equal(t, map[string]any{"value": "low", "source": "client", "from": "none"}, seen.routeLog["effort"])
 }
 
 func TestSmartRouteDistributeEffortContinuationRecomputesWhenTierDiffersFromSession(t *testing.T) {
