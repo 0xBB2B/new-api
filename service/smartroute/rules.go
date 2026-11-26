@@ -83,7 +83,7 @@ func ParseScorerOutput(raw string, expectedFeedback int) (ScorerLabels, error) {
 
 	var parsed struct {
 		TaskType    string            `json:"task_type"`
-		Reasoning   string            `json:"reasoning"`
+		Reasoning   string            `json:"reasoning_level"`
 		Workload    string            `json:"workload"`
 		Risk        string            `json:"risk"`
 		Domain      string            `json:"domain"`
