@@ -36,7 +36,7 @@ const (
 	scorerTestUserID   = 7001
 	scorerTestQuota    = 1_000_000
 	scorerTestRequest  = "req-scorer-test"
-	scorerLabelsJSON   = `{"task_type":"plan","reasoning":"high","workload":"few_steps","risk":"low","domain":"code","confidence":0.9,"feedback":["neutral"]}`
+	scorerLabelsJSON   = `{"task_type":"plan","reasoning_level":"high","workload":"few_steps","risk":"low","domain":"code","confidence":0.9,"feedback":["neutral"]}`
 	scorerChargeAtRate = 10000 // 0.01 美元 × QuotaPerUnit(500000) × 分组倍率 2
 )
 
@@ -1015,7 +1015,7 @@ func TestRunSmartRouteScorer_InvalidReplyWritesServerWarning(t *testing.T) {
 		wantNotInLog []string
 	}{
 		{"non-JSON text", "I think this is a planning task.", []string{"smart-a", "scorer-x", "I think this is a planning task.", nonJSONErr.Error()}, nil},
-		{"label outside the allowed options", `{"task_type":"nonsense","reasoning":"high","workload":"few_steps","risk":"low","domain":"code","confidence":0.9,"feedback":["neutral"]}`, []string{"smart-a", "scorer-x", "nonsense", "unknown label value"}, nil},
+		{"label outside the allowed options", `{"task_type":"nonsense","reasoning_level":"high","workload":"few_steps","risk":"low","domain":"code","confidence":0.9,"feedback":["neutral"]}`, []string{"smart-a", "scorer-x", "nonsense", "unknown label value"}, nil},
 		{"long reply is cut to 500 characters", head + strings.Repeat("乙", 1500), []string{head}, []string{"乙"}},
 		{"empty reply", "", []string{"smart-a", "scorer-x", "(empty)"}, nil},
 	}

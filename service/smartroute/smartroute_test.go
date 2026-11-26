@@ -493,7 +493,7 @@ func TestRequestEndpointFromPath(t *testing.T) {
 	}
 }
 
-const validScorerJSON = `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"effort_score":0.5,"feedback":["neutral","satisfied"]}`
+const validScorerJSON = `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"effort_score":0.5,"feedback":["neutral","satisfied"]}`
 
 func TestParseScorerOutput(t *testing.T) {
 	tests := []struct {
@@ -509,6 +509,8 @@ func TestParseScorerOutput(t *testing.T) {
 		{name: "confidence 1 is valid", raw: strings.Replace(validScorerJSON, "0.9", "1", 1), wantFeedback: 2},
 		{name: "unknown task_type", raw: strings.Replace(validScorerJSON, "lookup", "poem", 1), wantFeedback: 2, wantErr: true},
 		{name: "unknown reasoning", raw: strings.Replace(validScorerJSON, `"low","workload"`, `"extreme","workload"`, 1), wantFeedback: 2, wantErr: true},
+		{name: "reasoning_level is a sentence", raw: strings.Replace(validScorerJSON, `"reasoning_level":"low"`, `"reasoning_level":"The request needs careful analysis of trade-offs."`, 1), wantFeedback: 2, wantErr: true},
+		{name: "legacy reasoning field alone is rejected", raw: strings.Replace(validScorerJSON, `"reasoning_level"`, `"reasoning"`, 1), wantFeedback: 2, wantErr: true},
 		{name: "unknown workload", raw: strings.Replace(validScorerJSON, "one_step", "zero_step", 1), wantFeedback: 2, wantErr: true},
 		{name: "unknown risk", raw: strings.Replace(validScorerJSON, `"risk":"low"`, `"risk":"medium"`, 1), wantFeedback: 2, wantErr: true},
 		{name: "unknown domain", raw: strings.Replace(validScorerJSON, `"code"`, `"legal"`, 1), wantFeedback: 2, wantErr: true},
@@ -518,15 +520,15 @@ func TestParseScorerOutput(t *testing.T) {
 		{name: "domain writing is not an option", raw: strings.Replace(validScorerJSON, `"code"`, `"writing"`, 1), wantFeedback: 2, wantErr: true},
 		{name: "confidence above 1", raw: strings.Replace(validScorerJSON, "0.9", "1.2", 1), wantFeedback: 2, wantErr: true},
 		{name: "confidence below 0", raw: strings.Replace(validScorerJSON, "0.9", "-0.1", 1), wantFeedback: 2, wantErr: true},
-		{name: "confidence missing", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","feedback":["neutral","satisfied"]}`, wantFeedback: 2, wantErr: true},
+		{name: "confidence missing", raw: `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","feedback":["neutral","satisfied"]}`, wantFeedback: 2, wantErr: true},
 		{name: "feedback shorter than expected is kept as is", raw: validScorerJSON, wantFeedback: 3, wantValues: []string{"neutral", "satisfied"}},
 		{name: "feedback longer than expected keeps the last values", raw: validScorerJSON, wantFeedback: 1, wantValues: []string{"satisfied"}},
-		{name: "live sample with one feedback value for two messages", raw: `{"task_type":"chat_qa","reasoning":"low","workload":"one_step","risk":"low","domain":"other","confidence":0.95,"feedback":["neutral"]}`, wantFeedback: 2, wantValues: []string{"neutral"}},
-		{name: "unknown feedback value is rejected even when truncated away", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":["happy","satisfied"]}`, wantFeedback: 1, wantErr: true},
-		{name: "empty feedback array is kept empty", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":[]}`, wantFeedback: 2, wantValues: []string{}},
-		{name: "null feedback is rejected", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":null}`, wantFeedback: 2, wantErr: true},
+		{name: "live sample with one feedback value for two messages", raw: `{"task_type":"chat_qa","reasoning_level":"low","workload":"one_step","risk":"low","domain":"other","confidence":0.95,"feedback":["neutral"]}`, wantFeedback: 2, wantValues: []string{"neutral"}},
+		{name: "unknown feedback value is rejected even when truncated away", raw: `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":["happy","satisfied"]}`, wantFeedback: 1, wantErr: true},
+		{name: "empty feedback array is kept empty", raw: `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":[]}`, wantFeedback: 2, wantValues: []string{}},
+		{name: "null feedback is rejected", raw: `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":null}`, wantFeedback: 2, wantErr: true},
 		{name: "feedback value unknown", raw: strings.Replace(validScorerJSON, "satisfied", "happy", 1), wantFeedback: 2, wantErr: true},
-		{name: "feedback missing", raw: `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9}`, wantFeedback: 2, wantErr: true},
+		{name: "feedback missing", raw: `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9}`, wantFeedback: 2, wantErr: true},
 		{name: "not json", raw: "I think this is easy", wantFeedback: 2, wantErr: true},
 		{name: "empty", raw: "", wantFeedback: 2, wantErr: true},
 	}
@@ -547,8 +549,14 @@ func TestParseScorerOutput(t *testing.T) {
 	}
 }
 
+func TestParseScorerOutput_ReadsReasoningLevel(t *testing.T) {
+	labels, err := smartroute.ParseScorerOutput(strings.Replace(validScorerJSON, `"reasoning_level":"low"`, `"reasoning_level":"high"`, 1), 2)
+	require.NoError(t, err)
+	assert.Equal(t, "high", labels.Reasoning)
+}
+
 func TestParseScorerOutput_TruncatedFeedbackTrailingCount(t *testing.T) {
-	const tpl = `{"task_type":"lookup","reasoning":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":%s}`
+	const tpl = `{"task_type":"lookup","reasoning_level":"low","workload":"one_step","risk":"low","domain":"code","confidence":0.9,"feedback":%s}`
 	tests := []struct {
 		name     string
 		feedback string
@@ -1442,7 +1450,7 @@ const wantScorerSystemPrompt = `You are a router that labels a user's latest req
 
 Read the user messages (oldest first; earlier messages show only their beginning) and the local features, then return exactly one JSON object and nothing else:
 
-{"task_type":"","reasoning":"","effort_score":0,"workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
+{"task_type":"","reasoning_level":"","effort_score":0,"workload":"","risk":"","domain":"","confidence":0,"feedback":[]}
 
 Field rules:
 - task_type, judged on the LATEST message only, one of:
@@ -1452,7 +1460,7 @@ Field rules:
   generate = write or change content such as code, reports, documents or copy
   analyze  = analyze data, investigate a failure, research and draw a conclusion
   plan     = design a solution, architecture, strategy or multi-part plan
-- reasoning: low | medium | high. How much multi-step thinking, calculation or trade-off weighing the latest request needs.
+- reasoning_level: low | medium | high. How much multi-step thinking, calculation or trade-off weighing the latest request needs.
 - effort_score: a number from 0 to 1 for how much thinking the latest request needs. Higher when the goal is vague or the problem is hard; lower when the goal is clear and the task is simple.
 - workload: one_step | few_steps | many_steps. How many actions (reading files, searching, running tools, fetching data) it needs.
 - risk: low | high. high when the result will be published externally, used for decisions or bookkeeping, or touches production data, billing or security, and a mistake would be hard to notice.
