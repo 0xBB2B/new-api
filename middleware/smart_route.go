@@ -175,28 +175,23 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	realModel, groups := tierModel(finalTier)
 
 	client := clientEffort(endpoint, raw)
-	var effort smartroute.EffortDecision
+	tierConfig := route.Tiers[finalTier]
+	sessionEffort, sessionSource := "", ""
 	if finalTier == smartroute.RouteAdvisor {
-		effort = smartroute.EffortDecision{Value: client, Source: smartroute.EffortSourceClient}
-		if client == "" {
-			effort.Source = smartroute.EffortSourceUnset
-		}
-	} else {
-		sessionEffort, sessionSource := "", ""
-		if state.CurrentRoute == finalTier {
-			sessionEffort, sessionSource = state.Effort, state.EffortSource
-		}
-		effort = smartroute.ResolveTierEffort(smartroute.EffortInput{
-			Tier:          route.Tiers[finalTier],
-			IsUserTurn:    isUserTurn,
-			Labels:        outcome.Labels,
-			ScorerFailed:  outcome.Failure != "",
-			ClientEffort:  client,
-			SessionEffort: sessionEffort,
-			SessionSource: sessionSource,
-			Capability:    smartroute.EffectiveThinkingCapability(realModel),
-		})
+		tierConfig = operation_setting.SmartRouteTier{}
+	} else if state.CurrentRoute == finalTier {
+		sessionEffort, sessionSource = state.Effort, state.EffortSource
 	}
+	effort := smartroute.ResolveTierEffort(smartroute.EffortInput{
+		Tier:          tierConfig,
+		IsUserTurn:    isUserTurn,
+		Labels:        outcome.Labels,
+		ScorerFailed:  outcome.Failure != "",
+		ClientEffort:  client,
+		SessionEffort: sessionEffort,
+		SessionSource: sessionSource,
+		Capability:    smartroute.EffectiveThinkingCapability(realModel),
+	})
 
 	scorerBilled := outcome.Settle != nil
 	if scorerBilled {

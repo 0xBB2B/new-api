@@ -1460,19 +1460,76 @@ func TestSmartRouteDistributeEffortContinuationReusesSessionEffort(t *testing.T)
 	}
 }
 
-func TestSmartRouteDistributeEffortAdvisorKeepsClientValue(t *testing.T) {
-	tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{"eff-advisor":["high"]}`)
+func TestSmartRouteDistributeEffortAdvisorClampsClientValue(t *testing.T) {
+	const lowToMax = `{"eff-advisor":["low","medium","high","xhigh","max"]}`
+	for _, tc := range []struct {
+		name, capabilities, path, extra string
+		wantEffort                      any
+		wantLog                         map[string]any
+	}{
+		{"none moves to the lowest supported", lowToMax, "/v1/responses", `"reasoning":{"effort":"none"}`,
+			"low", map[string]any{"value": "low", "source": "client", "from": "none"}},
+		{"anthropic disabled thinking moves to the lowest supported", lowToMax, "/v1/messages", `"thinking":{"type":"disabled"}`,
+			"low", map[string]any{"value": "low", "source": "client", "from": "none"}},
+		{"supported value kept", lowToMax, "/v1/responses", `"reasoning":{"effort":"high"}`,
+			"high", map[string]any{"value": "high", "source": "client"}},
+		{"minimal moves to low", lowToMax, "/v1/responses", `"reasoning":{"effort":"minimal"}`,
+			"low", map[string]any{"value": "low", "source": "client", "from": "minimal"}},
+		{"max moves to the highest supported", `{"eff-advisor":["low","medium","high"]}`, "/v1/responses", `"reasoning":{"effort":"max"}`,
+			"high", map[string]any{"value": "high", "source": "client", "from": "max"}},
+		{"tie between two supported picks the higher", `{"eff-advisor":["low","high"]}`, "/v1/responses", `"reasoning":{"effort":"medium"}`,
+			"high", map[string]any{"value": "high", "source": "client", "from": "medium"}},
+		{"model without thinking drops the effort", `{"eff-advisor":[]}`, "/v1/responses", `"reasoning":{"effort":"medium"}`,
+			nil, map[string]any{"value": "", "source": "no_thinking"}},
+		{"client did not send", lowToMax, "/v1/responses", ``,
+			nil, map[string]any{"value": "", "source": "client_unset"}},
+		{"unknown client value kept", lowToMax, "/v1/responses", `"reasoning":{"effort":"turbo"}`,
+			"turbo", map[string]any{"value": "turbo", "source": "client"}},
+		{"unconfirmed capability falls back to low medium high", `{}`, "/v1/responses", `"reasoning":{"effort":"xhigh"}`,
+			"high", map[string]any{"value": "high", "source": "client", "from": "xhigh"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, tc.capabilities)
+			installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
+			body := smartEffortResponsesBody("advisor-effort-"+tc.name, tc.extra)
+			effortPath := []string{"reasoning", "effort"}
+			if tc.path == "/v1/messages" {
+				body = smartEffortMessagesBody("advisor-effort-"+tc.name, tc.extra)
+				effortPath = []string{"output_config", "effort"}
+			}
+
+			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, tokenID: tokenID, body: body})
+
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, "eff-advisor", seen.originalModel)
+			assert.Equal(t, tc.wantEffort, smartBodyField(t, seen.body, effortPath...))
+			assert.Equal(t, tc.wantLog, seen.routeLog["effort"])
+			if tc.path == "/v1/messages" {
+				assert.Nil(t, smartBodyField(t, seen.body, "thinking"))
+			}
+		})
+	}
+}
+
+func TestSmartRouteDistributeEffortAdvisorToolContinuationClampsClientValue(t *testing.T) {
+	tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", effortFollowMediumXhigh, `{"eff-advisor":["low","medium","high"]}`)
 	installSmartScorerStub(t, smartLabels("chat_qa", "low", "dissatisfied"), "", nil)
+
+	first, _ := serveSmartRoute(t, smartRequest{
+		path: "/v1/responses", tokenID: tokenID,
+		body: smartEffortResponsesBody("advisor-continue-clamp", `"reasoning":{"effort":"high"}`),
+	})
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 
 	recorder, seen := serveSmartRoute(t, smartRequest{
 		path: "/v1/responses", tokenID: tokenID,
-		body: smartEffortResponsesBody("advisor-effort", `"reasoning":{"effort":"low"}`),
+		body: `{"model":"eff","input":[{"role":"user","content":"advisor-continue-clamp"},{"type":"function_call_output","call_id":"c1","output":"ok"}],"reasoning":{"effort":"none"}}`,
 	})
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.Equal(t, "eff-advisor", seen.originalModel)
 	assert.Equal(t, "low", smartBodyField(t, seen.body, "reasoning", "effort"))
-	assert.Equal(t, map[string]any{"value": "low", "source": "client"}, seen.routeLog["effort"])
+	assert.Equal(t, map[string]any{"value": "low", "source": "client", "from": "none"}, seen.routeLog["effort"])
 }
 
 func TestSmartRouteDistributeEffortContinuationRecomputesWhenTierDiffersFromSession(t *testing.T) {
