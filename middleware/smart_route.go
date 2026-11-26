@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -247,10 +248,8 @@ func clientEffort(endpoint string, raw []byte) string {
 		}
 		return ojson.GetBytes(raw, "output_config.effort").String()
 	}
-	if v := ojson.GetBytes(raw, "reasoning_effort").String(); v != "" {
-		return v
-	}
-	return ojson.GetBytes(raw, "reasoning.effort").String()
+	effort, _ := relaycommon.ReasoningEffortFromJSON(types.RelayFormatOpenAI, raw)
+	return effort
 }
 
 func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byte, endpoint, realModel string, effort smartroute.EffortDecision, client string) error {

@@ -1081,6 +1081,39 @@ func TestSmartRouteDistributeEffortOverrideCoversReasoningObject(t *testing.T) {
 		assert.NotContains(t, string(seen.body), `"reasoning":`)
 	})
 
+	t.Run("chat drops the whole reasoning object even with duplicate keys", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/chat/completions", auto: true, tokenID: 9119,
+			body: `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}],"reasoning":{"effort":"low","effort":"low","max_tokens":100,"exclude":true}}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning_effort"))
+		assert.Nil(t, smartBodyField(t, seen.body, "reasoning"))
+		assert.Zero(t, strings.Count(string(seen.body), `"effort"`))
+		assert.NotContains(t, string(seen.body), `"max_tokens"`)
+		assert.NotContains(t, string(seen.body), `"exclude"`)
+	})
+
+	t.Run("chat drops differently cased reasoning keys", func(t *testing.T) {
+		setupSmartRouteDistributeTest(t)
+		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
+
+		recorder, seen := serveSmartRoute(t, smartRequest{
+			path: "/v1/chat/completions", auto: true, tokenID: 9120,
+			body: `{"model":"auto-gpt","messages":[{"role":"user","content":"design a billing system"}],"reasoning":{"MAX_TOKENS":30000,"Effort":"xhigh"}}`,
+		})
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, "high", smartBodyField(t, seen.body, "reasoning_effort"))
+		assert.Nil(t, smartBodyField(t, seen.body, "reasoning"))
+		assert.NotContains(t, strings.ToLower(string(seen.body)), `"max_tokens"`)
+		assert.NotContains(t, string(seen.body), `"Effort"`)
+	})
+
 	t.Run("responses rewrites the whole reasoning object", func(t *testing.T) {
 		setupSmartRouteDistributeTest(t)
 		installSmartScorerStub(t, smartLabels("plan", "high", "neutral"), "", nil)
@@ -1518,15 +1551,30 @@ func TestSmartRouteDistributeEffortAdvisorClampsClientValue(t *testing.T) {
 func TestSmartRouteDistributeEffortChatReasoningObjectClamped(t *testing.T) {
 	const lowToMax = `{"eff-advisor":["low","medium","high","xhigh","max"],"gpt-5.6-sol":["low","medium","high","xhigh","max"]}`
 	const noThinking = `{"eff-advisor":[],"gpt-5.6-sol":[]}`
+	fromNone := map[string]any{"value": "low", "source": "client", "from": "none"}
+	noThinkingLog := map[string]any{"value": "", "source": "no_thinking"}
 	for _, tc := range []struct {
 		name, tierFields, capabilities, extra string
 		advisor                               bool
 		wantEffort                            any
+		wantLog                               map[string]any
+		wantReasoning                         map[string]any
 	}{
-		{"advisor none moves to low", effortFollowMediumXhigh, lowToMax, `"reasoning":{"effort":"none"}`, true, "low"},
-		{"inherit none moves to low", `"effort_mode":""`, lowToMax, `"reasoning":{"effort":"none"}`, false, "low"},
-		{"advisor without thinking drops the reasoning object", effortFollowMediumXhigh, noThinking, `"reasoning":{"effort":"medium"}`, true, nil},
-		{"inherit without thinking drops the reasoning object", `"effort_mode":""`, noThinking, `"reasoning":{"effort":"medium"}`, false, nil},
+		{"advisor none moves to low", effortFollowMediumXhigh, lowToMax, `"reasoning":{"effort":"none"}`, true, "low", fromNone, nil},
+		{"inherit none moves to low", `"effort_mode":""`, lowToMax, `"reasoning":{"effort":"none"}`, false, "low", fromNone, nil},
+		{"advisor disabled reasoning counts as none", effortFollowMediumXhigh, lowToMax, `"reasoning":{"enabled":false}`, true, "low", fromNone, nil},
+		{"inherit disabled reasoning counts as none", `"effort_mode":""`, lowToMax, `"reasoning":{"enabled":false}`, false, "low", fromNone, nil},
+		{"advisor zero token budget counts as none", effortFollowMediumXhigh, lowToMax, `"reasoning":{"max_tokens":0}`, true, "low", fromNone, nil},
+		{"advisor large token budget counts as high and moves to medium", effortFollowMediumXhigh, `{"eff-advisor":["low","medium"]}`, `"reasoning":{"max_tokens":20000}`, true, "medium",
+			map[string]any{"value": "medium", "source": "client", "from": "high"}, nil},
+		{"advisor without thinking drops the reasoning object", effortFollowMediumXhigh, noThinking, `"reasoning":{"effort":"medium"}`, true, nil, noThinkingLog, nil},
+		{"inherit without thinking drops the reasoning object", `"effort_mode":""`, noThinking, `"reasoning":{"effort":"medium"}`, false, nil, noThinkingLog, nil},
+		{"advisor enabled reasoning counts as high and drops the whole reasoning object", effortFollowMediumXhigh, `{"eff-advisor":["low","medium"]}`, `"reasoning":{"enabled":true,"exclude":true}`, true, "medium",
+			map[string]any{"value": "medium", "source": "client", "from": "high"}, nil},
+		{"advisor supported effort leaves the reasoning object untouched", effortFollowMediumXhigh, lowToMax, `"reasoning":{"enabled":true,"exclude":true}`, true, nil,
+			map[string]any{"value": "high", "source": "client"}, map[string]any{"enabled": true, "exclude": true}},
+		{"inherit zero token budget counts as none", `"effort_mode":""`, lowToMax, `"reasoning":{"max_tokens":0}`, false, "low", fromNone, nil},
+		{"advisor without thinking drops the token budget", effortFollowMediumXhigh, noThinking, `"reasoning":{"max_tokens":2000}`, true, nil, noThinkingLog, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tokenID := setupSmartEffortRoute(t, "gpt-5.6-sol", tc.tierFields, tc.capabilities)
@@ -1546,7 +1594,12 @@ func TestSmartRouteDistributeEffortChatReasoningObjectClamped(t *testing.T) {
 				assert.Equal(t, "eff-advisor", seen.originalModel)
 			}
 			assert.Equal(t, tc.wantEffort, smartBodyField(t, seen.body, "reasoning_effort"))
-			assert.Nil(t, smartBodyField(t, seen.body, "reasoning", "effort"))
+			if tc.wantReasoning == nil {
+				assert.Nil(t, smartBodyField(t, seen.body, "reasoning"))
+			} else {
+				assert.Equal(t, tc.wantReasoning, smartBodyField(t, seen.body, "reasoning"))
+			}
+			assert.Equal(t, tc.wantLog, seen.routeLog["effort"])
 			assert.NotContains(t, string(seen.body), `"none"`)
 		})
 	}

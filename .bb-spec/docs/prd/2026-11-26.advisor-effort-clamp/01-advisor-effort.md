@@ -35,7 +35,7 @@ date: 2026-11-26
 - C5：顾问那一轮里的用户新消息和工具结果续跑，都按 C1～C4 处理。
 - C6：消费日志详情「智能路由」块的「思考力度」一行，顾问这一轮的写法与「不覆盖」档位相同：没换档写「<力度>（不覆盖，客户端传入）」；换成更高一档写「<力度>（不覆盖，由 <原力度> 升档）」，换成更低一档写「<力度>（不覆盖，由 <原力度> 降档）」；去掉思考参数写「未发送（模型不支持思考）」。
 - C7：三个普通档位、打分模型的力度处理，以及顾问不可用时退回档位的处理，和改动前一样；C8、C9 两条除外，它们对顾问和「不覆盖」档位同样生效。
-- C8：Chat Completions 格式的请求，顶层 `reasoning_effort` 没有值时，以 `reasoning` 对象里的 `effort` 作为客户端带的力度；需要换档或去掉思考参数时，发给上游的请求里不再保留原来那个不被支持的值。
+- C8：Chat Completions 格式的请求，客户端带的力度按网关发给上游时的同一套规则读取：顶层 `reasoning_effort` 优先；没有时看 `reasoning` 对象，`enabled` 为 false 算 none，有 `effort` 用 `effort`，只有 `max_tokens` 按预算换算成力度，只写 `enabled` 为 true 算 high；需要换档或去掉思考参数时，发给上游的请求里去掉整个 `reasoning` 对象（其中的 `exclude` 等字段一并去掉），力度写在 `reasoning_effort`。读出的力度模型支持时，请求体不改写。
 - C9：Anthropic 格式的请求只带 `output_config.effort`、没有 `thinking` 字段时，客户端带的力度换档后只改 `output_config.effort`，不替客户端打开思考，`temperature` 等采样参数原样保留。「固定」「跟随打分」档位的力度由管理员决定，按改动前的方式处理。
 
 ## 验收
@@ -46,7 +46,7 @@ date: 2026-11-26
 - [ ] C5：顾问那一轮的工具结果续跑，客户端带 none、顾问模型不支持 none → 上游收到换档后的力度。
 - [ ] C6：上面 none → low、high 照发、不支持思考三种请求，日志详情依次写「low（不覆盖，由 none 升档）」「high（不覆盖，客户端传入）」「未发送（模型不支持思考）」。
 - [ ] C7：普通档位（不覆盖、固定、跟随打分三种方式）和顾问不可用退回档位的已有测试全部照常通过。
-- [ ] C8：Chat 请求 `reasoning: {"effort": "none"}`、没有 `reasoning_effort`，交给只支持 low～max 的顾问 → 上游收到的力度是 low，请求里没有 none；「不覆盖」档位同样。
+- [ ] C8：Chat 请求 `reasoning: {"effort": "none"}`、没有 `reasoning_effort`，交给只支持 low～max 的顾问 → 上游收到的力度是 low，请求里没有 none；「不覆盖」档位同样；`reasoning: {"enabled": false}`、`reasoning: {"max_tokens": 0}` 同样得到 low。客户端 `reasoning: {"enabled": true, "exclude": true}`、模型只支持 low、medium → 上游 `reasoning_effort` 为 medium，没有 `reasoning` 对象；模型支持 high → 请求体原样不变。
 - [ ] C9：Anthropic 请求只带 `output_config.effort: "xhigh"`、不带 `thinking`、带 `temperature`，顾问是不支持 xhigh 的原生 Claude 模型 → 上游请求 `output_config.effort` 为换档后的值，没有 `thinking` 字段，`temperature` 还在；「不覆盖」档位同样；「固定」档位同样的请求，处理和改动前一样。
 
 ## 验证路径
