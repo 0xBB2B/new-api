@@ -580,7 +580,7 @@ func (g *failoverGateway) postWithHeader(t *testing.T, path, tokenKey, body stri
 	select {
 	case <-g.done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("relay handler did not finish")
+		require.FailNow(t, "relay handler did not finish")
 	}
 	return response.StatusCode, response.Header, string(payload)
 }
@@ -922,7 +922,7 @@ func TestRelaySyncFailoverStopsAfterClientDisconnect(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(3 * time.Second):
-		t.Fatal("the first channel was never requested")
+		require.FailNow(t, "the first channel was never requested")
 	}
 	cancel()
 	require.Error(t, <-clientDone)
@@ -930,7 +930,7 @@ func TestRelaySyncFailoverStopsAfterClientDisconnect(t *testing.T) {
 	select {
 	case <-gateway.done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("relay handler did not finish")
+		require.FailNow(t, "relay handler did not finish")
 	}
 
 	assert.Equal(t, []string{"A"}, upstreams.channels(), "a disconnected client must not start further attempts")

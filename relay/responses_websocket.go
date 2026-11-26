@@ -1133,34 +1133,41 @@ func selectResponsesWSChannel(c *gin.Context, modelName string, retryParam *serv
 	}) {
 		constraints.AddFilter(appdto.ChannelFilter{Kind: appdto.FilterResponsesWebSocket})
 	}
-	var channel *appmodel.Channel
-	var selectErr *service.ChannelSelectError
-	if failover {
-		var exhausted bool
-		var err error
-		channel, _, exhausted, err = service.PickFailoverChannel(retryParam)
-		if exhausted {
-			return nil, nil
+	for {
+		var channel *appmodel.Channel
+		var selectErr *service.ChannelSelectError
+		if failover {
+			var exhausted bool
+			var err error
+			channel, _, exhausted, err = service.PickFailoverChannel(retryParam)
+			if exhausted {
+				return nil, nil
+			}
+			if err != nil {
+				selectErr = &service.ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: err.Error()}
+			}
+		} else {
+			channel, _, selectErr = service.SelectChannelForRequest(c, modelName, retryParam)
 		}
-		if err != nil {
-			selectErr = &service.ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: err.Error()}
+		if selectErr != nil {
+			message := selectErr.Message
+			if selectErr.MessageID != "" {
+				message = i18n.T(c, selectErr.MessageID, selectErr.Params)
+			}
+			code := selectErr.Code
+			if code == "" {
+				code = types.ErrorCodeGetChannelFailed
+			}
+			return nil, types.NewErrorWithStatusCode(errors.New(message), code, selectErr.StatusCode, types.ErrOptionWithSkipRetry())
 		}
-	} else {
-		channel, _, selectErr = service.SelectChannelForRequest(c, modelName, retryParam)
+		err := middleware.SetupContextForSelectedChannel(c, channel, modelName)
+		if err == nil {
+			return channel, nil
+		}
+		code := err.GetErrorCode()
+		if !failover || (code != types.ErrorCodeChannelNoAvailableKey && code != types.ErrorCodeAllKeysTried) {
+			return nil, err
+		}
+		service.GetFailoverLedger(c).ExhaustChannel(channel)
 	}
-	if selectErr != nil {
-		message := selectErr.Message
-		if selectErr.MessageID != "" {
-			message = i18n.T(c, selectErr.MessageID, selectErr.Params)
-		}
-		code := selectErr.Code
-		if code == "" {
-			code = types.ErrorCodeGetChannelFailed
-		}
-		return nil, types.NewErrorWithStatusCode(errors.New(message), code, selectErr.StatusCode, types.ErrOptionWithSkipRetry())
-	}
-	if err := middleware.SetupContextForSelectedChannel(c, channel, modelName); err != nil {
-		return nil, err
-	}
-	return channel, nil
 }

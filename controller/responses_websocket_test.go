@@ -1562,6 +1562,53 @@ func TestResponsesWebSocketFailoverDial(t *testing.T) {
 	}
 }
 
+func TestResponsesWebSocketFailoverDialNeverPicksChannelWithoutEnabledKey(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		withThird    bool
+		wantChannels []string
+	}{
+		{name: "keyless channel between two failing ones", withThird: true, wantChannels: []string{"W1", "W3"}},
+		{name: "keyless channel is the last candidate", wantChannels: []string{"W1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousRetry := common.RetryTimes
+			common.RetryTimes = 5
+			t.Cleanup(func() { common.RetryTimes = previousRetry })
+			fixture := newFailoverFixture(t)
+			upstreams := &failoverUpstreams{}
+			specs := []failoverChannel{
+				{name: "W1", channelType: constant.ChannelTypeOpenAI, priority: 30, websocket: true, respond: failoverFail(http.StatusInternalServerError)},
+				{name: "W2", channelType: constant.ChannelTypeOpenAI, priority: 20, websocket: true, keys: []string{"sk-k1", "sk-k2"}, respond: failoverWebSocket},
+			}
+			if tc.withThird {
+				specs = append(specs, failoverChannel{name: "W3", channelType: constant.ChannelTypeOpenAI, priority: 10, websocket: true, respond: failoverFail(http.StatusInternalServerError)})
+			}
+			for _, spec := range specs {
+				channel := addFailoverChannel(t, upstreams, spec)
+				if spec.name == "W2" {
+					channel.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusAutoDisabled, 1: common.ChannelStatusAutoDisabled}
+					require.NoError(t, model.DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error)
+				}
+			}
+
+			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+			event := readResponsesWSTestEvent(t, fixture.client)
+
+			assert.Equal(t, tc.wantChannels, upstreams.channels())
+			assert.Equal(t, "error", event["type"])
+			encoded, err := common.Marshal(event)
+			require.NoError(t, err)
+			text := strings.ToLower(string(encoded))
+			assert.NotContains(t, text, "all_keys_tried")
+			assert.NotContains(t, text, "no available key")
+			assert.NotContains(t, text, "no_available_key")
+			fixture.closeAndWait(t)
+			assertResponsesWSAccounting(t, fixture, nil)
+		})
+	}
+}
+
 func TestResponsesWebSocketFailoverDialTriesEveryChannelOfAutoGroupBeforeNext(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	previousRetry := common.RetryTimes
