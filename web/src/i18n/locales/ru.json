@@ -2630,7 +2630,7 @@
     "Exchange rate adjustments: {{count}}": "Пересчёт по курсу: {{count}}",
     "Exchange rate is required": "Требуется курс обмена",
     "Exchange rate must be greater than 0": "Курс обмена должен быть больше 0",
-    "Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.": "Без первой попытки, считается по группам. Остальные запросы пробуют по одному разу каждый канал с этой моделью: сначала каналы подписки Claude и ChatGPT, затем остальные каналы.",
+    "Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.": "Без первой попытки, считается по группам. Остальные запросы проходят по каналам текущей группы с этой моделью, пробуя каждый включённый ключ по одному разу: сначала каналы подписки Claude и ChatGPT, затем остальные каналы. Для токена с группой auto следующая группа пробуется только при включённом параметре «Повтор между группами».",
     "Execute code in a sandbox during the response": "Выполнять код в песочнице во время ответа",
     "Executor": "Исполнитель",
     "Exhausted": "Исчерпано",

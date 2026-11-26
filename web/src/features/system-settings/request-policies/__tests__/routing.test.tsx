@@ -17,6 +17,8 @@ import {
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { useState } from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -194,7 +196,7 @@ it('session rules sit between the session defaults and the retry budget', async 
   expect(follows(defaults, table)).toBe(true)
   expect(follows(table, retries)).toBe(true)
   expect(retries).toHaveAccessibleDescription(
-    'Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.'
+    'Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.'
   )
   expect(
     screen.queryByRole('complementary', { name: 'Policy preview' })
@@ -1037,3 +1039,32 @@ it.each([
     expect(api.patch).not.toHaveBeenCalled()
   }
 )
+
+it('every locale carries the retry budget description and drops the old one', () => {
+  const oldKeys = [
+    'Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.',
+    'Maximum retries',
+    'Excludes the first attempt. Counted per group.',
+  ]
+  const newKey =
+    'Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.'
+  const read = (lang: string): Record<string, string> =>
+    JSON.parse(
+      readFileSync(
+        resolve(process.cwd(), `src/i18n/locales/${lang}.json`),
+        'utf8'
+      )
+    ).translation
+  for (const lang of ['en', 'zh', 'zh-TW', 'fr', 'ru', 'ja', 'vi']) {
+    const translation = read(lang)
+    expect(translation[newKey], lang).toBeTruthy()
+    for (const oldKey of oldKeys) {
+      expect(Object.hasOwn(translation, oldKey), `${lang}: ${oldKey}`).toBe(
+        false
+      )
+    }
+  }
+  expect(read('zh')[newKey]).toBe(
+    '不含首次，按分组计算。其他请求会把当前分组里提供该模型的渠道逐个试完：每个启用的密钥各试一次，先试 Claude 订阅、ChatGPT 订阅渠道，再试其他渠道。令牌用 auto 分组时，开了「跨分组重试」才会接着试下一个分组。'
+  )
+})

@@ -12,12 +12,12 @@ date: 2026-11-25
 **用例（主路径）**
 - 场景：管理员用中文界面打开系统设置 → 请求策略 → 会话与重试。
 - 操作：查看重试预算卡片。
-- 预期：第一个字段的标签是「异步任务最多重试次数」，输入框下面的说明是「不含首次，按分组计算。其他请求会把提供该模型的渠道各试一次：先试 Claude 订阅、ChatGPT 订阅渠道，再试其他渠道。」
+- 预期：第一个字段的标签是「异步任务最多重试次数」，输入框下面的说明是「不含首次，按分组计算。其他请求会把当前分组里提供该模型的渠道逐个试完：每个启用的密钥各试一次，先试 Claude 订阅、ChatGPT 订阅渠道，再试其他渠道。令牌用 auto 分组时，开了「跨分组重试」才会接着试下一个分组。」
 
 **用例（英文界面）**
 - 场景：界面语言切到英文。
 - 操作：同上。
-- 预期：标签是 `Maximum retries for async tasks`，说明是 `Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.`
+- 预期：标签是 `Maximum retries for async tasks`，说明是 `Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.`
 
 ### P0：作为提交视频任务的用户，我的任务重试行为和以前一样
 
@@ -33,7 +33,7 @@ date: 2026-11-25
   | 位置 | 英文 | 中文 |
   |---|---|---|
   | 标签 | `Maximum retries for async tasks` | 异步任务最多重试次数 |
-  | 说明 | `Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.` | 不含首次，按分组计算。其他请求会把提供该模型的渠道各试一次：先试 Claude 订阅、ChatGPT 订阅渠道，再试其他渠道。 |
+  | 说明 | `Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.` | 不含首次，按分组计算。其他请求会把当前分组里提供该模型的渠道逐个试完：每个启用的密钥各试一次，先试 Claude 订阅、ChatGPT 订阅渠道，再试其他渠道。令牌用 auto 分组时，开了「跨分组重试」才会接着试下一个分组。 |
 
 - C3：卡片的其他部分不变：卡片标题「重试预算」、第二个字段「自动重试状态码」的标签、占位文字和说明、页面布局。第一个输入框仍然只能填 0～99 的整数，超出范围时的报错和保存行为也不变。
 - C4：旧的标签 `Maximum retries` 和旧的说明 `Excludes the first attempt. Counted per group.`，在没有别处使用的情况下，从各语言的翻译文件里删掉。

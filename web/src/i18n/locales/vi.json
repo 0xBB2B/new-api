@@ -2630,7 +2630,7 @@
     "Exchange rate adjustments: {{count}}": "Quy đổi theo tỷ giá: {{count}}",
     "Exchange rate is required": "Cần có tỷ giá",
     "Exchange rate must be greater than 0": "Tỷ giá phải lớn hơn 0",
-    "Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.": "Không tính lần đầu, tính theo từng nhóm. Các yêu cầu khác thử mỗi kênh cung cấp mô hình đó một lần: trước tiên là kênh đăng ký Claude và ChatGPT, sau đó là các kênh khác.",
+    "Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.": "Không tính lần đầu, tính theo từng nhóm. Các yêu cầu khác đi qua các kênh cung cấp mô hình đó trong nhóm hiện tại, mỗi khóa đang bật thử một lần: trước tiên là kênh đăng ký Claude và ChatGPT, sau đó là các kênh khác. Với mã thông báo dùng nhóm auto, chỉ khi bật «Thử lại liên nhóm» thì mới thử nhóm tiếp theo.",
     "Execute code in a sandbox during the response": "Thực thi mã trong sandbox trong quá trình phản hồi",
     "Executor": "Trình thực thi",
     "Exhausted": "Đã cạn kiệt",

@@ -56,7 +56,7 @@ export function RetrySection() {
               </FormControl>
               <FormDescription>
                 {t(
-                  'Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.'
+                  'Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.'
                 )}
               </FormDescription>
               <FormMessage />

@@ -2630,7 +2630,7 @@
     "Exchange rate adjustments: {{count}}": "Exchange rate adjustments: {{count}}",
     "Exchange rate is required": "Exchange rate is required",
     "Exchange rate must be greater than 0": "Exchange rate must be greater than 0",
-    "Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.": "Excludes the first attempt. Counted per group. Other requests try each channel that serves the model once: Claude subscription and ChatGPT subscription channels first, then other channels.",
+    "Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.": "Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.",
     "Execute code in a sandbox during the response": "Execute code in a sandbox during the response",
     "Executor": "Executor",
     "Exhausted": "Exhausted",
