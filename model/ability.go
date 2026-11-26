@@ -1,8 +1,6 @@
 package model
 
 import (
-	"errors"
-	"sort"
 	"strings"
 	"sync"
 
@@ -60,57 +58,7 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
-func getPriority(group string, model string, retry int) (int, error) {
-
-	var priorities []int
-	err := DB.Model(&Ability{}).
-		Select("DISTINCT(priority)").
-		Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
-		Order("priority DESC").              // 按优先级降序排序
-		Pluck("priority", &priorities).Error // Pluck用于将查询的结果直接扫描到一个切片中
-
-	if err != nil {
-		// 处理错误
-		return 0, err
-	}
-
-	if len(priorities) == 0 {
-		// 如果没有查询到优先级，则返回错误
-		return 0, errors.New("database consistency is broken")
-	}
-
-	// 确定要使用的优先级
-	var priorityToUse int
-	if retry >= len(priorities) {
-		// 如果重试次数大于优先级数，则使用最小的优先级
-		priorityToUse = priorities[len(priorities)-1]
-	} else {
-		priorityToUse = priorities[retry]
-	}
-	return priorityToUse, nil
-}
-
-func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
-	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true)
-	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?)", group, model, true, maxPrioritySubQuery)
-	if retry != 0 {
-		priority, err := getPriority(group, model, retry)
-		if err != nil {
-			return nil, err
-		} else {
-			channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = ?", group, model, true, priority)
-		}
-	}
-
-	return channelQuery, nil
-}
-
-func GetChannel(
-	group string,
-	model string,
-	retry int,
-	filters []dto.ChannelFilter,
-) (*Channel, error) {
+func queryEnabledAbilities(group, model string, filters []dto.ChannelFilter) ([]Ability, error) {
 	var abilities []Ability
 	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).Order("priority DESC, weight DESC").Find(&abilities).Error
 	if err != nil {
@@ -126,50 +74,102 @@ func GetChannel(
 		}
 		abilities = filterAbilitiesByConstraints(abilities, model, filters)
 	}
-	if len(abilities) > 0 {
-		priorities := make([]int64, 0)
-		seen := make(map[int64]bool)
-		for _, ability := range abilities {
-			priority := int64(0)
-			if ability.Priority != nil {
-				priority = *ability.Priority
-			}
-			if !seen[priority] {
-				seen[priority] = true
-				priorities = append(priorities, priority)
-			}
-		}
-		sort.Slice(priorities, func(i, j int) bool { return priorities[i] > priorities[j] })
-		if retry >= len(priorities) {
-			retry = len(priorities) - 1
-		}
-		targetPriority := priorities[retry]
-		abilities = lo.Filter(abilities, func(ability Ability, _ int) bool {
-			return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
-		})
+	return abilities, nil
+}
+
+func abilityTiers(abilities []Ability) ([][]Ability, map[int]*Channel, error) {
+	ids := make([]int, 0, len(abilities))
+	for _, ability := range abilities {
+		ids = append(ids, ability.ChannelId)
 	}
-	channel := Channel{}
-	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
+	var channels []*Channel
+	if err := DB.Where("id IN ?", ids).Find(&channels).Error; err != nil {
+		return nil, nil, err
+	}
+	channelsByID := make(map[int]*Channel, len(channels))
+	for _, channel := range channels {
+		channelsByID[channel.Id] = channel
+	}
+	tiers := splitChannelTiers(abilities, func(ability Ability) (bool, int64) {
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
 		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
-			}
-		}
-	} else {
+		channel, ok := channelsByID[ability.ChannelId]
+		return ok && IsSubscriptionChannelType(channel.Type), priority
+	})
+	return tiers, channelsByID, nil
+}
+
+func GetChannel(
+	group string,
+	model string,
+	retry int,
+	filters []dto.ChannelFilter,
+) (*Channel, error) {
+	abilities, err := queryEnabledAbilities(group, model, filters)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
 		return nil, nil
 	}
-	err = DB.First(&channel, "id = ?", channel.Id).Error
-	return &channel, err
+	tiers, channelsByID, err := abilityTiers(abilities)
+	if err != nil {
+		return nil, err
+	}
+	abilities = tiers[min(retry, len(tiers)-1)]
+
+	// Randomly choose one
+	weightSum := uint(0)
+	for _, ability_ := range abilities {
+		weightSum += ability_.Weight + 10
+	}
+	weight := common.GetRandomInt(int(weightSum))
+	channelID := 0
+	for _, ability_ := range abilities {
+		weight -= int(ability_.Weight) + 10
+		if weight <= 0 {
+			channelID = ability_.ChannelId
+			break
+		}
+	}
+	if channel, ok := channelsByID[channelID]; ok {
+		return channel, nil
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
+// GetUntriedChannel 是缓存关闭时的 GetUntriedSatisfiedChannel。
+func GetUntriedChannel(
+	group string,
+	model string,
+	filters []dto.ChannelFilter,
+	tried func(*Channel) bool,
+) (*Channel, error) {
+	abilities, err := queryEnabledAbilities(group, model, filters)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+	tiers, channelsByID, err := abilityTiers(abilities)
+	if err != nil {
+		return nil, err
+	}
+	for _, tier := range tiers {
+		var untried []*Channel
+		for _, ability := range tier {
+			if channel, ok := channelsByID[ability.ChannelId]; ok && !tried(channel) {
+				untried = append(untried, channel)
+			}
+		}
+		if len(untried) > 0 {
+			return pickWeightedChannel(untried)
+		}
+	}
+	return nil, nil
 }
 
 // filterAbilitiesByConstraints applies the same ChannelSatisfiesFilters

@@ -339,12 +339,23 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		}
 	} else {
 		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0)}
-		for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
-			var channel *appmodel.Channel
-			channel, apiErr = selectResponsesWSChannel(c, modelName, retry)
-			if apiErr != nil {
+		service.StartFailoverLedger(c)
+		attempted := false
+		for ; ; retry.IncreaseRetry() {
+			if retry.GetRetry() > 0 && c.Request.Context().Err() != nil {
 				return apiErr
 			}
+			var channel *appmodel.Channel
+			var selectErr *types.NewAPIError
+			channel, selectErr = selectResponsesWSChannel(c, modelName, retry, attempted)
+			if selectErr != nil {
+				return selectErr
+			}
+			if channel == nil {
+				// 渠道和密钥都试完：返回最后一次建连错误
+				return apiErr
+			}
+			attempted = true
 			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
@@ -377,7 +388,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
-				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
+				decision := service.DecideRelayRetry(c, apiErr, 1)
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
 				if decision.Action == "retry" {
@@ -1115,27 +1126,48 @@ func checkResponsesWSModelAccess(c *gin.Context, modelName string) *types.NewAPI
 // selectResponsesWSChannel narrows the shared HTTP selection to channels that
 // speak the Responses WebSocket protocol and renders its outcome as a
 // non-retryable NewAPIError.
-func selectResponsesWSChannel(c *gin.Context, modelName string, retryParam *service.RetryParam) (*appmodel.Channel, *types.NewAPIError) {
+func selectResponsesWSChannel(c *gin.Context, modelName string, retryParam *service.RetryParam, failover bool) (*appmodel.Channel, *types.NewAPIError) {
 	constraints := service.GetChannelConstraints(c)
 	if !slices.ContainsFunc(constraints.Filters, func(filter appdto.ChannelFilter) bool {
 		return filter.Kind == appdto.FilterResponsesWebSocket
 	}) {
 		constraints.AddFilter(appdto.ChannelFilter{Kind: appdto.FilterResponsesWebSocket})
 	}
-	channel, _, selectErr := service.SelectChannelForRequest(c, modelName, retryParam)
-	if selectErr != nil {
-		message := selectErr.Message
-		if selectErr.MessageID != "" {
-			message = i18n.T(c, selectErr.MessageID, selectErr.Params)
+	for {
+		var channel *appmodel.Channel
+		var selectErr *service.ChannelSelectError
+		if failover {
+			var exhausted bool
+			var err error
+			channel, _, exhausted, err = service.PickFailoverChannel(retryParam)
+			if exhausted {
+				return nil, nil
+			}
+			if err != nil {
+				selectErr = &service.ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: err.Error()}
+			}
+		} else {
+			channel, _, selectErr = service.SelectChannelForRequest(c, modelName, retryParam)
 		}
-		code := selectErr.Code
-		if code == "" {
-			code = types.ErrorCodeGetChannelFailed
+		if selectErr != nil {
+			message := selectErr.Message
+			if selectErr.MessageID != "" {
+				message = i18n.T(c, selectErr.MessageID, selectErr.Params)
+			}
+			code := selectErr.Code
+			if code == "" {
+				code = types.ErrorCodeGetChannelFailed
+			}
+			return nil, types.NewErrorWithStatusCode(errors.New(message), code, selectErr.StatusCode, types.ErrOptionWithSkipRetry())
 		}
-		return nil, types.NewErrorWithStatusCode(errors.New(message), code, selectErr.StatusCode, types.ErrOptionWithSkipRetry())
+		err := middleware.SetupContextForSelectedChannel(c, channel, modelName)
+		if err == nil {
+			return channel, nil
+		}
+		code := err.GetErrorCode()
+		if !failover || (code != types.ErrorCodeChannelNoAvailableKey && code != types.ErrorCodeAllKeysTried) {
+			return nil, err
+		}
+		service.GetFailoverLedger(c).ExhaustChannel(channel)
 	}
-	if err := middleware.SetupContextForSelectedChannel(c, channel, modelName); err != nil {
-		return nil, err
-	}
-	return channel, nil
 }

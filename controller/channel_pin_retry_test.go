@@ -8,6 +8,8 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -139,6 +141,7 @@ func TestChannelAffinityRetryPriorities(t *testing.T) {
 			}
 			db := modelManagementDB(t, dialect.kind, dsn)
 			previousRetryTimes := common.RetryTimes
+			common.RetryTimes = 0
 			previousGroups := setting.UserUsableGroups2JSONString()
 			previousMaxGroups := setting.GetMaxTokenAutoGroups()
 			affinity := operation_setting.GetChannelAffinitySetting()
@@ -172,23 +175,19 @@ func TestChannelAffinityRetryPriorities(t *testing.T) {
 				for _, tc := range []struct {
 					name, mode string
 					binding    int
-					retries    int
 					autoGroups []string
 					crossGroup bool
 					want       []int
 				}{
-					{name: "ordinary routing", mode: "off", retries: 2, want: []int{24, 27, 30}},
-					{name: "affinity miss", mode: "prefer", retries: 2, want: []int{24, 27, 30}},
-					{name: "affinity hit", mode: "prefer", binding: 27, retries: 2, want: []int{27, 24, 27}},
-					{name: "no retry budget", mode: "prefer", binding: 27, want: []int{27}},
-					{name: "one retry", mode: "prefer", binding: 27, retries: 1, want: []int{27, 24}},
-					{name: "strict session", mode: "strict", binding: 27, retries: 2, want: []int{27}},
-					{name: "auto group", mode: "prefer", binding: 27, retries: 1, autoGroups: []string{"default", "vip"}, want: []int{27, 24}},
-					{name: "cross group", mode: "prefer", binding: 27, retries: 1, autoGroups: []string{"default", "vip"}, crossGroup: true, want: []int{27, 24, 34, 37}},
-					{name: "skip empty group", mode: "prefer", binding: 27, retries: 1, autoGroups: []string{"empty", "default"}, want: []int{27, 24, 27}},
+					{name: "ordinary routing", mode: "off", want: []int{24, 27, 30}},
+					{name: "affinity miss", mode: "prefer", want: []int{24, 27, 30}},
+					{name: "affinity hit tries the bound channel first", mode: "prefer", binding: 27, want: []int{27, 24, 30}},
+					{name: "strict session", mode: "strict", binding: 27, want: []int{27}},
+					{name: "auto group without cross group retry", mode: "prefer", binding: 27, autoGroups: []string{"default", "vip"}, want: []int{27, 24, 30}},
+					{name: "cross group", mode: "prefer", binding: 27, autoGroups: []string{"default", "vip"}, crossGroup: true, want: []int{27, 24, 30, 34, 37}},
+					{name: "skip empty group", mode: "prefer", binding: 27, autoGroups: []string{"empty", "default"}, want: []int{27, 24, 30}},
 				} {
 					t.Run(fmt.Sprintf("cache=%t/%s", cached, tc.name), func(t *testing.T) {
-						common.RetryTimes = tc.retries
 						*affinity = operation_setting.ChannelAffinitySetting{
 							Enabled: true, DefaultTTLSeconds: 60, MaxEntries: 100,
 							Rules: []operation_setting.ChannelAffinityRule{{
@@ -215,24 +214,25 @@ func TestChannelAffinityRetryPriorities(t *testing.T) {
 						channel, _, selectionErr := service.SelectChannelForRequest(ctx, modelName, &service.RetryParam{Ctx: ctx, TokenGroup: group, ModelName: modelName})
 						require.Nil(t, selectionErr)
 						require.NotNil(t, channel)
+						common.SetContextKey(ctx, constant.ContextKeyChannelId, channel.Id)
+						ledger := service.StartFailoverLedger(ctx)
 						retry := &service.RetryParam{Ctx: ctx, TokenGroup: group, ModelName: modelName}
 						upstreamErr := types.NewOpenAIError(errors.New("upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError)
 						var attempts []int
-						for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
-							if len(attempts) > 0 {
-								var err error
-								channel, _, err = service.CacheGetRandomSatisfiedChannel(retry)
-								require.NoError(t, err)
-								if channel == nil {
-									break
-								}
-							}
+						for {
 							service.AppendUsedChannel(ctx, channel.Id)
 							attempts = append(attempts, channel.Id)
-							require.LessOrEqual(t, len(attempts), len(tc.want), "retry budget must not increase")
-							if service.DecideRelayRetry(ctx, upstreamErr, common.RetryTimes-retry.GetRetry()).Action != "retry" {
+							require.LessOrEqual(t, len(attempts), len(tc.want), "every channel is tried at most once")
+							if service.DecideRelayRetry(ctx, upstreamErr, 1).Action != "retry" {
 								break
 							}
+							next, _, exhausted, err := service.PickFailoverChannel(retry)
+							require.NoError(t, err)
+							if exhausted {
+								break
+							}
+							ledger.Record(next.Id, 0)
+							channel = next
 						}
 						assert.Equal(t, tc.want, attempts)
 					})
@@ -451,4 +451,38 @@ func TestRelayChannelAffinityAfterFinalError(t *testing.T) {
 			assert.Equal(t, tc.wantBound, found)
 		})
 	}
+}
+
+func TestRelayTaskRetryStaysBoundedByRetryTimes(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	db := modelManagementDB(t, "sqlite", "")
+	previousRetryTimes := common.RetryTimes
+	common.RetryTimes = 1
+	t.Cleanup(func() { common.RetryTimes = previousRetryTimes })
+	const modelName = "task-retry-test"
+	for id, priority := range map[int]int64{41: 30, 42: 20, 43: 10} {
+		channel := model.Channel{
+			Id: id, Name: fmt.Sprintf("channel-%d", id), Type: constant.ChannelTypeOpenAI,
+			Key: "test-only", Status: common.ChannelStatusEnabled, Models: modelName, Group: "default",
+			Priority: common.GetPointer(priority), Weight: common.GetPointer(uint(1)),
+		}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, channel.AddAbilities(db))
+	}
+	c := taskSubmissionTestContext()
+	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+	info := &relaycommon.RelayInfo{
+		UserId: 1, UsingGroup: "default", TokenGroup: "default", OriginModelName: modelName,
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+		ChannelMeta:   &relaycommon.ChannelMeta{},
+	}
+	var attempts []int
+	outcome, taskErr := executeTaskSubmissionWith(c, info, func(c *gin.Context, _ *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		attempts = append(attempts, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+		return nil, &dto.TaskError{Code: "upstream_failed", Message: "upstream down", StatusCode: http.StatusInternalServerError}
+	})
+
+	assert.Nil(t, outcome)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, []int{41, 42}, attempts, "an async task makes 1 + RetryTimes attempts")
 }

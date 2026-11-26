@@ -82,26 +82,34 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		return true
 	}
 
+	// failWith 先把要返回的错误交给扣留层（探针看到的就是它），再发 response.failed。
+	failWith := func(failure *types.NewAPIError) bool {
+		helper.RecordStreamFailure(c, failure)
+		return failResponsesStream(failure)
+	}
+
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var claudeResponse dto.ClaudeResponse
 		if err := common.UnmarshalJsonStr(data, &claudeResponse); err != nil {
 			logger.LogError(c, common.LogText("failed to unmarshal Claude stream event: %s", err.Error()))
-			if failResponsesStream(err) {
-				// A nil streamErr here is intentional: the protocol-level failure
-				// event was delivered, so only the scanner needs to stop.
-				sr.Stop(streamErr)
+			failure := types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			if failWith(failure) {
+				sr.Stop(failure)
 				return
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			streamErr = failure
 			sr.Stop(streamErr)
 			return
 		}
 		if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-			if failResponsesStream(fmt.Errorf("%s", claudeError.Message)) {
-				sr.Stop(streamErr)
+			failure := types.WithClaudeError(*claudeError, helper.UpstreamErrorStatus(nil, claudeError.Type))
+			if failWith(failure) {
+				sr.Stop(failure)
 				return
 			}
-			streamErr = types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+			streamErr = failure
 			sr.Stop(streamErr)
 			return
 		}
@@ -123,11 +131,12 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		countClaudeStreamBillableTools(info, &claudeResponse)
 		hostedEvents, consumed, err := hostedBridge.Convert(&claudeResponse, state)
 		if err != nil {
-			if failResponsesStream(err) {
-				sr.Stop(streamErr)
+			failure := types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			if failWith(failure) {
+				sr.Stop(failure)
 				return
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = failure
 			sr.Stop(streamErr)
 			return
 		}
@@ -143,11 +152,12 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &claudeResponse)
 		if err != nil {
-			if failResponsesStream(err) {
-				sr.Stop(streamErr)
+			failure := types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			if failWith(failure) {
+				sr.Stop(failure)
 				return
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = failure
 			sr.Stop(streamErr)
 			return
 		}
@@ -160,6 +170,14 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 	})
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	if failure := helper.PreContentFailure(c); failure != nil {
+		return nil, failure
+	}
+	if info.StreamStatus.ResponseOutcome() == "" {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
 	}
 	if streamFailed {
 		return claudeInfo.Usage, nil

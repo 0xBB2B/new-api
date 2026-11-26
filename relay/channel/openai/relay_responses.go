@@ -80,6 +80,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	accumulator := service.NewResponsesUsageAccumulator(info)
 
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
@@ -93,8 +95,14 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
 		service.LogResponsesStreamFailure(c, info, &streamResponse)
+		err := helper.ResponseChunkData(c, streamResponse, data)
+		if failure := helper.PreContentFailure(c); failure != nil {
+			service.ObserveResponsesOutcome(info, &streamResponse)
+			sr.Stop(failure)
+			return
+		}
 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
-		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
+		if err != nil {
 			sr.Stop(err)
 			return
 		}
@@ -106,6 +114,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
 	info.StreamStatus.RequireTerminal()
+	if failure := helper.FinishStreamHold(c, false); failure != nil {
+		return nil, failure
+	}
 	return accumulator.Finish(), nil
 }
 
@@ -178,12 +189,12 @@ func OaiResponsesBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 		case "response.failed", "response.error", "error":
 			if event.Response != nil {
 				if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil {
-					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+					streamErr = types.WithOpenAIError(*oaiErr, helper.UpstreamErrorStatus(oaiErr.Code, oaiErr.Type))
 					break
 				}
 			}
 			if event.Type == "error" && event.Message != "" {
-				streamErr = types.WithOpenAIError(types.OpenAIError{Message: event.Message, Code: event.Code, Param: event.Param}, http.StatusInternalServerError)
+				streamErr = types.WithOpenAIError(types.OpenAIError{Message: event.Message, Code: event.Code, Param: event.Param}, helper.UpstreamErrorStatus(event.Code, ""))
 				break
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", event.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)

@@ -130,10 +130,12 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	sendChunk := func(chunk *dto.GeminiChatResponse) bool {
 		results, err := service.ConvertStreamResponseChunk(c, info, state, chunk)
 		if err != nil {
-			if failResponsesStream(err) {
+			failure := types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			helper.RecordStreamFailure(c, failure)
+			if failResponsesStream(failure) {
 				return false
 			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = failure
 			return false
 		}
 		for _, result := range results {
@@ -149,12 +151,27 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		return true
 	}
 
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
+	terminalSeen := false
 	usage, streamAPIError := geminiStreamHandler(c, info, resp, func(_ string, geminiResponse *dto.GeminiChatResponse) bool {
+		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
+			terminalSeen = true
+		}
+		for _, candidate := range geminiResponse.Candidates {
+			if candidate.FinishReason != nil && *candidate.FinishReason != "" {
+				terminalSeen = true
+			}
+		}
 		hostedBridge.Observe(geminiResponse)
 		return sendChunk(geminiResponse)
 	})
 	if streamAPIError != nil {
+		helper.RecordStreamFailure(c, streamAPIError)
 		if failResponsesStream(streamAPIError) && streamErr == nil {
+			if failure := helper.PreContentFailure(c); failure != nil {
+				return nil, failure
+			}
 			return usage, nil
 		}
 		return usage, streamAPIError
@@ -163,10 +180,21 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		if info.StreamStatus.EndReason != relaycommon.StreamEndReasonClientGone {
 			failResponsesStream(fmt.Errorf("gemini stream ended unexpectedly: %s", info.StreamStatus.Summary()))
 		}
+		if failure := helper.PreContentFailure(c); failure != nil {
+			return nil, failure
+		}
 		return usage, nil
+	}
+	if failure := helper.PreContentFailure(c); failure != nil {
+		return nil, failure
 	}
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	if !terminalSeen {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
 	}
 	hostedEvents, err := hostedBridge.Finalize(state)
 	if err != nil {

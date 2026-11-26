@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -397,4 +398,19 @@ func TestInitChannelMetaResetsPerAttemptStreamStateAndPreservesRequestState(t *t
 
 func ptr[T any](value T) *T {
 	return &value
+}
+
+func TestRelayInfoFirstResponseTimeComesFromTheSucceedingAttempt(t *testing.T) {
+	info := &RelayInfo{StartTime: time.Now(), isFirstResponse: true}
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
+
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse(), "the failed attempt received an event")
+	failedAt := time.Now()
+
+	info.ResetForFailoverAttempt()
+	assert.False(t, info.HasSendResponse(), "a failed attempt leaves no first response behind")
+
+	info.SetFirstResponseTime()
+	assert.False(t, info.FirstResponseTime.Before(failedAt), "first response %v predates the failed attempt %v", info.FirstResponseTime, failedAt)
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -936,19 +937,36 @@ func setScorerCapabilities(t *testing.T, f *scorerFixture, records string) {
 	model.RefreshPricing()
 }
 
-func captureServerWarnings(t *testing.T) *bytes.Buffer {
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func captureServerWarnings(t *testing.T) *lockedBuffer {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &lockedBuffer{}
 	common.LogWriterMu.Lock()
 	prev := gin.DefaultErrorWriter
-	gin.DefaultErrorWriter = &buf
+	gin.DefaultErrorWriter = buf
 	common.LogWriterMu.Unlock()
 	t.Cleanup(func() {
 		common.LogWriterMu.Lock()
 		gin.DefaultErrorWriter = prev
 		common.LogWriterMu.Unlock()
 	})
-	return &buf
+	return buf
 }
 
 func TestRunSmartRouteScorer_EffortIsSnappedToModelCapability(t *testing.T) {

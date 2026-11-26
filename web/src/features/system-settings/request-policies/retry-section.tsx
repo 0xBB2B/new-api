@@ -44,7 +44,7 @@ export function RetrySection() {
           name='RetryTimes'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('Maximum retries')}</FormLabel>
+              <FormLabel>{t('Maximum retries for async tasks')}</FormLabel>
               <FormControl>
                 <Input
                   type='number'
@@ -55,7 +55,9 @@ export function RetrySection() {
                 />
               </FormControl>
               <FormDescription>
-                {t('Excludes the first attempt. Counted per group.')}
+                {t(
+                  'Excludes the first attempt. Counted per group. Other requests go through the channels in the current group that serve the model, trying each enabled key once: Claude subscription and ChatGPT subscription channels first, then other channels. For a token on the auto group, the next group is tried only when Cross-group retry is on.'
+                )}
               </FormDescription>
               <FormMessage />
             </FormItem>

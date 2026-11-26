@@ -94,7 +94,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		return types.WithClaudeError(*claudeError, helper.UpstreamErrorStatus(nil, claudeError.Type))
 	}
 	if claudeResponse.Type == "message_start" && claudeResponse.Message != nil {
 		info.ObserveResponseModel(claudeResponse.Message.Model)
@@ -341,9 +341,12 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		Usage:        &dto.Usage{},
 	}
 	var err *types.NewAPIError
+	helper.StartStreamHold(c)
+	defer helper.ResetStreamHold(c)
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		err = HandleStreamResponseData(c, info, claudeInfo, data)
 		if err != nil {
+			helper.RecordStreamFailure(c, err)
 			sr.Stop(err)
 		}
 	})
@@ -351,8 +354,19 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	if err != nil {
 		return nil, err
 	}
+	// Gemini 格式在收到 message_stop 后才在 HandleStreamFinalResponse 发出内容，要等它发完再判断。
+	if info.RelayFormat != types.RelayFormatGemini || info.StreamStatus.ResponseOutcome() == "" {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
+	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
+	if info.RelayFormat == types.RelayFormatGemini {
+		if failure := helper.FinishStreamHold(c, false); failure != nil {
+			return nil, failure
+		}
+	}
 	return claudeInfo.Usage, nil
 }
 
@@ -363,7 +377,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		return types.WithClaudeError(*claudeError, helper.UpstreamErrorStatus(nil, claudeError.Type))
 	}
 	info.ObserveResponseModel(claudeResponse.Model)
 	maybeMarkClaudeRefusal(c, info, claudeResponse.StopReason)

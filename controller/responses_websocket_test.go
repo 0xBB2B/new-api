@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -1491,6 +1493,176 @@ func TestResponsesWebSocketReleasesChannelAffinityWhenLaterTurnFails(t *testing.
 		_, found := service.GetPreferredChannelByAffinity(newSessionContext(), "ws-billing", "default")
 		return !found
 	}, 2*time.Second, 20*time.Millisecond, "a failed later turn releases the session binding")
+}
+
+func failoverWebSocket(name string, w http.ResponseWriter, r *http.Request) {
+	ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer ws.Close()
+	for {
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		terminal := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_%s","status":"completed","model":"ws-billing","output":[],"usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`, name)
+		if ws.WriteMessage(websocket.TextMessage, []byte(terminal)) != nil {
+			return
+		}
+	}
+}
+
+func TestResponsesWebSocketFailoverDial(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retryTimes int
+		lastUp     bool
+	}{
+		{name: "third channel connects", retryTimes: 0, lastUp: true},
+		{name: "retry times does not limit dials", retryTimes: 1, lastUp: true},
+		{name: "every channel down returns the dial error once each", retryTimes: 5, lastUp: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousRetry := common.RetryTimes
+			common.RetryTimes = tc.retryTimes
+			t.Cleanup(func() { common.RetryTimes = previousRetry })
+			fixture := newFailoverFixture(t)
+			upstreams := &failoverUpstreams{}
+			last := failoverChannel{name: "W3", channelType: constant.ChannelTypeOpenAI, priority: 10, websocket: true, respond: failoverFail(http.StatusInternalServerError)}
+			if tc.lastUp {
+				last.respond = failoverWebSocket
+			}
+			for _, spec := range []failoverChannel{
+				{name: "W1", channelType: constant.ChannelTypeOpenAI, priority: 30, websocket: true, respond: failoverFail(http.StatusInternalServerError)},
+				{name: "W2", channelType: constant.ChannelTypeOpenAI, priority: 20, websocket: true, respond: failoverFail(http.StatusInternalServerError)},
+				last,
+			} {
+				addFailoverChannel(t, upstreams, spec)
+			}
+
+			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+			event := readResponsesWSTestEvent(t, fixture.client)
+
+			assert.Equal(t, []string{"W1", "W2", "W3"}, upstreams.channels())
+			if tc.lastUp {
+				assert.Equal(t, "response.completed", event["type"])
+				response, _ := event["response"].(map[string]any)
+				assert.Equal(t, "resp_W3", response["id"])
+				fixture.closeAndWait(t)
+				assertResponsesWSAccounting(t, fixture, []int{1000})
+				return
+			}
+			assert.Equal(t, "error", event["type"])
+			encoded, err := common.Marshal(event)
+			require.NoError(t, err)
+			assert.NotContains(t, strings.ToLower(string(encoded)), "no available channel")
+			fixture.closeAndWait(t)
+			assertResponsesWSAccounting(t, fixture, nil)
+		})
+	}
+}
+
+func TestResponsesWebSocketFailoverDialNeverPicksChannelWithoutEnabledKey(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		withThird    bool
+		wantChannels []string
+	}{
+		{name: "keyless channel between two failing ones", withThird: true, wantChannels: []string{"W1", "W3"}},
+		{name: "keyless channel is the last candidate", wantChannels: []string{"W1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousRetry := common.RetryTimes
+			common.RetryTimes = 5
+			t.Cleanup(func() { common.RetryTimes = previousRetry })
+			fixture := newFailoverFixture(t)
+			upstreams := &failoverUpstreams{}
+			specs := []failoverChannel{
+				{name: "W1", channelType: constant.ChannelTypeOpenAI, priority: 30, websocket: true, respond: failoverFail(http.StatusInternalServerError)},
+				{name: "W2", channelType: constant.ChannelTypeOpenAI, priority: 20, websocket: true, keys: []string{"sk-k1", "sk-k2"}, respond: failoverWebSocket},
+			}
+			if tc.withThird {
+				specs = append(specs, failoverChannel{name: "W3", channelType: constant.ChannelTypeOpenAI, priority: 10, websocket: true, respond: failoverFail(http.StatusInternalServerError)})
+			}
+			for _, spec := range specs {
+				channel := addFailoverChannel(t, upstreams, spec)
+				if spec.name == "W2" {
+					channel.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusAutoDisabled, 1: common.ChannelStatusAutoDisabled}
+					require.NoError(t, model.DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error)
+				}
+			}
+
+			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+			event := readResponsesWSTestEvent(t, fixture.client)
+
+			assert.Equal(t, tc.wantChannels, upstreams.channels())
+			assert.Equal(t, "error", event["type"])
+			encoded, err := common.Marshal(event)
+			require.NoError(t, err)
+			text := strings.ToLower(string(encoded))
+			assert.NotContains(t, text, "all_keys_tried")
+			assert.NotContains(t, text, "no available key")
+			assert.NotContains(t, text, "no_available_key")
+			fixture.closeAndWait(t)
+			assertResponsesWSAccounting(t, fixture, nil)
+		})
+	}
+}
+
+func TestResponsesWebSocketFailoverDialTriesEveryChannelOfAutoGroupBeforeNext(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousRetry := common.RetryTimes
+	common.RetryTimes = 0
+	previousAutoGroups := setting.AutoGroups2JsonString()
+	previousUsable := setting.UserUsableGroups2JSONString()
+	previousRatios := ratio_setting.GroupRatio2JSONString()
+	previousMaxAutoGroups := setting.GetMaxTokenAutoGroups()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateMaxTokenAutoGroups(strconv.Itoa(previousMaxAutoGroups)))
+		common.RetryTimes = previousRetry
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousUsable))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousRatios))
+	})
+	fixture := newFailoverFixture(t)
+	require.NoError(t, setting.UpdateMaxTokenAutoGroups("3"))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["g1","g2"]`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto","g1":"G1","g2":"G2"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"g1":1,"g2":1}`))
+	require.NoError(t, model.DB.Model(fixture.token).Updates(map[string]any{"group": "auto", "auto_groups": `["g1","g2"]`, "cross_group_retry": true}).Error)
+	require.NoError(t, common.RDB.FlushAll(context.Background()).Err(), "the fixture's handshake cached the token with its old group")
+	upstreams := &failoverUpstreams{}
+	for _, spec := range []failoverChannel{
+		{name: "G1A", group: "g1", priority: 20, respond: failoverFail(http.StatusInternalServerError)},
+		{name: "G1B", group: "g1", priority: 10, respond: failoverFail(http.StatusInternalServerError)},
+		{name: "G2A", group: "g2", priority: 0, respond: failoverWebSocket},
+	} {
+		spec.channelType, spec.websocket = constant.ChannelTypeOpenAI, true
+		addFailoverChannel(t, upstreams, spec)
+	}
+
+	// 令牌分组在握手时确定，所以要在改完令牌后另开一条连接。
+	engine := gin.New()
+	engine.GET("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
+		c.Set(common.RequestIdKey, "responses-ws-auto-group")
+		ResponsesWebSocket(c)
+	})
+	gateway := httptest.NewServer(engine)
+	t.Cleanup(gateway.Close)
+	client, handshake, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(gateway.URL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer sk-" + fixture.token.Key}})
+	rejection := ""
+	if handshake != nil && err != nil {
+		body, _ := io.ReadAll(handshake.Body)
+		rejection = fmt.Sprintf("%d %s", handshake.StatusCode, body)
+	}
+	require.NoError(t, err, "handshake rejected: %s", rejection)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
+	event := readResponsesWSTestEvent(t, client)
+
+	assert.Equal(t, []string{"G1A", "G1B", "G2A"}, upstreams.channels())
+	assert.Equal(t, "response.completed", event["type"])
 }
 
 func TestResponsesWebSocketLogsUpstreamFailure(t *testing.T) {

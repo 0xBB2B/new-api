@@ -246,13 +246,28 @@ describe('request policy settings', () => {
     expect(api.put).not.toHaveBeenCalled()
   })
 
+  it('a retry count above 99 shows a correction and does not write options', async () => {
+    await renderPolicies('/system-settings/request-policies/retry')
+    const retries = await screen.findByRole('spinbutton', {
+      name: 'Maximum retries for async tasks',
+    })
+    fireEvent.change(retries, { target: { value: '100' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(retries).toHaveAttribute('aria-invalid', 'true'))
+    expect(
+      await screen.findByText('Too big: expected number to be <=99')
+    ).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+    expect(api.put).not.toHaveBeenCalled()
+  })
+
   it('a rejected save keeps the edited retry value and allows another save', async () => {
     vi.mocked(api.patch).mockResolvedValue({
       data: { success: false, message: 'Save rejected' },
     })
     await renderPolicies('/system-settings/request-policies/retry')
     const retries = await screen.findByRole('spinbutton', {
-      name: 'Maximum retries',
+      name: 'Maximum retries for async tasks',
     })
     fireEvent.change(retries, { target: { value: '4' } })
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -272,7 +287,7 @@ describe('request policy settings', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(
       await screen.findByRole('spinbutton', {
-        name: 'Maximum retries',
+        name: 'Maximum retries for async tasks',
       })
     ).toHaveValue(2)
     expect(api.put).not.toHaveBeenCalled()

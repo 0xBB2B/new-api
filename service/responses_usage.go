@@ -154,15 +154,18 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 	}
 }
 
-func LogResponsesStreamFailure(c *gin.Context, info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) {
-	if event == nil {
-		return
-	}
+// IsResponsesFailureEvent reports whether the event is an upstream failure:
+// an error event or a response whose status is failed.
+func IsResponsesFailureEvent(event *dto.ResponsesStreamResponse) bool {
 	var responseStatus string
 	if event.Response != nil {
 		_ = common.Unmarshal(event.Response.Status, &responseStatus)
 	}
-	if event.Type != "error" && event.Type != "response.failed" && event.Type != "response.error" && responseStatus != "failed" {
+	return event.Type == "error" || event.Type == "response.failed" || event.Type == "response.error" || responseStatus == "failed"
+}
+
+func LogResponsesStreamFailure(c *gin.Context, info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) {
+	if event == nil || !IsResponsesFailureEvent(event) {
 		return
 	}
 	oaiErr := &types.OpenAIError{Message: event.Message, Code: event.Code}

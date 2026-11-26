@@ -43,3 +43,7 @@
 | model capability | model record 上的五项可选配置：输入模态、输出模态、上下文大小、最大输出 token、thinking capability；每项可以是未配置，通过 /v1/models 的 OpenAI 格式返回 | 简体「模型能力」 |
 | capabilities JSON | 模型管理页上查看、复制、下载全部完全匹配记录的 model capability，并整体替换保存的窗口，内容按模型名组织，写法与 /v1/models 一致 | 简体「能力配置 JSON」 |
 | upstream failure event | 上游在流式 Responses 回复里表示本次请求失败的事件：`type` 为 `error`、`response.failed`、`response.error`，或事件里 `response.status` 为 `failed` | 简体「上游失败事件」 |
+| subscription channel | 渠道类型为 Claude 订阅或 ChatGPT 订阅的渠道，用订阅账号的凭据而不是按量计费的 API key 访问上游；同步请求换渠道时先试这类渠道。Sub2API 等中转类渠道不算 | 简体「订阅渠道」 |
+| synchronous request | 发出后在同一次连接里等结果的请求：各格式的对话、向量、图片、语音、重排、Realtime、Responses WebSocket | 简体「同步请求」；设置页说明里称「其他请求」 |
+| async task | 先提交、过后再查询结果的任务请求，如视频生成；重试次数由「失败重试次数」设置决定 | 简体「异步任务」 |
+| opening event | 上游流式回复里第一段正文（文字、思考、工具调用）之前的事件，如 Responses 的 `response.created`、`response.in_progress`，Claude 的 `message_start`；本身不含回答内容 | 简体「开场事件」 |

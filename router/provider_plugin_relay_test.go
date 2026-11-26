@@ -1177,7 +1177,9 @@ func TestPluginConverterMapsVendorErrors(t *testing.T) {
 			harness := newRelayHarness(t)
 			registerRelayPlugin(t, strings.ReplaceAll(vendorPlugin, "%KEY%", "relay-vendor"))
 			harness.upstream.respond = respondWith(tc.status, "application/json", tc.reply)
-			harness.install(t, harness.pluginChannel("relay-vendor", "sk-static"))
+			channel := harness.pluginChannel("relay-vendor", "sk-static\nsk-static-2")
+			channel.ChannelInfo.IsMultiKey = true
+			harness.install(t, channel)
 
 			outcome := harness.post(t, "/v1/chat/completions", relayTestBody)
 

@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartroute"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -2163,4 +2164,91 @@ func TestSmartRouteDistributeDowngradeCountsFileAttachments(t *testing.T) {
 			assert.GreaterOrEqual(t, two, small+4096)
 		})
 	}
+}
+
+const failoverModel = "failover-m"
+
+func setupMultiKeyChannelTest(t *testing.T, id int, mode constant.MultiKeyMode, keyStatuses map[int]int) *model.Channel {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	originalDB := model.DB
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	model.DB = db
+	common.MemoryCacheEnabled = true
+
+	weight := uint(100)
+	priority := int64(0)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: id, Type: constant.ChannelTypeClaudeSubscription, Key: "k0\nk1\nk2", Status: common.ChannelStatusEnabled,
+		Name: "multi", Weight: &weight, Models: failoverModel, Group: "default", Priority: &priority,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: mode, MultiKeyStatusList: keyStatuses},
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: failoverModel, ChannelId: id, Enabled: true, Priority: &priority, Weight: weight}).Error)
+	model.InitChannelCache()
+
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		if originalMemoryCacheEnabled && originalDB != nil &&
+			originalDB.Migrator().HasTable(&model.Channel{}) && originalDB.Migrator().HasTable(&model.Ability{}) {
+			model.InitChannelCache()
+		}
+		if sqlDB, err := db.DB(); err == nil {
+			require.NoError(t, sqlDB.Close())
+		}
+	})
+	channel, err := model.CacheGetChannel(id)
+	require.NoError(t, err)
+	return channel
+}
+
+func TestSetupContextForSelectedChannelSkipsTriedKeysAndRecordsSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		keyStatuses map[int]int
+		wantIndexes []int
+	}{
+		{"three enabled keys", nil, []int{1, 2}},
+		{"a disabled key does not count", map[int]int{1: common.ChannelStatusManuallyDisabled}, []int{2}},
+	} {
+		for _, mode := range []constant.MultiKeyMode{constant.MultiKeyModeRandom, constant.MultiKeyModePolling} {
+			t.Run(fmt.Sprintf("%s/%s", tc.name, mode), func(t *testing.T) {
+				channel := setupMultiKeyChannelTest(t, 4201, mode, tc.keyStatuses)
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
+				common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+				service.StartFailoverLedger(c)
+
+				var usedIndexes []int
+				for range tc.wantIndexes {
+					require.Nil(t, SetupContextForSelectedChannel(c, channel, failoverModel))
+					usedIndexes = append(usedIndexes, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
+				}
+				assert.ElementsMatch(t, tc.wantIndexes, usedIndexes, "each selection takes a different untried enabled key")
+
+				apiErr := SetupContextForSelectedChannel(c, channel, failoverModel)
+				require.NotNil(t, apiErr)
+				assert.Equal(t, types.ErrorCodeAllKeysTried, apiErr.GetErrorCode())
+			})
+		}
+	}
+}
+
+func TestSetupContextForSelectedChannelWithoutLedgerKeepsPollingBehavior(t *testing.T) {
+	channel := setupMultiKeyChannelTest(t, 4401, constant.MultiKeyModePolling, nil)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.Nil(t, service.GetFailoverLedger(c))
+
+	var indexes []int
+	for range 4 {
+		require.Nil(t, SetupContextForSelectedChannel(c, channel, failoverModel))
+		indexes = append(indexes, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
+	}
+	assert.Equal(t, []int{0, 1, 2, 0}, indexes)
+	assert.Equal(t, 1, channel.ChannelInfo.MultiKeyPollingIndex)
+	assert.Nil(t, service.GetFailoverLedger(c), "selecting a channel never creates a ledger")
 }
