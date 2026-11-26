@@ -247,7 +247,10 @@ func clientEffort(endpoint string, raw []byte) string {
 		}
 		return ojson.GetBytes(raw, "output_config.effort").String()
 	}
-	return ojson.GetBytes(raw, "reasoning_effort").String()
+	if v := ojson.GetBytes(raw, "reasoning_effort").String(); v != "" {
+		return v
+	}
+	return ojson.GetBytes(raw, "reasoning.effort").String()
 }
 
 func rewriteSmartRouteBody(c *gin.Context, storage common.BodyStorage, raw []byte, endpoint, realModel string, effort smartroute.EffortDecision, client string) error {
@@ -296,6 +299,9 @@ func rewriteSmartRouteEffort(body []byte, endpoint, realModel string, effort sma
 		return ojson.SetRawBytes(body, "reasoning", encoded)
 	case string(constant.EndpointTypeAnthropic):
 		if !effort.Drop && reasoning.IsKnownClaudeModel(realModel) {
+			if effort.Source == smartroute.EffortSourceClient && !ojson.GetBytes(body, "thinking").Exists() {
+				return ojson.SetBytes(body, "output_config.effort", effort.Value)
+			}
 			return renderClaudeEffort(body, realModel, effort.Value)
 		}
 		switch {
