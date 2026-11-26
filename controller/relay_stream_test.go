@@ -27,7 +27,9 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -458,6 +460,11 @@ func failoverOK(name string, w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"ws-billing","usage":{"prompt_tokens":3,"total_tokens":3}}`)
 	case strings.HasSuffix(r.URL.Path, "/images/generations"):
 		_, _ = io.WriteString(w, `{"created":1,"data":[{"url":"https://example.com/a.png"}]}`)
+	case strings.HasSuffix(r.URL.Path, "/audio/speech"):
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = io.WriteString(w, "audio-from-"+name)
+	case strings.HasSuffix(r.URL.Path, "/rerank"):
+		_, _ = fmt.Fprintf(w, `{"id":"rerank_%s","results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":3,"total_tokens":3}}`, name)
 	case strings.HasSuffix(r.URL.Path, "/messages"):
 		_, _ = fmt.Fprintf(w, `{"id":"msg_%s","type":"message","role":"assistant","model":"ws-billing","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":1}}`, name)
 	case strings.HasSuffix(r.URL.Path, "/responses"):
@@ -545,6 +552,8 @@ func newFailoverGateway(t *testing.T) *failoverGateway {
 		"/v1/responses":          types.RelayFormatOpenAIResponses,
 		"/v1/embeddings":         types.RelayFormatEmbedding,
 		"/v1/images/generations": types.RelayFormatOpenAIImage,
+		"/v1/audio/speech":       types.RelayFormatOpenAIAudio,
+		"/v1/rerank":             types.RelayFormatRerank,
 	} {
 		engine.POST(path, middleware.TokenAuth(), middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
 			defer func() { gateway.done <- struct{}{} }()
@@ -734,24 +743,46 @@ func TestRelaySyncFailoverDropsFailedAttemptStream(t *testing.T) {
 			`{"type":"response.completed","response":{"id":"resp_B","status":"completed","usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}}`,
 		}
 	}
+	openingThenFailed := func(openings int) func(string) []string {
+		return func(name string) []string {
+			if name != "A" {
+				return failedThenOK(name)
+			}
+			events := []string{`{"type":"response.created","response":{"id":"resp_A","status":"in_progress"}}`}
+			for range openings - 1 {
+				events = append(events, `{"type":"response.in_progress","response":{"id":"resp_A","status":"in_progress"}}`)
+			}
+			return append(events, `{"type":"response.failed","response":{"id":"resp_A","status":"failed","error":{"code":"server_error","message":"upstream A failed"}}}`)
+		}
+	}
 	for _, tc := range []struct {
-		name       string
-		channels   []string
-		wantGroups [][]string
-		wantBody   []string
-		notBody    []string
-		wantQuotas []int
+		name        string
+		channels    []string
+		events      func(name string) []string
+		wantGroups  [][]string
+		wantBody    []string
+		notBody     []string
+		wantQuotas  []int
+		wantCreated int
 	}{
+		{name: "64 held opening events then failure moves on", channels: []string{"A", "B"}, events: openingThenFailed(64),
+			wantGroups: [][]string{{"A"}, {"B"}}, wantBody: []string{`"id":"resp_B"`, "response.completed"}, notBody: []string{"resp_A", "upstream A failed"}, wantQuotas: []int{1000}},
+		{name: "65 opening events are released so the later failure is not retried", channels: []string{"A", "B"}, events: openingThenFailed(65),
+			wantGroups: [][]string{{"A"}}, wantBody: []string{"upstream A failed"}, notBody: []string{"resp_B"}, wantQuotas: []int{1000}, wantCreated: 65},
 		{name: "next channel succeeds", channels: []string{"A", "B"}, wantGroups: [][]string{{"A"}, {"B"}},
 			wantBody: []string{`"id":"resp_B"`, "response.completed"}, notBody: []string{"resp_A", "upstream A failed"}, wantQuotas: []int{1000}},
 		{name: "last channel keeps the failure events", channels: []string{"A"}, wantGroups: [][]string{{"A"}},
 			wantBody: []string{`"id":"resp_A"`, "response.created", "response.failed", "upstream A failed"}, notBody: []string{"resp_B"}, wantQuotas: []int{1000}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			events := failedThenOK
+			if tc.events != nil {
+				events = tc.events
+			}
 			fixture := newFailoverFixture(t)
 			upstreams := &failoverUpstreams{}
 			for i, name := range tc.channels {
-				addFailoverChannel(t, upstreams, failoverChannel{name: name, channelType: constant.ChannelTypeOpenAI, priority: int64(10 - i), respond: failoverResponsesSSE(failedThenOK)})
+				addFailoverChannel(t, upstreams, failoverChannel{name: name, channelType: constant.ChannelTypeOpenAI, priority: int64(10 - i), respond: failoverResponsesSSE(events)})
 			}
 
 			gateway := newFailoverGateway(t)
@@ -764,6 +795,11 @@ func TestRelaySyncFailoverDropsFailedAttemptStream(t *testing.T) {
 			}
 			for _, unwanted := range tc.notBody {
 				assert.NotContains(t, body, unwanted)
+			}
+			if tc.wantCreated > 0 {
+				assert.Equal(t, tc.wantCreated, strings.Count(body, `"id":"resp_A"`)-1, "every opening event plus the failure event reaches the client")
+				assert.Contains(t, body[:min(len(body), 80)], `"type":"response.created"`, "response.created is the first event")
+				assert.Less(t, strings.LastIndex(body, `"type":"response.in_progress"`), strings.Index(body, `"type":"response.failed"`), "opening events precede the failure event")
 			}
 			requireAttemptGroups(t, upstreams.channels(), tc.wantGroups...)
 			assertResponsesWSAccounting(t, fixture, tc.wantQuotas)
@@ -805,10 +841,85 @@ func TestRelaySyncFailoverClaudeStreamStartsFresh(t *testing.T) {
 	assertResponsesWSAccounting(t, fixture, []int{1000})
 }
 
-func TestRelaySyncFailoverEmbeddingAndImage(t *testing.T) {
-	for _, tc := range []struct{ name, path, body string }{
-		{"embedding", "/v1/embeddings", `{"model":"ws-billing","input":"hello"}`},
-		{"image", "/v1/images/generations", `{"model":"ws-billing","prompt":"a cat"}`},
+func TestRelaySyncFailoverClaudeStreamHoldLimit(t *testing.T) {
+	claudeSSE := func(pings int) func(string, http.ResponseWriter, *http.Request) {
+		return func(name string, w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			write := func(event, data string) {
+				_, _ = io.WriteString(w, "event: "+event+"\ndata: "+data+"\n\n")
+				w.(http.Flusher).Flush()
+			}
+			write("message_start", `{"type":"message_start","message":{"id":"msg_`+name+`","type":"message","role":"assistant","model":"ws-billing","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`)
+			if name == "A" {
+				for range pings {
+					write("ping", `{"type":"ping"}`)
+				}
+				write("error", `{"type":"error","error":{"type":"overloaded_error","message":"upstream A overloaded"}}`)
+				return
+			}
+			write("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+			write("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"from B"}}`)
+			write("content_block_stop", `{"type":"content_block_stop","index":0}`)
+			write("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`)
+			write("message_stop", `{"type":"message_stop"}`)
+		}
+	}
+	for _, tc := range []struct {
+		name       string
+		pings      int
+		wantGroups [][]string
+		wantFromB  bool
+	}{
+		{name: "64 held opening events then error moves on", pings: 63, wantGroups: [][]string{{"A"}, {"B"}}, wantFromB: true},
+		{name: "65 opening events are released so the later error is not retried", pings: 64, wantGroups: [][]string{{"A"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newFailoverFixture(t)
+			upstreams := &failoverUpstreams{}
+			addFailoverChannel(t, upstreams, failoverChannel{name: "A", channelType: constant.ChannelTypeAnthropic, priority: 10, respond: claudeSSE(tc.pings)})
+			addFailoverChannel(t, upstreams, failoverChannel{name: "B", channelType: constant.ChannelTypeAnthropic, priority: 5, respond: claudeSSE(tc.pings)})
+			gateway := newFailoverGateway(t)
+
+			status, body := gateway.post(t, "/v1/messages", fixture.token.Key, `{"model":"ws-billing","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+
+			assert.Equal(t, http.StatusOK, status)
+			requireAttemptGroups(t, upstreams.channels(), tc.wantGroups...)
+			if tc.wantFromB {
+				assert.Equal(t, 1, strings.Count(body, `"type":"message_start"`), body)
+				assert.Contains(t, body, "from B")
+				assert.NotContains(t, body, "msg_A")
+				assert.NotContains(t, body, "upstream A overloaded")
+				return
+			}
+			assert.Equal(t, 1+tc.pings, strings.Count(body, `"type":"message_start"`)+strings.Count(body, `"type":"ping"`), "every held opening event reaches the client")
+			assert.Less(t, strings.LastIndex(body, `"type":"ping"`), strings.Index(body, "upstream A overloaded"), "opening events precede the error")
+			assert.NotContains(t, body, "from B")
+		})
+	}
+}
+
+func TestRelaySyncFailoverNonResponsesRequests(t *testing.T) {
+	chatStream := func(name string, w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, frame := range []string{
+			`{"id":"chat_` + name + `","object":"chat.completion.chunk","model":"ws-billing","choices":[{"index":0,"delta":{"role":"assistant","content":"from ` + name + `"}}]}`,
+			`{"id":"chat_` + name + `","object":"chat.completion.chunk","model":"ws-billing","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`,
+			"[DONE]",
+		} {
+			_, _ = io.WriteString(w, "data: "+frame+"\n\n")
+			w.(http.Flusher).Flush()
+		}
+	}
+	for _, tc := range []struct {
+		name, path, body string
+		ok               func(string, http.ResponseWriter, *http.Request)
+		wantBody         string
+	}{
+		{name: "embedding", path: "/v1/embeddings", body: `{"model":"ws-billing","input":"hello"}`, ok: failoverOK, wantBody: "embedding"},
+		{name: "image", path: "/v1/images/generations", body: `{"model":"ws-billing","prompt":"a cat"}`, ok: failoverOK, wantBody: "a.png"},
+		{name: "speech", path: "/v1/audio/speech", body: `{"model":"ws-billing","input":"hello","voice":"alloy"}`, ok: failoverOK, wantBody: "audio-from-P3"},
+		{name: "rerank", path: "/v1/rerank", body: `{"model":"ws-billing","query":"q","documents":["a","b"]}`, ok: failoverOK, wantBody: "relevance_score"},
+		{name: "streaming chat", path: "/v1/chat/completions", body: `{"model":"ws-billing","stream":true,"messages":[{"role":"user","content":"hello"}]}`, ok: chatStream, wantBody: "from P3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			previousRetry := common.RetryTimes
@@ -820,7 +931,7 @@ func TestRelaySyncFailoverEmbeddingAndImage(t *testing.T) {
 			for i, name := range []string{"P1", "P2", "P3"} {
 				respond := failoverFail(http.StatusInternalServerError)
 				if name == "P3" {
-					respond = failoverOK
+					respond = tc.ok
 				}
 				addFailoverChannel(t, upstreams, failoverChannel{name: name, channelType: constant.ChannelTypeOpenAI, priority: int64(30 - 10*i), respond: respond})
 			}
@@ -828,10 +939,54 @@ func TestRelaySyncFailoverEmbeddingAndImage(t *testing.T) {
 			status, body := gateway.post(t, tc.path, fixture.token.Key, tc.body)
 
 			assert.Equal(t, http.StatusOK, status, body)
+			assert.Contains(t, body, tc.wantBody)
+			assert.NotContains(t, body, "P1")
+			assert.NotContains(t, body, "P2")
 			assert.Equal(t, []string{"P1", "P2", "P3"}, upstreams.channels())
 			assertResponsesWSAccounting(t, fixture, []int{1000})
 		})
 	}
+}
+
+func TestRelaySyncFailoverRealtimeDialFailure(t *testing.T) {
+	previousRetry := common.RetryTimes
+	common.RetryTimes = 0
+	t.Cleanup(func() { common.RetryTimes = previousRetry })
+	fixture := newFailoverFixture(t)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"billing_setting.billing_mode": `{}`}))
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"ws-billing":1}`))
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios)) })
+	upstreams := &failoverUpstreams{}
+	addFailoverChannel(t, upstreams, failoverChannel{name: "A", channelType: constant.ChannelTypeOpenAI, priority: 10, respond: failoverFail(http.StatusInternalServerError)})
+	addFailoverChannel(t, upstreams, failoverChannel{name: "B", channelType: constant.ChannelTypeOpenAI, priority: 5,
+		respond: func(_ string, w http.ResponseWriter, r *http.Request) {
+			conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.created","session":{"id":"sess_B"}}`))
+			_, _, _ = conn.ReadMessage()
+		}})
+	engine := gin.New()
+	engine.GET("/v1/realtime", middleware.TokenAuth(), middleware.Distribute(), func(c *gin.Context) {
+		c.Set(common.RequestIdKey, "failover-request")
+		Relay(c, types.RelayFormatOpenAIRealtime)
+	})
+	server := httptest.NewServer(engine)
+	t.Cleanup(server.Close)
+
+	header := http.Header{"Sec-WebSocket-Protocol": []string{"realtime, openai-insecure-api-key.sk-" + fixture.token.Key}}
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/realtime?model=ws-billing", header)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, message, err := client.ReadMessage()
+
+	require.NoError(t, err)
+	assert.Contains(t, string(message), "sess_B")
+	assert.Equal(t, []string{"A", "B"}, upstreams.channels())
 }
 
 func TestRelaySyncFailoverStatusCodeMapping(t *testing.T) {
