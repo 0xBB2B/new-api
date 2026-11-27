@@ -226,7 +226,7 @@ afterEach(() => {
 })
 
 describe('entry on the models page', () => {
-  it('puts the Capabilities JSON button between Sync pricing and Add Model and opens the dialog', async () => {
+  it('puts the Capabilities JSON button right after Sync pricing and opens the dialog', async () => {
     useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
     vi.spyOn(api, 'get').mockImplementation(async (url) => {
       if (url === '/api/models/capabilities') {
@@ -253,6 +253,7 @@ describe('entry on the models page', () => {
       'Sync metadata',
       'Sync pricing',
       'Capabilities JSON',
+      'Model square order',
       'Add Model',
       'Open menu',
     ])
