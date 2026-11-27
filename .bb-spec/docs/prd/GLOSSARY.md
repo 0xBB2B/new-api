@@ -36,7 +36,7 @@
 | new user message | 最后一条输入是用户写的文字（不是工具调用结果）的请求；只有这种请求会打分 | 简体「用户新消息」 |
 | tool-result continuation | 最后一条输入是工具调用结果的请求，客户端在同一轮里接着发；不打分，沿用本轮选定的模型 | 简体「工具结果续跑」 |
 | downgrade guard | 本次请求的输入 token 达到降档上限时，不换到更低档位的规则 | 简体「降档保护」 |
-| routing session | new-api 认定属于同一段对话的一组请求，用"密钥 + prompt_cache_key"或"密钥 + 第一条用户消息"识别；与登录会话、渠道亲和的会话无关 | 简体「会话」（仅在智能路由内） |
+| routing session | new-api 认定属于同一段对话的一组请求，用"密钥 + 虚拟模型 + prompt_cache_key"或"密钥 + 虚拟模型 + 第一条用户消息"识别，不同虚拟模型的会话互不影响；与登录会话、渠道亲和的会话无关 | 简体「会话」（仅在智能路由内） |
 | reasoning item | 请求历史里记录模型上一轮思考过程的条目：Responses 格式是 `type` 为 `reasoning` 的条目，Claude 格式是 assistant 消息里的 `thinking`、`redacted_thinking` 块 | 简体「思考记录」 |
 | channel tag | 中台返回 Responses 条目时写进条目编号（Claude 格式写进思考块的签名或 data）里的加密信息，记着生成它的渠道和上游原值；读不出来时按没有标记处理 | 简体「渠道标记」 |
 | model record | 模型管理页（/models/metadata）里的一行，按名称规则（完全匹配、前缀、包含、后缀）命中一个或多个模型名，存描述、图标、标签、厂商、接口配置和 model capability；一个名字被多条命中时完全匹配优先，其次前缀、后缀、包含 | 简体「模型记录」 |

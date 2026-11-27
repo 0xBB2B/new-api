@@ -874,7 +874,7 @@ func TestSmartRouteDistributeToolResultContinuationSkipsScorer(t *testing.T) {
 			inspection, err := smartroute.InspectRequest(endpoint, []byte(tc.body))
 			require.NoError(t, err)
 			require.False(t, inspection.IsUserTurn)
-			smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, "hard", smartroute.EffortDecision{})
+			smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, "auto-gpt", inspection), true, "hard", smartroute.EffortDecision{})
 
 			recorder, seen := serveSmartRoute(t, smartRequest{path: tc.path, body: tc.body, auto: true, tokenID: tokenID})
 
@@ -903,7 +903,7 @@ func TestSmartRouteDistributeSavesSessionOnlyAfterSuccess(t *testing.T) {
 			body := fmt.Sprintf(`{"model":"auto-gpt","input":%q}`, tc.message)
 			inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
 			require.NoError(t, err)
-			key := smartroute.SessionKey(tc.tokenID, inspection)
+			key := smartroute.SessionKey(tc.tokenID, "auto-gpt", inspection)
 			require.NotEmpty(t, key)
 
 			serveSmartRoute(t, smartRequest{path: "/v1/responses", body: body, auto: true, tokenID: tc.tokenID, status: tc.status})
@@ -954,7 +954,7 @@ func TestSmartRouteDistributeContinuationWithDeadAdvisorUsesLastNonAdvisorTier(t
 	body := `{"model":"auto-adv","input":[{"role":"user","content":"continue-dead-advisor"},{"type":"function_call_output","call_id":"c1","output":"ok"}]}`
 	inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
 	require.NoError(t, err)
-	key := smartroute.SessionKey(tokenID, inspection)
+	key := smartroute.SessionKey(tokenID, "auto-adv", inspection)
 	smartroute.SaveSessionAfterSuccess(key, true, "hard", smartroute.EffortDecision{})
 	smartroute.SaveSessionAfterSuccess(key, true, smartroute.RouteAdvisor, smartroute.EffortDecision{})
 
@@ -1032,7 +1032,7 @@ func TestSmartRouteDistributeCompactEndpointNeverScores(t *testing.T) {
 			if tc.sessionTier != "" {
 				inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
 				require.NoError(t, err)
-				smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, inspection), true, tc.sessionTier, smartroute.EffortDecision{})
+				smartroute.SaveSessionAfterSuccess(smartroute.SessionKey(tokenID, "auto-gpt", inspection), true, tc.sessionTier, smartroute.EffortDecision{})
 			}
 
 			recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/responses/compact", body: body, auto: true, tokenID: tokenID})
@@ -1044,7 +1044,7 @@ func TestSmartRouteDistributeCompactEndpointNeverScores(t *testing.T) {
 			if tc.sessionTier != "" {
 				inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/responses"), []byte(body))
 				require.NoError(t, err)
-				state, found := smartroute.LoadSession(smartroute.SessionKey(tokenID, inspection))
+				state, found := smartroute.LoadSession(smartroute.SessionKey(tokenID, "auto-gpt", inspection))
 				require.True(t, found)
 				assert.Equal(t, tc.sessionTier, state.CurrentRoute)
 			}
@@ -2274,7 +2274,7 @@ func serveSmartDowngrade(t *testing.T, tokenID int, path, body string) (*httptes
 	t.Helper()
 	inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath(path), []byte(body))
 	require.NoError(t, err)
-	key := smartroute.SessionKey(tokenID, inspection)
+	key := smartroute.SessionKey(tokenID, "auto-gpt", inspection)
 	require.NotEmpty(t, key)
 	smartroute.SaveSessionAfterSuccess(key, true, "hard", smartroute.EffortDecision{})
 	return serveSmartRoute(t, smartRequest{path: path, body: body, auto: true, tokenID: tokenID})
@@ -2566,4 +2566,84 @@ func TestSetupContextForSelectedChannelWithoutLedgerKeepsPollingBehavior(t *test
 	assert.Equal(t, []int{0, 1, 2, 0}, indexes)
 	assert.Equal(t, 1, channel.ChannelInfo.MultiKeyPollingIndex)
 	assert.Nil(t, service.GetFailoverLedger(c), "selecting a channel never creates a ledger")
+}
+
+func TestSmartRouteDistributeSessionsAreSeparatePerVirtualModel(t *testing.T) {
+	tokenID := 9840
+	route := func(name, normalFields string, downgradeTokens int) string {
+		return fmt.Sprintf(`{"name":%q,"endpoints":["openai-response","openai","anthropic"],"tiers":{
+   "simple":{"model":"t-simple","groups":["default"],"effort":""},
+   "normal":{"model":"t-normal","groups":["default"],%s},
+   "hard":{"model":"t-hard","groups":["vip"],"effort_mode":"fixed","effort":"high"}},
+  "default_tier":"normal","scorer":{"model":"m-scorer","groups":["default"],"timeout_ms":2000},
+  "advisor":{"model":"t-advisor","groups":["default"],"after_dissatisfied":3},
+  "downgrade_max_history_tokens":%d,"confidence_threshold":0.6,"simple_max_message_chars":500}`, name, normalFields, downgradeTokens)
+	}
+	routes := "[" + route("vm-a", `"effort":""`, 4000) + "," + route("vm-b", `"effort_mode":"fixed","effort":"low"`, 20000) + "]"
+	const first = "vm-switch-first"
+	bigHistory := strings.Repeat("word ", 86000)
+	userTurn := func(vm string) string {
+		return fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":%q},{"role":"assistant","content":%q},{"role":"user","content":"short"}]}`, vm, first, bigHistory)
+	}
+	toolTurn := func(vm string) string {
+		return fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":%q},{"role":"tool","tool_call_id":"c1","content":"ok"}]}`, vm, first)
+	}
+	keyFor := func(t *testing.T, vm string) string {
+		t.Helper()
+		inspection, err := smartroute.InspectRequest(smartroute.RequestEndpointFromPath("/v1/chat/completions"), []byte(toolTurn(vm)))
+		require.NoError(t, err)
+		return smartroute.SessionKey(tokenID, vm, inspection)
+	}
+	setup := func(t *testing.T) {
+		t.Helper()
+		tokenID++
+		setupSmartRouteDistributeTest(t)
+		operation_setting.LoadSmartRoutesFromJSONString(routes)
+		installSmartScorerStub(t, smartSimpleLabels(), "", nil)
+		smartroute.SaveSessionAfterSuccess(keyFor(t, "vm-a"), true, "hard", smartroute.EffortDecision{Value: "high", Source: "fixed"})
+	}
+	serve := func(t *testing.T, body string) *smartDistributeSeen {
+		t.Helper()
+		recorder, seen := serveSmartRoute(t, smartRequest{path: "/v1/chat/completions", body: body, auto: true, tokenID: tokenID})
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		return seen
+	}
+
+	t.Run("new user turn on a virtual model without a record uses the scored tier", func(t *testing.T) {
+		setup(t)
+
+		seen := serve(t, userTurn("vm-b"))
+
+		assert.Equal(t, "t-simple", seen.originalModel)
+		assert.NotEqual(t, "downgrade_blocked", seen.routeLog["reason"])
+	})
+
+	t.Run("tool continuation on a virtual model without a record uses its own default tier and effort", func(t *testing.T) {
+		setup(t)
+
+		seen := serve(t, toolTurn("vm-b"))
+
+		assert.Equal(t, "t-normal", seen.originalModel)
+		assert.Equal(t, "low", smartBodyField(t, seen.body, "reasoning_effort"))
+	})
+
+	t.Run("switching back keeps the first virtual model's tier, effort and downgrade guard", func(t *testing.T) {
+		setup(t)
+		serve(t, userTurn("vm-b"))
+
+		cont := serve(t, toolTurn("vm-a"))
+		assert.Equal(t, "t-hard", cont.originalModel)
+		assert.Equal(t, "high", smartBodyField(t, cont.body, "reasoning_effort"))
+
+		blocked := serve(t, userTurn("vm-a"))
+		assert.Equal(t, "t-hard", blocked.originalModel)
+		assert.Equal(t, "downgrade_blocked", blocked.routeLog["reason"])
+
+		stateA, found := smartroute.LoadSession(keyFor(t, "vm-a"))
+		require.True(t, found)
+		assert.Equal(t, "hard", stateA.CurrentRoute)
+		stateB, found := smartroute.LoadSession(keyFor(t, "vm-b"))
+		require.True(t, found)
+		assert.Equal(t, "simple", stateB.CurrentRoute)
+	})
 }
