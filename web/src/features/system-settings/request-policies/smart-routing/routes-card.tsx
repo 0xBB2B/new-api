@@ -429,9 +429,24 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
           id: 'advisor',
           header: t('Advisor'),
           cell: (route) => {
-            const advisorText = t('After {{count}} dissatisfied messages', {
-              count: route.advisor.after_dissatisfied,
-            })
+            const known = route.advisor.model in thinkingCapabilities
+            const capability = effectiveCapability(
+              route.advisor.model,
+              thinkingCapabilities
+            )
+            const overflow = known
+              ? effortOverflow(route.advisor, capability)
+              : { overflow: false, actual: '' }
+            const overflowText = t(
+              'Exceeds the model capability, sent as {{effort}}',
+              { effort: overflow.actual }
+            )
+            const summary = tierEffortSummary(route.advisor, capability, t)
+            const dissatisfiedText = t(
+              'After {{count}} dissatisfied messages',
+              { count: route.advisor.after_dissatisfied }
+            )
+            const advisorText = `${summary} · ${dissatisfiedText}`
             return (
               <div className='flex min-w-0 flex-col gap-1.5'>
                 <TruncatedCell tabIndex={0}>
@@ -442,9 +457,22 @@ function SmartRoutesTable(props: SmartRoutesTableProps) {
                   data-table-text='secondary'
                 >
                   <TruncatedCell tabIndex={0} tooltipContent={advisorText}>
-                    <code>{advisorText}</code>
+                    <code>
+                      <span className={overflow.overflow ? 'text-warning' : ''}>
+                        {summary}
+                      </span>{' '}
+                      · {dissatisfiedText}
+                    </code>
                   </TruncatedCell>
                 </div>
+                {overflow.overflow ? (
+                  <div
+                    className='text-warning min-w-0'
+                    data-table-text='secondary'
+                  >
+                    <TruncatedCell tabIndex={0}>{overflowText}</TruncatedCell>
+                  </div>
+                ) : null}
               </div>
             )
           },

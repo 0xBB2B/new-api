@@ -2223,7 +2223,7 @@ function tooltipLines(text: RegExp) {
 
 it.each([
   ['name', /^Responses \/ Anthropic endpoint$/],
-  ['advisor', /^After 2 dissatisfied messages$/],
+  ['advisor', /^Not overridden · After 2 dissatisfied messages$/],
   ['simple tier', /^Not overridden · api$/],
   ['normal tier', /^Fixed medium · subscription → api$/],
   ['hard tier', /^Follow scoring medium～xhigh · subscription → api$/],
@@ -3070,4 +3070,103 @@ it('an advisor effort error puts a red dot and the error colour on the Advisor t
   )
   const summary = within(tab).getByText(/^gpt-6\.2-astra/)
   expect(summary).toHaveClass('text-destructive')
+})
+
+const advisorColumnRoute = (
+  name: string,
+  model: string,
+  options: AdvisorEffort = {},
+  afterDissatisfied = 2
+) => ({
+  ...autoGpt,
+  name,
+  advisor: {
+    model,
+    groups: ['api'],
+    after_dissatisfied: afterDissatisfied,
+    ...options,
+  },
+})
+
+const EXCEEDS_MAX_TO_HIGH = 'Exceeds the model capability, sent as high'
+
+it('the advisor column shows the effort summary and dissatisfied count on the second line', async () => {
+  setRoutes([
+    advisorColumnRoute('adv-none', 'gpt-5.4-mini'),
+    advisorColumnRoute(
+      'adv-fixed',
+      'gpt-5.4-mini',
+      { effort_mode: 'fixed', effort: 'high' },
+      3
+    ),
+    advisorColumnRoute('adv-follow', 'gpt-6.2-astra', {
+      effort_mode: 'follow',
+      effort_min: 'medium',
+      effort_max: 'max',
+    }),
+    advisorColumnRoute('adv-nothink', 'gpt-4.1'),
+  ])
+  show()
+  const lines = [
+    ['adv-none', 'Not overridden · After 2 dissatisfied messages'],
+    ['adv-fixed', 'Fixed high · After 3 dissatisfied messages'],
+    [
+      'adv-follow',
+      'Follow scoring medium～max · After 2 dissatisfied messages',
+    ],
+    ['adv-nothink', 'No thinking · After 2 dissatisfied messages'],
+  ]
+  for (const [name, text] of lines) {
+    const row = await screen.findByRole('row', { name: new RegExp(name) })
+    await waitFor(() =>
+      expect(
+        within(row).getByText(lineMatcher(new RegExp(`^${text}$`)))
+      ).toBeVisible()
+    )
+    expect(within(row).queryByText(/^Exceeds the model capability/)).toBeNull()
+  }
+})
+
+it('an advisor effort above the model capability turns the summary warning-colored and adds a sent-as line', async () => {
+  setRoutes([
+    advisorColumnRoute('adv-over', 'gpt-5.4-mini', {
+      effort_mode: 'fixed',
+      effort: 'max',
+    }),
+  ])
+  show()
+  const row = await screen.findByRole('row', { name: /adv-over/ })
+  const summary = await within(row).findByText('Fixed max')
+  expect(summary).toHaveClass('text-warning')
+  const warning = await within(row).findByText(EXCEEDS_MAX_TO_HIGH)
+  expect(warning.closest('.text-warning')).not.toBeNull()
+})
+
+it('the advisor column shows no capability warning while the thinking capabilities are still loading', async () => {
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/smart_routing/thinking_capabilities') await gate
+    return base(url, config)
+  })
+  setRoutes([
+    advisorColumnRoute('adv-over', 'gpt-5.4-mini', {
+      effort_mode: 'fixed',
+      effort: 'max',
+    }),
+  ])
+  show()
+  const row = await screen.findByRole('row', { name: /adv-over/ })
+  expect(
+    within(row).getByText(
+      lineMatcher(/^Fixed max · After 2 dissatisfied messages$/)
+    )
+  ).toBeVisible()
+  expect(within(row).queryByText(EXCEEDS_MAX_TO_HIGH)).toBeNull()
+  release()
+  expect(await within(row).findByText(EXCEEDS_MAX_TO_HIGH)).toBeVisible()
 })
