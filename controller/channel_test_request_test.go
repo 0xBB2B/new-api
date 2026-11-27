@@ -155,6 +155,7 @@ func TestOpenAIChatSamplingCompatibility(t *testing.T) {
 		{name: "GPT6.2 astra snapshot drops sampling", model: "gpt-6.2-astra-2026-11-17", wantRole: "developer", wantParams: `{}`},
 		{name: "GPT6.1 terra default drops sampling", model: "gpt-6.1-terra", wantRole: "developer", wantParams: `{}`},
 		{name: "GPT6.1 terra none keeps sampling", model: "gpt-6.1-terra", effort: "none", wantEffort: "none", wantRole: "developer", wantParams: sampling},
+		{name: "GPT6.2 sol drops sampling", model: "gpt-6.2-sol", wantRole: "developer", wantParams: `{}`},
 		{name: "none effort suffix", model: "gpt-5.2-none", wantModel: "gpt-5.2", wantEffort: "none", wantRole: "developer", wantParams: sampling},
 		{name: "modifier overrides explicit effort", model: "gpt-5.2@thinking:off", effort: "high", wantModel: "gpt-5.2", wantEffort: "none", wantRole: "developer", wantParams: sampling},
 		{name: "mapped modifier wins", model: "customer-model@thinking:off", mapping: map[string]string{"customer-model": "gpt-5.2@effort:high"}, wantModel: "gpt-5.2", wantEffort: "high", wantRole: "developer", wantParams: `{}`},

@@ -367,6 +367,7 @@ func GetOpenAIChatCapabilities(modelName, reasoningEffort string) OpenAIChatCapa
 	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.1-sol
 	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.1-terra
 	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.2-sol
+	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.2-astra
 	supportsSampling := false
 	if reasoningEffort == "" || reasoningEffort == "none" {
 		supportsSampling = isGPT6MediumDefault && reasoningEffort == "none"

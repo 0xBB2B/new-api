@@ -5046,7 +5046,7 @@ export function ChannelMutateDrawer({
             />
             <fieldset
               disabled={sensitiveLocked}
-              className='disabled:opacity-60'
+              className='min-w-0 disabled:opacity-60'
             >
               <ChannelPluginConfigFields
                 pluginKey={currentTaskPluginKey}
