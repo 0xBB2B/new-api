@@ -163,6 +163,12 @@ func ValidateRoute(route operation_setting.SmartRoute) []FieldError {
 	for _, name := range tierOrder {
 		validateTierEffort(add, "tiers."+name, route.Tiers[name])
 	}
+	validateTierEffort(add, "advisor", operation_setting.SmartRouteTier{
+		EffortMode: route.Advisor.EffortMode,
+		Effort:     route.Advisor.Effort,
+		EffortMin:  route.Advisor.EffortMin,
+		EffortMax:  route.Advisor.EffortMax,
+	})
 	return errs
 }
 

@@ -1867,6 +1867,47 @@ func TestValidateRoute_EffortModes(t *testing.T) {
 	}
 }
 
+func TestValidateRoute_AdvisorEffortModes(t *testing.T) {
+	const invalid = "Select a valid reasoning effort"
+	tests := []struct {
+		name      string
+		fields    string
+		wantField string
+		wantKey   string
+	}{
+		{"all four fields empty", `{}`, "", ""},
+		{"no override with effort_min", `{"effort_min":"low"}`, "advisor.effort_min", invalid},
+		{"no override with effort", `{"effort":"low"}`, "advisor.effort", invalid},
+		{"unknown mode", `{"effort_mode":"auto"}`, "advisor.effort", invalid},
+		{"fixed empty effort", `{"effort_mode":"fixed"}`, "advisor.effort", invalid},
+		{"fixed unknown effort", `{"effort_mode":"fixed","effort":"ultra"}`, "advisor.effort", invalid},
+		{"fixed with effort_max", `{"effort_mode":"fixed","effort":"low","effort_max":"high"}`, "advisor.effort_max", invalid},
+		{"fixed high", `{"effort_mode":"fixed","effort":"high"}`, "", ""},
+		{"follow min above max", `{"effort_mode":"follow","effort_min":"max","effort_max":"medium"}`, "advisor.effort_max", "The minimum effort cannot be higher than the maximum"},
+		{"follow unknown min", `{"effort_mode":"follow","effort_min":"ultra","effort_max":"high"}`, "advisor.effort_min", invalid},
+		{"follow with fixed effort", `{"effort_mode":"follow","effort":"low","effort_min":"low","effort_max":"high"}`, "advisor.effort", invalid},
+		{"follow medium to max", `{"effort_mode":"follow","effort_min":"medium","effort_max":"max"}`, "", ""},
+	}
+	setupValidateRouteTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := validRoute()
+			require.NoError(t, common.UnmarshalJsonStr(tt.fields, &route.Advisor))
+
+			errs := smartroute.ValidateRoute(route)
+
+			if tt.wantField == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, tt.wantField, errs[0].Field)
+			require.NotNil(t, errs[0].Message)
+			assert.Equal(t, tt.wantKey, errs[0].Message.Key)
+		})
+	}
+}
+
 func useModelCapabilityRecords(t *testing.T, records ...model.Model) {
 	t.Helper()
 	setupValidateRouteTest(t)

@@ -179,8 +179,14 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 	tierConfig := route.Tiers[finalTier]
 	sessionEffort, sessionSource := "", ""
 	if finalTier == smartroute.RouteAdvisor {
-		tierConfig = operation_setting.SmartRouteTier{}
-	} else if state.CurrentRoute == finalTier {
+		tierConfig = operation_setting.SmartRouteTier{
+			EffortMode: route.Advisor.EffortMode,
+			Effort:     route.Advisor.Effort,
+			EffortMin:  route.Advisor.EffortMin,
+			EffortMax:  route.Advisor.EffortMax,
+		}
+	}
+	if state.CurrentRoute == finalTier {
 		sessionEffort, sessionSource = state.Effort, state.EffortSource
 	}
 	effort := smartroute.ResolveTierEffort(smartroute.EffortInput{
