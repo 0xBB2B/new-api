@@ -80,11 +80,11 @@ import type { SmartEndpoint, SmartRoute, SmartTierId } from './types'
 
 const ROUTE_FORM_ID = 'smart-route-form'
 const ENDPOINTS: SmartEndpoint[] = ['openai-response', 'openai', 'anthropic']
-const ADVANCED_FIELDS = [
+const ADVANCED_FIELDS = new Set([
   'downgrade_max_history_tokens',
   'confidence_threshold',
   'simple_max_message_chars',
-]
+])
 const TAB_TRIGGER_CLASS =
   'h-auto min-h-14 w-full flex-col items-start justify-center gap-1 border-input px-3 py-2 text-left after:hidden data-active:border-primary/30 data-active:bg-primary/10! data-active:text-primary'
 
@@ -245,7 +245,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
       setTab(location.tab)
       if (location.tier) setTier(location.tier)
     }
-    if (errorFieldNames.some((field) => ADVANCED_FIELDS.includes(field))) {
+    if (errorFieldNames.some((field) => ADVANCED_FIELDS.has(field))) {
       setAdvancedOpen(true)
     }
   }
