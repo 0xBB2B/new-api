@@ -33,6 +33,10 @@ type SmartRouteAdvisor struct {
 	Model             string   `json:"model"`
 	Groups            []string `json:"groups"`
 	AfterDissatisfied int      `json:"after_dissatisfied"`
+	EffortMode        string   `json:"effort_mode"`
+	Effort            string   `json:"effort"`
+	EffortMin         string   `json:"effort_min"`
+	EffortMax         string   `json:"effort_max"`
 }
 
 type SmartRoute struct {

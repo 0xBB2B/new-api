@@ -80,11 +80,11 @@ import type { SmartEndpoint, SmartRoute, SmartTierId } from './types'
 
 const ROUTE_FORM_ID = 'smart-route-form'
 const ENDPOINTS: SmartEndpoint[] = ['openai-response', 'openai', 'anthropic']
-const ADVANCED_FIELDS = [
+const ADVANCED_FIELDS = new Set([
   'downgrade_max_history_tokens',
   'confidence_threshold',
   'simple_max_message_chars',
-]
+])
 const TAB_TRIGGER_CLASS =
   'h-auto min-h-14 w-full flex-col items-start justify-center gap-1 border-input px-3 py-2 text-left after:hidden data-active:border-primary/30 data-active:bg-primary/10! data-active:text-primary'
 
@@ -163,8 +163,16 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     route.scorer.model,
     thinkingCapabilities
   )
-  const summaries = slotSummaries(route, t, scorerCapability)
+  const advisorCapability = effectiveCapability(
+    route.advisor.model,
+    thinkingCapabilities
+  )
+  const summaries = slotSummaries(route, t, scorerCapability, advisorCapability)
   const scorerNoThinking = scorerCapability.noThinking
+  const advisorNoThinking =
+    route.advisor.model !== '' &&
+    route.advisor.model in thinkingCapabilities &&
+    advisorCapability.noThinking
   const noThinkingKey = SMART_TIER_IDS.filter((id) => {
     const model = route.tiers[id].model
     return (
@@ -192,6 +200,18 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
     form.setValue('scorer.effort', '')
     form.clearErrors('scorer.effort')
   }, [scorerNoThinking, form])
+  useEffect(() => {
+    if (!advisorNoThinking) return
+    form.setValue('advisor.effort_mode', '')
+    form.setValue('advisor.effort', '')
+    form.setValue('advisor.effort_min', '')
+    form.setValue('advisor.effort_max', '')
+    form.clearErrors([
+      'advisor.effort',
+      'advisor.effort_min',
+      'advisor.effort_max',
+    ])
+  }, [advisorNoThinking, form])
   function isUnavailable(model: string) {
     return model !== '' && !(model in thinkingCapabilities)
   }
@@ -225,7 +245,7 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
       setTab(location.tab)
       if (location.tier) setTier(location.tier)
     }
-    if (errorFieldNames.some((field) => ADVANCED_FIELDS.includes(field))) {
+    if (errorFieldNames.some((field) => ADVANCED_FIELDS.has(field))) {
       setAdvancedOpen(true)
     }
   }
@@ -392,38 +412,64 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
                   : 'w-full gap-2 p-0 md:w-38 md:shrink-0'
               }
             >
-              {tabs.map((item) => (
-                <TabsTrigger
-                  key={item.id}
-                  value={item.id}
-                  className={TAB_TRIGGER_CLASS}
-                >
-                  <span className='flex items-center gap-1.5 text-sm font-medium'>
-                    {item.title}
-                    {errorCount(item.id) > 0 ? (
-                      <span
-                        aria-hidden='true'
-                        className='bg-destructive size-1.5 shrink-0 rounded-full'
-                      />
-                    ) : null}
-                  </span>
-                  <span
-                    className={cn(
-                      'max-w-full truncate text-xs font-normal',
-                      errorCount(item.id) > 0
-                        ? 'text-destructive'
-                        : 'text-muted-foreground'
-                    )}
-                  >
-                    {item.summary}
-                  </span>
-                  {errorCount(item.id) > 0 ? (
-                    <span className='text-destructive text-xs font-normal'>
-                      {t('{{count}} errors', { count: errorCount(item.id) })}
+              {tabs.map((item) => {
+                const content = (
+                  <>
+                    <span className='flex items-center gap-1.5 text-sm font-medium'>
+                      {item.title}
+                      {errorCount(item.id) > 0 ? (
+                        <span
+                          aria-hidden='true'
+                          className='bg-destructive size-1.5 shrink-0 rounded-full'
+                        />
+                      ) : null}
                     </span>
-                  ) : null}
-                </TabsTrigger>
-              ))}
+                    <span
+                      className={cn(
+                        'max-w-full truncate text-xs font-normal',
+                        errorCount(item.id) > 0
+                          ? 'text-destructive'
+                          : 'text-muted-foreground'
+                      )}
+                    >
+                      {item.summary}
+                    </span>
+                    {errorCount(item.id) > 0 ? (
+                      <span className='text-destructive text-xs font-normal'>
+                        {t('{{count}} errors', { count: errorCount(item.id) })}
+                      </span>
+                    ) : null}
+                  </>
+                )
+                if (item.id !== 'advisor') {
+                  return (
+                    <TabsTrigger
+                      key={item.id}
+                      value={item.id}
+                      className={TAB_TRIGGER_CLASS}
+                    >
+                      {content}
+                    </TabsTrigger>
+                  )
+                }
+                return (
+                  <Tooltip key={item.id}>
+                    <TooltipTrigger
+                      render={
+                        <TabsTrigger
+                          value={item.id}
+                          className={TAB_TRIGGER_CLASS}
+                        />
+                      }
+                    >
+                      {content}
+                    </TooltipTrigger>
+                    <TooltipContent role='tooltip'>
+                      {item.summary}
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              })}
             </TabsList>
             <div className='min-w-0 flex-1'>
               <TabsContent value='scoring'>
@@ -453,6 +499,10 @@ export function RouteEditorDialog(props: RouteEditorDialogProps) {
                 <AdvisorPanel
                   modelOptions={modelOptions}
                   groupOptions={groupOptions}
+                  capability={advisorCapability}
+                  unconfirmed={isUnconfirmed(route.advisor.model)}
+                  unavailable={isUnavailable(route.advisor.model)}
+                  failed={thinkingQuery.isError}
                 />
               </TabsContent>
             </div>

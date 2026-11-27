@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ThinkingCapabilities } from './api'
 import { SMART_TIER_IDS } from './lib'
-import type { SmartEffort, SmartRoute, SmartRouteTier } from './types'
+import type { SmartEffort, SmartEffortSetting, SmartRoute } from './types'
 
 export const SMART_EFFORTS: SmartEffort[] = [
   'none',
@@ -81,7 +81,7 @@ export function clampEffort(
 }
 
 export function effortOverflow(
-  tier: SmartRouteTier,
+  tier: SmartEffortSetting,
   capability: EffectiveCapability
 ): { overflow: boolean; actual: SmartEffort | '' } {
   let stored: (SmartEffort | '')[] = []
@@ -97,6 +97,19 @@ export function effortOverflow(
   )
   if (outOfRange.length === 0) return { overflow: false, actual: highest }
   const reported = outOfRange.at(-1) as SmartEffort
+  if (tier.effort_mode === 'follow') {
+    const low = SMART_EFFORTS.indexOf(tier.effort_min as SmartEffort)
+    const high = SMART_EFFORTS.indexOf(tier.effort_max as SmartEffort)
+    const supported = SMART_EFFORTS.filter(
+      (level, rank) =>
+        rank >= low && rank <= high && capability.efforts.includes(level)
+    )
+    if (supported.length > 0) {
+      const actual =
+        reported === tier.effort_max ? supported.at(-1) : supported[0]
+      return { overflow: true, actual: actual as SmartEffort }
+    }
+  }
   return { overflow: true, actual: clampEffort(reported, capability).value }
 }
 
@@ -104,6 +117,7 @@ export function capabilityModelsOfRoutes(routes: SmartRoute[]) {
   const models = routes.flatMap((route) => [
     ...SMART_TIER_IDS.map((id) => route.tiers[id].model),
     route.scorer.model,
+    route.advisor.model,
   ])
   return [...new Set(models.filter(Boolean))]
 }

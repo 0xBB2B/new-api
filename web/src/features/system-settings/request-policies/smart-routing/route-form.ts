@@ -20,7 +20,7 @@ import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
 import { SMART_EFFORTS } from './capability'
-import type { SmartRoute, SmartRouteTier } from './types'
+import type { SmartEffortSetting, SmartRoute, SmartRouteTier } from './types'
 
 export type RouteFormValues = SmartRoute
 
@@ -36,39 +36,39 @@ export function createRouteFormSchema(t: TFunction) {
   const model = z.string().min(1, t('Select a model'))
   const groups = z.array(z.string()).min(1, t('Select at least one group'))
   const effort = z.enum(['', ...SMART_EFFORTS])
+  const effortShape = {
+    effort_mode: z.enum(['', 'fixed', 'follow']),
+    effort,
+    effort_min: effort,
+    effort_max: effort,
+  }
+  const checkEffort = (value: SmartEffortSetting, ctx: z.RefinementCtx) => {
+    const issue = (path: string, message: string) =>
+      ctx.addIssue({ code: 'custom', path: [path], message })
+    const invalid = t('Select a valid reasoning effort')
+    const { effort_mode: mode } = value
+    if (mode !== 'fixed' && value.effort) issue('effort', invalid)
+    if (mode !== 'follow' && value.effort_min) issue('effort_min', invalid)
+    if (mode !== 'follow' && value.effort_max) issue('effort_max', invalid)
+    if (mode === 'fixed' && !value.effort) issue('effort', invalid)
+    if (mode !== 'follow') return
+    if (!value.effort_min) issue('effort_min', invalid)
+    if (!value.effort_max) issue('effort_max', invalid)
+    if (
+      value.effort_min &&
+      value.effort_max &&
+      SMART_EFFORTS.indexOf(value.effort_min) >
+        SMART_EFFORTS.indexOf(value.effort_max)
+    ) {
+      issue(
+        'effort_max',
+        t('The minimum effort cannot be higher than the maximum')
+      )
+    }
+  }
   const tier = z
-    .object({
-      model,
-      groups,
-      effort_mode: z.enum(['', 'fixed', 'follow']),
-      effort,
-      effort_min: effort,
-      effort_max: effort,
-    })
-    .superRefine((value, ctx) => {
-      const issue = (path: string, message: string) =>
-        ctx.addIssue({ code: 'custom', path: [path], message })
-      const invalid = t('Select a valid reasoning effort')
-      const { effort_mode: mode } = value
-      if (mode !== 'fixed' && value.effort) issue('effort', invalid)
-      if (mode !== 'follow' && value.effort_min) issue('effort_min', invalid)
-      if (mode !== 'follow' && value.effort_max) issue('effort_max', invalid)
-      if (mode === 'fixed' && !value.effort) issue('effort', invalid)
-      if (mode !== 'follow') return
-      if (!value.effort_min) issue('effort_min', invalid)
-      if (!value.effort_max) issue('effort_max', invalid)
-      if (
-        value.effort_min &&
-        value.effort_max &&
-        SMART_EFFORTS.indexOf(value.effort_min) >
-          SMART_EFFORTS.indexOf(value.effort_max)
-      ) {
-        issue(
-          'effort_max',
-          t('The minimum effort cannot be higher than the maximum')
-        )
-      }
-    })
+    .object({ model, groups, ...effortShape })
+    .superRefine(checkEffort)
 
   return z.object({
     name: z.string().trim().min(1, t('Enter a name')),
@@ -83,11 +83,14 @@ export function createRouteFormSchema(t: TFunction) {
       timeout_ms: integerRange(100, 30000),
       effort,
     }),
-    advisor: z.object({
-      model,
-      groups,
-      after_dissatisfied: integerRange(1, 10),
-    }),
+    advisor: z
+      .object({
+        model,
+        groups,
+        after_dissatisfied: integerRange(1, 10),
+        ...effortShape,
+      })
+      .superRefine(checkEffort),
     downgrade_max_history_tokens: z
       .number(t('Enter an integer of 0 or more'))
       .int(t('Enter an integer of 0 or more'))
@@ -115,7 +118,15 @@ export function emptyRouteFormValues(): RouteFormValues {
     tiers: { simple: tier(), normal: tier(), hard: tier() },
     default_tier: 'normal',
     scorer: { model: '', groups: [], timeout_ms: 2000, effort: '' },
-    advisor: { model: '', groups: [], after_dissatisfied: 2 },
+    advisor: {
+      model: '',
+      groups: [],
+      after_dissatisfied: 2,
+      effort_mode: '',
+      effort: '',
+      effort_min: '',
+      effort_max: '',
+    },
     downgrade_max_history_tokens: 20000,
     confidence_threshold: 0.6,
     simple_max_message_chars: 2000,
@@ -128,6 +139,10 @@ export function formValuesToRoute(values: RouteFormValues): SmartRoute {
 
 export function normalizeTier(tier?: Partial<SmartRouteTier>): SmartRouteTier {
   const full = { ...emptyRouteFormValues().tiers.simple, ...tier }
+  full.effort_mode ??= ''
+  full.effort ??= ''
+  full.effort_min ??= ''
+  full.effort_max ??= ''
   if (!full.effort_mode && full.effort) full.effort_mode = 'fixed'
   return full
 }
@@ -145,7 +160,18 @@ export function routeToFormValues(route: SmartRoute): RouteFormValues {
       normal: normalizeTier(route.tiers?.normal),
       hard: normalizeTier(route.tiers?.hard),
     },
-    scorer: { ...defaults.scorer, ...route.scorer },
-    advisor: { ...defaults.advisor, ...route.advisor },
+    scorer: {
+      ...defaults.scorer,
+      ...route.scorer,
+      effort: route.scorer?.effort ?? '',
+    },
+    advisor: {
+      ...defaults.advisor,
+      ...route.advisor,
+      effort_mode: route.advisor?.effort_mode ?? '',
+      effort: route.advisor?.effort ?? '',
+      effort_min: route.advisor?.effort_min ?? '',
+      effort_max: route.advisor?.effort_max ?? '',
+    },
   }
 }

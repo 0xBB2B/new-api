@@ -11,7 +11,11 @@ import {
   capabilityModelsOfRoutes,
 } from '../capability'
 import { endpointShortNames, slotSummaries, tierEffortSummary } from '../lib'
-import { createRouteFormSchema, emptyRouteFormValues } from '../route-form'
+import {
+  createRouteFormSchema,
+  emptyRouteFormValues,
+  routeToFormValues,
+} from '../route-form'
 import type { SmartEffort, SmartRoute, SmartRouteTier } from '../types'
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
@@ -44,7 +48,15 @@ function validValues(): SmartRoute {
       hard: tier(),
     },
     scorer: { model: 's', groups: ['api'], timeout_ms: 2000, effort: '' },
-    advisor: { model: 'a', groups: ['api'], after_dissatisfied: 2 },
+    advisor: {
+      model: 'a',
+      groups: ['api'],
+      after_dissatisfied: 2,
+      effort_mode: '',
+      effort: '',
+      effort_min: '',
+      effort_max: '',
+    },
   }
 }
 
@@ -67,7 +79,15 @@ function route(
       timeout_ms: 2000,
       effort: scorerEffort,
     },
-    advisor: { model: advisor, groups: [], after_dissatisfied: 2 },
+    advisor: {
+      model: advisor,
+      groups: [],
+      after_dissatisfied: 2,
+      effort_mode: '',
+      effort: '',
+      effort_min: '',
+      effort_max: '',
+    },
   }
 }
 
@@ -267,7 +287,7 @@ describe('tierEffortSummary', () => {
 
 describe('slotSummaries', () => {
   it('reports unset slots for a new route', () => {
-    expect(slotSummaries(route({}), t, cap(['low']))).toEqual({
+    expect(slotSummaries(route({}), t, cap(['low']), cap(['low']))).toEqual({
       scorer: 'Not set',
       tiers: '0/3 set',
       advisor: 'Not set',
@@ -279,6 +299,7 @@ describe('slotSummaries', () => {
       slotSummaries(
         route({ simple: 'a', normal: 'b', hard: 'c' }),
         t,
+        cap(['low']),
         cap(['low'])
       ).tiers
     ).toBe('3/3 set')
@@ -288,9 +309,10 @@ describe('slotSummaries', () => {
     const summary = slotSummaries(
       route({}, 'gpt-5.6-luna', 'gpt-5.6-sol'),
       t,
+      cap(['low']),
       cap(['low'])
     )
-    expect(summary.advisor).toBe('gpt-5.6-sol')
+    expect(summary.advisor).toBe('gpt-5.6-sol · Not overridden')
   })
 
   it.each([
@@ -314,7 +336,9 @@ describe('slotSummaries', () => {
       'gpt-5.6-luna · low',
     ],
   ])('scorer summary for %s', (_case, input, capability, expected) => {
-    expect(slotSummaries(input, t, capability).scorer).toBe(expected)
+    expect(slotSummaries(input, t, capability, cap(['low'])).scorer).toBe(
+      expected
+    )
   })
 })
 
@@ -485,6 +509,41 @@ describe('effortOverflow', () => {
     ).toEqual({ overflow: true, actual: 'high' })
   })
 
+  it('settles on the highest supported level when the follow min is unsupported and the model has a lower supported level', () => {
+    expect(
+      effortOverflow(
+        tier({ effort_mode: 'follow', effort_min: 'low', effort_max: 'high' }),
+        cap(['minimal', 'high'])
+      )
+    ).toEqual({ overflow: true, actual: 'high' })
+  })
+
+  it('shifts an unsupported follow min up to the lowest supported level inside the range, not below it', () => {
+    expect(
+      effortOverflow(
+        tier({
+          effort_mode: 'follow',
+          effort_min: 'medium',
+          effort_max: 'max',
+        }),
+        cap(['low', 'xhigh', 'max'])
+      )
+    ).toEqual({ overflow: true, actual: 'xhigh' })
+  })
+
+  it('takes the supported level nearest the range when none inside it is supported', () => {
+    expect(
+      effortOverflow(
+        tier({
+          effort_mode: 'follow',
+          effort_min: 'low',
+          effort_max: 'medium',
+        }),
+        cap(['high'])
+      )
+    ).toEqual({ overflow: true, actual: 'high' })
+  })
+
   it('reports no overflow when the model cannot think', () => {
     expect(
       effortOverflow(
@@ -495,13 +554,46 @@ describe('effortOverflow', () => {
   })
 })
 
+describe('routeToFormValues with null effort fields', () => {
+  it('turns null scorer, advisor and tier effort fields into empty strings that pass validation', () => {
+    const nullEfforts = {
+      effort_mode: null,
+      effort: null,
+      effort_min: null,
+      effort_max: null,
+    }
+    const base = validValues()
+    const stored = {
+      ...base,
+      scorer: { ...base.scorer, effort: null },
+      tiers: {
+        ...base.tiers,
+        simple: { ...base.tiers.simple, ...nullEfforts },
+      },
+      advisor: { ...base.advisor, ...nullEfforts },
+    } as unknown as SmartRoute
+
+    const values = routeToFormValues(stored)
+
+    for (const slot of [values.tiers.simple, values.advisor]) {
+      expect(slot.effort_mode).toBe('')
+      expect(slot.effort).toBe('')
+      expect(slot.effort_min).toBe('')
+      expect(slot.effort_max).toBe('')
+    }
+    expect(values.scorer.effort).toBe('')
+    expect(createRouteFormSchema(t).safeParse(values).success).toBe(true)
+  })
+})
+
 describe('capabilityModelsOfRoutes', () => {
-  it('lists tier and scorer models once each, skipping advisor and empty models', () => {
+  it('lists tier, scorer and advisor models once each, skipping empty models', () => {
     const routes = [
       route({ simple: 'm1', normal: 'm2', hard: 'm3' }, 's1', 'adv'),
       route({ simple: 's1' }, '', 'adv'),
     ]
     expect(capabilityModelsOfRoutes(routes).sort()).toEqual([
+      'adv',
       'm1',
       'm2',
       'm3',

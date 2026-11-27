@@ -27,13 +27,20 @@ export type SmartEffort =
   | 'xhigh'
   | 'max'
 export type SmartEffortMode = '' | 'fixed' | 'follow'
-export type SmartRouteTier = {
-  model: string
-  groups: string[]
+export type SmartEffortSetting = {
   effort_mode: SmartEffortMode
   effort: SmartEffort | ''
   effort_min: SmartEffort | ''
   effort_max: SmartEffort | ''
+}
+export type SmartRouteTier = SmartEffortSetting & {
+  model: string
+  groups: string[]
+}
+export type SmartRouteAdvisor = SmartEffortSetting & {
+  model: string
+  groups: string[]
+  after_dissatisfied: number
 }
 export type SmartRoute = {
   name: string
@@ -46,7 +53,7 @@ export type SmartRoute = {
     timeout_ms: number
     effort: SmartEffort | ''
   }
-  advisor: { model: string; groups: string[]; after_dissatisfied: number }
+  advisor: SmartRouteAdvisor
   downgrade_max_history_tokens: number
   confidence_threshold: number
   simple_max_message_chars: number

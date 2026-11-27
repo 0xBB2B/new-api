@@ -22,7 +22,7 @@ import type { EffectiveCapability } from './capability'
 import type {
   SmartEndpoint,
   SmartRoute,
-  SmartRouteTier,
+  SmartEffortSetting,
   SmartTierId,
 } from './types'
 
@@ -94,7 +94,7 @@ export function endpointShortNames(endpoints: SmartEndpoint[]) {
 }
 
 export function tierEffortSummary(
-  tier: SmartRouteTier,
+  tier: SmartEffortSetting,
   capability: EffectiveCapability,
   t: TFunction
 ) {
@@ -112,7 +112,8 @@ export function tierEffortSummary(
 export function slotSummaries(
   route: SmartRoute,
   t: TFunction,
-  scorerCapability: EffectiveCapability
+  scorerCapability: EffectiveCapability,
+  advisorCapability: EffectiveCapability
 ) {
   const tierCount = SMART_TIER_IDS.filter((id) => route.tiers[id].model).length
   const { model, effort } = route.scorer
@@ -125,6 +126,8 @@ export function slotSummaries(
   return {
     scorer,
     tiers: t('{{count}}/3 set', { count: tierCount }),
-    advisor: route.advisor.model || t('Not set'),
+    advisor: route.advisor.model
+      ? `${route.advisor.model} · ${tierEffortSummary(route.advisor, advisorCapability, t)}`
+      : t('Not set'),
   }
 }

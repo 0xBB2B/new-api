@@ -32,6 +32,8 @@ import { api } from '@/lib/api'
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { getPolicySectionNavItems } from '../section-registry'
 import { SmartRoutingSection } from '../smart-routing-section'
+import { capabilityModelsOfRoutes } from '../smart-routing/capability'
+import type { SmartRoute } from '../smart-routing/types'
 
 const ROUTES_KEY = 'smart_routing_setting.routes'
 const CAPABILITIES_KEY = 'smart_routing_setting.thinking_capabilities'
@@ -129,6 +131,11 @@ const thinkingCapabilities: Record<
     efforts: ['low', 'medium', 'high', 'xhigh'],
   },
   'gpt-4.1': { known: true, no_thinking: true, efforts: [] },
+  'gpt-6.2-astra': {
+    known: true,
+    no_thinking: false,
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
   'gpt-5.4-mini': {
     known: true,
     no_thinking: false,
@@ -1133,22 +1140,28 @@ it('a confirmed model does not show the unconfirmed tag', async () => {
   expect(within(dialog).queryByText('Capability not confirmed')).toBeNull()
 })
 
-it('the Advisor tab has the model, the dissatisfied count and groups but no reasoning effort', async () => {
+it('the Advisor tab lists the model, reasoning effort, dissatisfied count and groups in that order', async () => {
   mockDialogApis({ errors: [], endpoints: [] })
   show()
   const dialog = await openEditDialog('auto-gpt')
   await openTab(/^Advisor/)
-  expect(screen.getByRole('combobox', { name: 'Advisor model' })).toHaveValue(
-    'gpt-advisor'
+  const model = screen.getByRole('combobox', { name: 'Advisor model' })
+  expect(model).toHaveValue('gpt-advisor')
+  const count = within(dialog).getByLabelText(
+    'Dissatisfied messages before the advisor answers'
   )
-  expect(
-    within(dialog).getByLabelText(
-      'Dissatisfied messages before the advisor answers'
-    )
-  ).toHaveValue(2)
-  expect(within(dialog).getByText('Group order')).toBeVisible()
-  expect(within(dialog).queryByText('Reasoning effort')).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Fixed' })).toBeNull()
+  expect(count).toHaveValue(2)
+  const effort = within(dialog).getByText('Reasoning effort')
+  const groups = within(dialog).getByText('Group order')
+  expect(model.compareDocumentPosition(effort)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING
+  )
+  expect(effort.compareDocumentPosition(count)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING
+  )
+  expect(count.compareDocumentPosition(groups)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING
+  )
 })
 
 it('each tab keeps its group order in saved order', async () => {
@@ -2210,7 +2223,7 @@ function tooltipLines(text: RegExp) {
 
 it.each([
   ['name', /^Responses \/ Anthropic endpoint$/],
-  ['advisor', /^After 2 dissatisfied messages$/],
+  ['advisor', /^Not overridden · After 2 dissatisfied messages$/],
   ['simple tier', /^Not overridden · api$/],
   ['normal tier', /^Fixed medium · subscription → api$/],
   ['hard tier', /^Follow scoring medium～xhigh · subscription → api$/],
@@ -2658,4 +2671,502 @@ it('the unconfirmed tag on the scorer reasoning effort row explains itself on fo
   expect((await screen.findAllByText(UNCONFIRMED_TIP)).length).toBeGreaterThan(
     0
   )
+})
+
+type AdvisorEffort = {
+  effort_mode?: string
+  effort?: string
+  effort_min?: string
+  effort_max?: string
+}
+
+const advisorRoute = (model: string, options: AdvisorEffort = {}) => ({
+  ...autoGpt,
+  advisor: { model, groups: ['api'], after_dissatisfied: 2, ...options },
+})
+
+const astraFollow = {
+  effort_mode: 'follow',
+  effort_min: 'medium',
+  effort_max: 'max',
+}
+
+function advisorPanel() {
+  return within(screen.getByRole('tabpanel'))
+}
+
+async function openAdvisor(name = 'auto-gpt') {
+  const dialog = await openEditDialog(name)
+  await openTab(/^Advisor/)
+  return dialog
+}
+
+async function pickAdvisorEffort(label: string, option: string) {
+  await userEvent.click(advisorPanel().getByRole('combobox', { name: label }))
+  await userEvent.click(await screen.findByRole('option', { name: option }))
+}
+
+function sentAdvisor() {
+  return (
+    vi.mocked(api.post).mock.calls[0][1] as {
+      route: { advisor: AdvisorEffort }
+    }
+  ).route.advisor
+}
+
+const emptyAdvisorEffort = {
+  effort_mode: '',
+  effort: '',
+  effort_min: '',
+  effort_max: '',
+}
+
+it('an old advisor without effort fields opens on Not overridden and is saved with empty effort fields', async () => {
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  expect(
+    advisorPanel().getByRole('button', { name: 'Not overridden' })
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(
+    advisorPanel().queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentAdvisor()).toMatchObject(emptyAdvisorEffort)
+})
+
+it('a new virtual model has Not overridden selected on the Advisor tab', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Add virtual model' })
+  )
+  await screen.findByRole('dialog')
+  await openTab(/^Advisor/)
+  expect(
+    advisorPanel().getByRole('button', { name: 'Not overridden' })
+  ).toHaveAttribute('aria-pressed', 'true')
+})
+
+it('Fixed on the advisor shows one dropdown listing every level the advisor model supports', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  await userEvent.click(advisorPanel().getByRole('button', { name: 'Fixed' }))
+  expect(
+    advisorPanel().queryByRole('combobox', { name: 'Minimum effort' })
+  ).toBeNull()
+  await userEvent.click(
+    await advisorPanel().findByRole('combobox', { name: 'Reasoning effort' })
+  )
+  expect(effortOptionNames()).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+})
+
+it('Follow scoring on the advisor shows a range of two dropdowns and drops a fixed value', async () => {
+  setRoutes([
+    advisorRoute('gpt-6.2-astra', { effort_mode: 'fixed', effort: 'high' }),
+    autoChat,
+  ])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  await userEvent.click(
+    advisorPanel().getByRole('button', { name: 'Follow scoring' })
+  )
+  expect(
+    advisorPanel().queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  await userEvent.click(
+    advisorPanel().getByRole('combobox', { name: 'Minimum effort' })
+  )
+  expect(effortOptionNames()).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  await userEvent.click(screen.getByRole('option', { name: 'low' }))
+  await pickAdvisorEffort('Maximum effort', 'high')
+  await saveDialog()
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+  expect(sentAdvisor()).toMatchObject({
+    effort_mode: 'follow',
+    effort: '',
+    effort_min: 'low',
+    effort_max: 'high',
+  })
+})
+
+it('the advisor reasoning effort help text matches the tier one', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  await userEvent.hover(
+    advisorPanel().getByRole('button', { name: 'Reasoning effort help' })
+  )
+  await waitFor(() =>
+    expect(screen.getAllByText(TIER_EFFORT_HELP_EN).length).toBeGreaterThan(0)
+  )
+})
+
+it('Fixed without a level on the advisor fails to save with one reasoning effort error', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openAdvisor()
+  await userEvent.click(advisorPanel().getByRole('button', { name: 'Fixed' }))
+  await saveDialog()
+  expect(
+    await within(dialog).findAllByText('Select a valid reasoning effort')
+  ).toHaveLength(1)
+  expect(screen.getByRole('tab', { name: /^Advisor/ })).toHaveTextContent(
+    '1 error'
+  )
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('Follow scoring without a range fails to save with two errors on the Advisor tab', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openAdvisor()
+  await userEvent.click(
+    advisorPanel().getByRole('button', { name: 'Follow scoring' })
+  )
+  await saveDialog()
+  expect(
+    await within(dialog).findAllByText('Select a valid reasoning effort')
+  ).toHaveLength(2)
+  expect(screen.getByRole('tab', { name: /^Advisor/ })).toHaveTextContent(
+    '2 errors'
+  )
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('an advisor minimum above the maximum is rejected', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  const dialog = await openAdvisor()
+  await userEvent.click(
+    advisorPanel().getByRole('button', { name: 'Follow scoring' })
+  )
+  await pickAdvisorEffort('Minimum effort', 'max')
+  await pickAdvisorEffort('Maximum effort', 'medium')
+  await saveDialog()
+  expect(
+    await within(dialog).findByText(
+      'The minimum effort cannot be higher than the maximum'
+    )
+  ).toBeVisible()
+  const tab = screen.getByRole('tab', { name: /^Advisor/ })
+  expect(tab).toHaveTextContent('1 error')
+  expect(tab.querySelector('.bg-destructive')).not.toBeNull()
+  expect(tab.querySelector('.text-destructive')).not.toBeNull()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('Follow scoring medium to max on the advisor is submitted with all four effort fields', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  await userEvent.click(
+    advisorPanel().getByRole('button', { name: 'Follow scoring' })
+  )
+  await pickAdvisorEffort('Minimum effort', 'medium')
+  await pickAdvisorEffort('Maximum effort', 'max')
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentAdvisor()).toMatchObject({
+    effort_mode: 'follow',
+    effort: '',
+    effort_min: 'medium',
+    effort_max: 'max',
+  })
+})
+
+it('switching the advisor to a model without thinking shows the notice and saves empty effort fields', async () => {
+  setRoutes([
+    advisorRoute('gpt-6.2-astra', { effort_mode: 'fixed', effort: 'high' }),
+    autoChat,
+  ])
+  const post = mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  await pickModel('Advisor model', 'gpt-4.1')
+  expect(
+    await advisorPanel().findByText(
+      'This model does not support reasoning effort. No reasoning parameter is sent with the request'
+    )
+  ).toBeVisible()
+  expect(
+    advisorPanel().queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  expect(screen.getByRole('tab', { name: /^Advisor/ })).toHaveTextContent(
+    'gpt-4.1 · No thinking'
+  )
+  await saveDialog()
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(sentAdvisor()).toMatchObject(emptyAdvisorEffort)
+})
+
+it('an advisor model with unconfirmed capability shows the badge and offers only low, medium and high', async () => {
+  setRoutes([advisorRoute('gpt-scorer'), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  expect(
+    await advisorPanel().findByText('Capability not confirmed')
+  ).toBeVisible()
+  await userEvent.click(advisorPanel().getByRole('button', { name: 'Fixed' }))
+  await userEvent.click(
+    advisorPanel().getByRole('combobox', { name: 'Reasoning effort' })
+  )
+  expect(effortOptionNames()).toEqual(['low', 'medium', 'high'])
+})
+
+it('a failing capability request disables the advisor effort buttons and says so', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/smart_routing/thinking_capabilities') {
+      throw new Error('capabilities down')
+    }
+    return base(url, config)
+  })
+  show()
+  await openAdvisor()
+  expect(
+    await advisorPanel().findByText('Thinking capability failed to load')
+  ).toBeVisible()
+  for (const name of ['Not overridden', 'Fixed', 'Follow scoring']) {
+    expect(advisorPanel().getByRole('button', { name })).toBeDisabled()
+  }
+})
+
+it.each([
+  ['follow', astraFollow, 'gpt-6.2-astra · Follow scoring medium～max'],
+  [
+    'fixed',
+    { effort_mode: 'fixed', effort: 'high' },
+    'gpt-6.2-astra · Fixed high',
+  ],
+  ['not overridden', {}, 'gpt-6.2-astra · Not overridden'],
+])(
+  'the Advisor tab shows the %s effort summary',
+  async (_name, options, text) => {
+    setRoutes([advisorRoute('gpt-6.2-astra', options), autoChat])
+    mockDialogApis({ errors: [], endpoints: [] })
+    show()
+    await openEditDialog('auto-gpt')
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /^Advisor/ })).toHaveTextContent(
+        text
+      )
+    )
+  }
+)
+
+it('the Advisor tab shows Not set when no advisor model is chosen', async () => {
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Add virtual model' })
+  )
+  await screen.findByRole('dialog')
+  expect(screen.getByRole('tab', { name: /^Advisor/ })).toHaveTextContent(
+    'Not set'
+  )
+})
+
+it('hovering the Advisor tab shows its full summary in a tooltip', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra', astraFollow), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openEditDialog('auto-gpt')
+  await userEvent.hover(screen.getByRole('tab', { name: /^Advisor/ }))
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByRole('tooltip')
+        .some((node) =>
+          node.textContent?.includes(
+            'gpt-6.2-astra · Follow scoring medium～max'
+          )
+        )
+    ).toBe(true)
+  )
+})
+
+it('capabilityModelsOfRoutes includes the advisor model', () => {
+  const models = capabilityModelsOfRoutes([
+    advisorRoute('gpt-6.2-astra') as unknown as SmartRoute,
+  ])
+  expect(models).toContain('gpt-6.2-astra')
+})
+
+it('switching the advisor back to Not overridden clears the chosen level for the next Fixed', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  await userEvent.click(advisorPanel().getByRole('button', { name: 'Fixed' }))
+  await pickAdvisorEffort('Reasoning effort', 'high')
+  expect(
+    advisorPanel().getByRole('combobox', { name: 'Reasoning effort' })
+  ).toHaveTextContent('high')
+  await userEvent.click(
+    advisorPanel().getByRole('button', { name: 'Not overridden' })
+  )
+  expect(
+    advisorPanel().queryByRole('combobox', { name: 'Reasoning effort' })
+  ).toBeNull()
+  await userEvent.click(advisorPanel().getByRole('button', { name: 'Fixed' }))
+  const effort = advisorPanel().getByRole('combobox', {
+    name: 'Reasoning effort',
+  })
+  expect(effort).toHaveTextContent('Select')
+  expect(effort).not.toHaveTextContent('high')
+})
+
+it('while the advisor capability request is pending the effort buttons are disabled and no dropdown shows', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/smart_routing/thinking_capabilities') await gate
+    return base(url, config)
+  })
+  show()
+  await openAdvisor()
+  for (const name of ['Not overridden', 'Fixed', 'Follow scoring']) {
+    expect(advisorPanel().getByRole('button', { name })).toBeDisabled()
+  }
+  expect(advisorPanel().queryAllByRole('combobox', { name: /effort/ })).toEqual(
+    []
+  )
+  release()
+  await waitFor(() =>
+    expect(advisorPanel().getByRole('button', { name: 'Fixed' })).toBeEnabled()
+  )
+})
+
+it('an advisor effort error puts a red dot and the error colour on the Advisor tab', async () => {
+  setRoutes([advisorRoute('gpt-6.2-astra'), autoChat])
+  mockDialogApis({ errors: [], endpoints: [] })
+  show()
+  await openAdvisor()
+  const tab = screen.getByRole('tab', { name: /^Advisor/ })
+  expect(tab.querySelector('.bg-destructive')).toBeNull()
+  await userEvent.click(advisorPanel().getByRole('button', { name: 'Fixed' }))
+  await saveDialog()
+  await waitFor(() =>
+    expect(tab.querySelector('.bg-destructive')).not.toBeNull()
+  )
+  const summary = within(tab).getByText(/^gpt-6\.2-astra/)
+  expect(summary).toHaveClass('text-destructive')
+})
+
+const advisorColumnRoute = (
+  name: string,
+  model: string,
+  options: AdvisorEffort = {},
+  afterDissatisfied = 2
+) => ({
+  ...autoGpt,
+  name,
+  advisor: {
+    model,
+    groups: ['api'],
+    after_dissatisfied: afterDissatisfied,
+    ...options,
+  },
+})
+
+const EXCEEDS_MAX_TO_HIGH = 'Exceeds the model capability, sent as high'
+
+it('the advisor column shows the effort summary and dissatisfied count on the second line', async () => {
+  setRoutes([
+    advisorColumnRoute('adv-none', 'gpt-5.4-mini'),
+    advisorColumnRoute(
+      'adv-fixed',
+      'gpt-5.4-mini',
+      { effort_mode: 'fixed', effort: 'high' },
+      3
+    ),
+    advisorColumnRoute('adv-follow', 'gpt-6.2-astra', {
+      effort_mode: 'follow',
+      effort_min: 'medium',
+      effort_max: 'max',
+    }),
+    advisorColumnRoute('adv-nothink', 'gpt-4.1'),
+  ])
+  show()
+  const lines = [
+    ['adv-none', 'Not overridden · After 2 dissatisfied messages'],
+    ['adv-fixed', 'Fixed high · After 3 dissatisfied messages'],
+    [
+      'adv-follow',
+      'Follow scoring medium～max · After 2 dissatisfied messages',
+    ],
+    ['adv-nothink', 'No thinking · After 2 dissatisfied messages'],
+  ]
+  for (const [name, text] of lines) {
+    const row = await screen.findByRole('row', { name: new RegExp(name) })
+    await waitFor(() =>
+      expect(
+        within(row).getByText(lineMatcher(new RegExp(`^${text}$`)))
+      ).toBeVisible()
+    )
+    expect(within(row).queryByText(/^Exceeds the model capability/)).toBeNull()
+  }
+})
+
+it('an advisor effort above the model capability turns the summary warning-colored and adds a sent-as line', async () => {
+  setRoutes([
+    advisorColumnRoute('adv-over', 'gpt-5.4-mini', {
+      effort_mode: 'fixed',
+      effort: 'max',
+    }),
+  ])
+  show()
+  const row = await screen.findByRole('row', { name: /adv-over/ })
+  const summary = await within(row).findByText('Fixed max')
+  expect(summary).toHaveClass('text-warning')
+  const warning = await within(row).findByText(EXCEEDS_MAX_TO_HIGH)
+  expect(warning.closest('.text-warning')).not.toBeNull()
+})
+
+it('the advisor column shows no capability warning while the thinking capabilities are still loading', async () => {
+  const base = vi.mocked(api.get).getMockImplementation()
+  if (!base) throw new Error('api.get is not mocked')
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/smart_routing/thinking_capabilities') await gate
+    return base(url, config)
+  })
+  setRoutes([
+    advisorColumnRoute('adv-over', 'gpt-5.4-mini', {
+      effort_mode: 'fixed',
+      effort: 'max',
+    }),
+  ])
+  show()
+  const row = await screen.findByRole('row', { name: /adv-over/ })
+  expect(
+    within(row).getByText(
+      lineMatcher(/^Fixed max · After 2 dissatisfied messages$/)
+    )
+  ).toBeVisible()
+  expect(within(row).queryByText(EXCEEDS_MAX_TO_HIGH)).toBeNull()
+  release()
+  expect(await within(row).findByText(EXCEEDS_MAX_TO_HIGH)).toBeVisible()
 })
