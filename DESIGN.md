@@ -56,6 +56,10 @@
 | 侧栏选中项底 | sidebar-accent | `color-mix(in oklch, primary 12%, background)`（#eaf4fe） | `color-mix(in oklch, primary 20%, background)`（#222e3b） | — |
 | 侧栏选中项文字 | sidebar-accent-foreground | `oklch(0.579 0.196 255.909)`（#0276ea） | `oklch(0.9 0.05 250)`（#c6e1ff） | 对 sidebar-accent：浅 3.95:1（不达标），深 10.28:1 |
 | 侧栏聚焦描边 | sidebar-ring | `oklch(0.58 0.2 250)`（#007bea） | `oklch(0.7 0.17 250)`（#39a3ff） | 对 sidebar：浅 4.15:1，深 6.38:1 |
+| 选中项底（切换按钮组选中项、竖排标签选中项、分组序号圆点） | selected（primary 10% 不透明） | 叠在弹窗底上 #ecf6fd | 叠在弹窗底上 #2c363d | — |
+| 选中项文字 | selected-foreground（同 primary） | #3ea4ec | #0e72bc | 对选中项底：浅 2.48:1（不达标），深 2.44:1（不达标） |
+| 选中项边框 | selected-border（primary 30% 不透明） | 叠在选中项底上 #b8ddf8 | 叠在选中项底上 #234863 | 对弹窗底：浅 1.43:1（不达标），深 1.39:1（不达标） |
+| 字段说明图标 | （muted-foreground 60% 不透明） | 叠在弹窗底上 #a0a0a0 | 叠在弹窗底上 #818181 | 对弹窗底：浅 2.61:1（不达标），深 3.44:1 |
 | 侧栏分组标题 | （muted-foreground 70% 不透明） | 叠在 sidebar 上 #8f8f8f | 叠在 sidebar 上 #898989 | 对 sidebar：浅 3.18:1（不达标，字号 11px），深 4.86:1 |
 | 表头底 | table-header | `color-mix(in oklch, foreground 1.5%, background)`（#fbfbfb） | `color-mix(in oklch, foreground 6%, background)`（#282828） | 次要文字对它：浅 6.04:1 |
 | 停用行底 / 悬停 / 左边条 | table-disabled / -hover / -border | #f6f6f6 / #f2f2f2 / #d2d2d2（前景色 3% / 4.5% / 16% 混入 background） | #2a2a2a / #2f2f2f / #4a4a4a（前景色 7% / 9.5% / 24% 混入 background） | — |
@@ -96,6 +100,7 @@
 | 侧栏分组标题 | 11px，全大写，字距 0.05em | 继承 1.5 倍（16.5px） | 500 |
 | 提示条（toast）标题 / 描述 | 13px / 12px | 1.5 倍 / 继承 | 500 / 400 |
 | 代码 | 12px（最常用，`font-mono text-xs`），也有 14px | 16px / 20px | 400 |
+| 分组序号圆点里的数字 | 10px，等宽数字 | 20px（继承正文，在 16px 高的圆点里垂直居中） | 600 |
 
 ## 4. 间距
 
@@ -566,6 +571,135 @@
 | 禁用 | 编辑区底变 input 30%，整体 70% 不透明；"复制"在内容为空时禁用，"格式化 JSON"在内容为空或 JSON 无效时禁用（50% 不透明） |
 | 聚焦 | 焦点在编辑区里时，外框边框变 ring，外加 3px ring 50% 光圈 |
 
+### 切换按钮组
+
+- 写法（`ToggleGroup` 的描边、小号写法；几个选项连成一条，单选或多选。路由编辑窗口的「接口」和「思考力度」方式在用）：
+
+```html
+<div data-slot="toggle-group" data-variant="outline" data-size="sm" data-spacing="0" data-orientation="horizontal" role="group" aria-label="思考力度方式"
+     class="group/toggle-group flex w-fit flex-row items-center rounded-lg data-[size=sm]:rounded-md">
+  <button data-slot="toggle-group-item" aria-pressed="true"
+          class="inline-flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 border border-input bg-transparent px-2 text-[0.8rem] font-medium whitespace-nowrap text-muted-foreground transition-all outline-none hover:bg-muted hover:text-foreground focus-visible:z-10 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 rounded-none first:rounded-l-lg last:rounded-r-lg border-l-0 first:border-l aria-pressed:border-primary/30 aria-pressed:bg-primary/10 aria-pressed:text-primary">不覆盖</button>
+  <button data-slot="toggle-group-item" aria-pressed="false" class="…同上…">固定</button>
+  <button data-slot="toggle-group-item" aria-pressed="false" class="…同上…">跟随打分</button>
+</div>
+```
+
+- 尺寸：每项高 28px、最小宽 28px、左右内边距 8px、12.8px 字、500；第一项左侧和最后一项右侧圆角 16px，中间的项圆角 0；相邻两项共用一条 1px 边框（除第一项外都去掉左边框）。
+- 选中（`aria-pressed="true"`）：底 selected（浅 #ecf6fd / 深 #2c363d），边框 selected-border（浅 #b8ddf8 / 深 #234863，不达标），字 selected-foreground（浅 #3ea4ec / 深 #0e72bc，不达标）。
+
+| 状态 | 样子（未选中的项） |
+|---|---|
+| 默认 | 透明底，1px 边框 input 色（浅 #e8e8e8 / 深叠在弹窗底上 #525252），字 = 次要文字色（浅 #606060 / 深 #b7b7b7） |
+| 悬停 | 底变 muted（浅 #f5f5f5 / 深 #2f2f2f），字变正文色，过渡 150ms |
+| 按下 | 和悬停一样；松开后变成选中的样子 |
+| 禁用 | 整组 50% 不透明，不响应鼠标 |
+| 聚焦 | 边框变 ring，外加 3px ring 50% 光圈，压在相邻项上面 |
+
+### 字段说明图标按钮
+
+- 写法（`FieldInfo`，跟在表单标签后面，鼠标移上去或键盘聚焦时出提示气泡，气泡最大宽 288px）：
+
+```html
+<button type="button" aria-label="思考力度说明"
+        class="text-muted-foreground/60 hover:text-foreground focus-visible:ring-ring/50 flex size-5 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-[3px]">
+  <svg class="size-3.5" aria-hidden="true">圆圈里一个 i</svg>
+</button>
+```
+
+- 尺寸：按钮 20×20px（不达标，小于 24×24px）、圆角 12.8px（不达标，圆角档位已在例外表）；图标 14px；和标签文字间距 4px。
+
+| 状态 | 样子 |
+|---|---|
+| 默认 | 透明底，图标 = 次要文字色 60%（浅 #a0a0a0，不达标 / 深 #818181） |
+| 悬停 | 图标变正文色，同时出提示气泡 |
+| 按下 | 没有专门样式 |
+| 禁用 | 不适用：这个按钮没有禁用状态 |
+| 聚焦 | 外加 3px ring 50% 光圈，同时出提示气泡 |
+
+### 标签在左的表单行
+
+- 写法（`FIELD_ROW_CLASS`，路由编辑窗口右侧面板每一行都这样写：左边标签，右边控件）：
+
+```html
+<div class="flex flex-col gap-3">
+  <div data-slot="form-item" class="grid min-w-0 grid-cols-[5.25rem_minmax(0,1fr)] items-start gap-2 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3">
+    <div class="flex min-h-8 items-center gap-1">
+      <label data-slot="form-label" class="text-sm leading-none font-medium">思考力度</label>
+      <!-- 可选：字段说明图标按钮 -->
+    </div>
+    <div class="min-w-0">
+      <div class="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2">控件；一行里有多个控件时这样排</div>
+      <p data-slot="form-message" class="text-destructive text-sm">错误文字</p>
+    </div>
+  </div>
+</div>
+```
+
+- 尺寸：标签列宽 84px（宽度小于 640px）/ 112px（640px 及以上），标签列和控件列间距 8px / 12px；标签格最小高 32px，标签垂直居中；行与行间距 12px；一行里多个控件左右间距 16px，换行后上下间距 8px；「最低 ～ 最高」两个下拉框和中间的「～」间距 6px（不达标）。
+- 整行只显示一句说明、没有控件时（比如模型不支持思考）：标签和说明文字都用次要文字色，说明 14px，最小高 32px。
+- 状态：行本身没有悬停、按下、禁用、聚焦的样子，按里面的控件各自的状态。出错时错误文字 14px 错误色，显示在控件下面。
+
+### 紧凑分组顺序标签
+
+- 写法（`AutoGroupOrderEditor` 的 `variant='compact'`，路由编辑窗口的「分组顺序」在用；每个分组一个标签，可以拖动换顺序）：
+
+```html
+<div role="group" aria-label="分组顺序" class="flex flex-wrap items-center gap-1.5 rounded-lg border border-transparent p-1 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20">
+  <ol role="list" class="contents">
+    <li tabindex="0" draggable="true" class="bg-muted/30 flex min-w-0 cursor-grab items-center gap-1.5 rounded-md border px-2 py-1 active:cursor-grabbing">
+      <svg class="text-muted-foreground size-3.5 shrink-0" aria-hidden="true">六个点的拖动图标</svg>
+      <span aria-hidden="true" class="bg-primary/10 text-primary flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums">1</span>
+      <span class="max-w-40 truncate text-xs font-medium">分组名</span>
+      <button data-slot="button" class="…ghost，icon-xs…" aria-label="移除 分组名"><svg>×</svg></button>
+    </li>
+  </ol>
+  <button data-slot="button" role="combobox" class="…outline… h-7 gap-1 px-2 text-xs"><!-- 圆角 16px --><svg class="size-3.5">＋</svg>添加分组</button>
+</div>
+```
+
+- 尺寸：外框内边距 4px，标签之间间距 6px（不达标）；标签左右内边距 8px、上下 4px、圆角 12.8px（不达标，圆角档位已在例外表）、1px 边框（border 色）、底 muted 30%（浅 #fcfcfc / 深 #2f2f2f），里面元素间距 6px（不达标）；拖动图标 14px；序号圆点 16×16px、全圆角 9999px、底 selected、字 selected-foreground 10px；分组名 12px、500，最宽 160px，超出省略；移除按钮 24×24px。「添加分组」按钮高 28px、左右 8px、圆角 16px、12px 字，还没有分组时按钮里显示「添加分组」文字，有分组后只显示加号。
+
+| 状态 | 样子（标签） |
+|---|---|
+| 默认 | 底 muted 30%，1px 边框 border 色；有 2 个及以上分组时鼠标是抓手 |
+| 悬停 | 没有变化；移除按钮悬停时底变 muted |
+| 按下 | 鼠标变成抓紧的手；拖动中的标签 50% 不透明，要放到的位置那一侧出现 2px 主色边 |
+| 禁用 | 没有专门样式；分组到 5 个或没有可加的分组时，「添加分组」按钮 50% 不透明 |
+| 聚焦 | 浏览器默认的聚焦外框，颜色是 focus 色 50%；聚焦后按 Alt + 左右方向键换顺序 |
+
+### 竖排标签（路由编辑窗口）
+
+- 写法（`Tabs` 的线条变体加 `TAB_TRIGGER_CLASS`，路由编辑窗口左边「打分 / 档位 / 顾问」三个标签；每个标签两行：名字和摘要）：
+
+```html
+<div data-slot="tabs" data-orientation="vertical" class="flex flex-col gap-4 md:flex-row md:gap-6">
+  <div data-slot="tabs-list" data-variant="line" role="tablist" aria-orientation="vertical" class="inline-flex h-fit w-full flex-col gap-2 p-0 md:w-38 md:shrink-0">
+    <button data-slot="tabs-trigger" role="tab" data-active
+            class="relative inline-flex h-auto min-h-14 w-full flex-col items-start justify-center gap-1 rounded-md border border-input px-3 py-2 text-left text-sm font-medium text-foreground/60 after:hidden hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-active:border-primary/30 data-active:bg-primary/10! data-active:text-primary">
+      <span class="flex items-center gap-1.5 text-sm font-medium">顾问<!-- 有错误时：<span class="bg-destructive size-1.5 shrink-0 rounded-full"></span> --></span>
+      <span class="text-muted-foreground max-w-full truncate text-xs font-normal">摘要</span>
+      <!-- 有错误时：摘要变错误色，再加一行 <span class="text-destructive text-xs font-normal">1 个错误</span> -->
+    </button>
+  </div>
+  <div class="min-w-0 flex-1">面板</div>
+</div>
+```
+
+- 尺寸：768px 及以上标签列宽 152px，在面板左边，和面板间距 24px；标签最小高 56px、左右内边距 12px、上下 8px、圆角 12.8px（不达标，圆角档位已在例外表）、1px 边框，标签之间间距 8px；名字 14px、500，摘要 12px、400、超出省略，两行间距 4px；名字后面的错误圆点 6×6px、和名字间距 6px（不达标）。小于 768px 时三个标签横排成 3 等分，在面板上边，和面板间距 16px。
+
+| 状态 | 样子 |
+|---|---|
+| 默认 | 透明底，1px 边框 input 色，名字 = 正文色 60%（浅叠在弹窗底上 #6c6c6c，对比度 5.25:1；深色用次要文字色 #b7b7b7），摘要 = 次要文字色 |
+| 悬停 | 名字变正文色 |
+| 按下 | 没有专门样式；松开后变成选中的样子 |
+| 禁用 | 50% 不透明，不响应鼠标 |
+| 聚焦 | 边框变 ring，外加 3px ring 50% 光圈；键盘上下方向键移到哪个标签就切到哪个 |
+
+摘要超出宽度被省略时，鼠标移到标签上或键盘聚焦，出提示气泡显示摘要全文（「顾问」标签在用）。
+
+另有选中状态：底 selected（浅 #ecf6fd / 深 #2c363d），边框 selected-border，名字 = selected-foreground；摘要仍是次要文字色（对选中项底浅 5.74:1，深 6.15:1）。有错误时：名字后面加 6px 错误色圆点，下面加一行错误数（12px）；摘要和错误数是错误色，没选中时对弹窗底浅 4.77:1、深 4.64:1，选中时对选中项底浅 4.35:1、深 4.27:1（不达标）。
+
 ### 其他常用基础组件（简表）
 
 | 组件 | 写法要点 | 尺寸和样子 |
@@ -574,6 +708,7 @@
 | 标签页 Tabs | 外框 `<div data-slot="tabs-list" class="inline-flex h-8 rounded-lg bg-muted p-[3px] text-muted-foreground">`，按钮 `<button data-slot="tabs-trigger" class="h-[calc(100%-1px)] flex-1 gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium text-foreground/60 hover:text-foreground data-active:bg-background data-active:text-foreground data-active:shadow-sm">` | 外框高 32px、内边距 3px（不达标）、圆角 16px；按钮左右 6px、上下 2px（不达标）、圆角 12.8px（不达标）；未选中字：浅色前景 60%（#686868，对 muted 5.11:1）、深色 #b7b7b7；选中：白底加小阴影，深色底 input 30%、1px input 边框；"线条"变体选中时底部 2px 下划线 |
 | 提示气泡 Tooltip | `<div data-slot="tooltip-content" class="bg-foreground text-background inline-flex w-fit max-w-xs items-center gap-1.5 rounded-md px-3 py-1.5 text-xs">` | 最大宽 320px、左右 12px、上下 6px（不达标）、圆角 12.8px（不达标）、12px 字；离触发元素 4px；带 10px 小箭头（圆角 2px，不达标）；鼠标移上去立即出现（延迟 0ms） |
 | 下拉菜单 / 气泡弹层 | `rounded-lg p-1 shadow-md ring-1 ring-foreground/10 bg-popover`；气泡弹层宽 288px、内边距 10px（不达标）、间距 10px | 圆角 16px，阴影见「圆角、边框、阴影」 |
+| 下拉选择框展开的列表 | 列表 `<div data-slot="select-content" class="bg-popover text-popover-foreground ring-foreground/10 min-w-36 rounded-lg shadow-md ring-1 duration-100">`，每项 `<div data-slot="select-item" class="relative flex w-full items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm focus:bg-accent focus:text-accent-foreground data-disabled:opacity-50">`，选中项右侧 `<span class="absolute right-2 flex size-4 items-center justify-center">对勾</span>` | 列表最小宽 144px、宽度不小于触发框、圆角 16px、1px 描边（前景色 10%）、下拉菜单阴影，展开时盖在触发框上、选中项和触发框对齐；每项上下内边距 4px、左 6px（不达标）、右 32px、圆角 12.8px（不达标，圆角档位已在例外表）、14px 字；鼠标移上去或键盘移到的项底变强调底 accent（浅 #eaf4fe / 深 #222e3b）；选中项右侧距边 8px 有 16px 对勾；禁用项 50% 不透明；出现 100ms 淡入 |
 | 步骤条 | `<ol class="grid gap-2">`，每步 `<li aria-current="step" class="border-primary bg-primary/5 rounded-lg border p-2 text-sm font-medium">`，未到的步骤 `<li class="text-muted-foreground rounded-lg border p-2 text-sm">`；用于同步资料、能力配置 JSON 等多步弹窗 | 每步内边距 8px、圆角 16px、1px 边框、14px 字；当前步主色边框加主色 5% 底、500 字重，其余步次要文字色 |
 | 开关 Switch、复选框 | 开关 `<button data-slot="switch" class="h-[18.4px] w-[32px] rounded-full border border-transparent data-checked:bg-primary data-unchecked:bg-input">`；复选框 `<span data-slot="checkbox" class="size-4 rounded-sm border border-input data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground">`，一组复选框写成 `<label class="flex items-center gap-2 text-sm">` 包住复选框和文字 | 开关 32×18.4px，滑块 16×16px（小号 24×14px，滑块 12×12px），全圆角 9999px，未选中底 input（深色 input 80%）；复选框 16×16px、圆角 9.6px（不达标，看起来接近圆形）、1px 边框，选中后主色底加 14px 白色对勾；两者禁用时 50% 不透明，聚焦时边框变 ring 加 3px ring 50% 光圈；点击区域各向外扩 12px（左右）和 8px（上下） |
 
@@ -631,6 +766,13 @@
 | 页面框架间距 | 页面标题区下内边距 10px；内容区 640px 起上内边距 6px；页面底栏上下 10px；顶栏元素间距 6px；侧栏二级菜单外边距 14px、内边距左右 10px 上下 2px；设置页开关行和控件组上下 10px | 2026-11-09 |
 | 轻提示关闭按钮、图标间距 | 关闭按钮 20×20px；图标和文字间距 6px | 2026-11-09 |
 | 侧边抽屉、JSON 代码编辑器 | 抽屉标题和说明间距 2px；JSON 编辑器工具栏左侧元素间距 6px；JSON 有效状态文字 #009966 对工具栏底浅色 3.56:1、深色 4.30:1 | 2026-11-18 |
+| 选中项文字（切换按钮组、竖排标签、分组序号圆点） | 主色，对选中项底浅色 2.48:1、深色 2.44:1 | 2026-11-27 |
+| 选中项边框（切换按钮组、竖排标签） | 主色 30%，对弹窗底浅色 1.43:1、深色 1.39:1 | 2026-11-27 |
+| 字段说明图标颜色（浅色） | 次要文字色 60%，#a0a0a0 对弹窗底 2.61:1 | 2026-11-27 |
+| 字段说明图标按钮大小 | 20×20px | 2026-11-27 |
+| 路由编辑窗口里的 6px 间距 | 分组标签里面和标签之间、「最低 ～ 最高」之间、竖排标签错误圆点和名字之间都是 6px | 2026-11-27 |
+| 竖排标签选中且有错误时的错误文字 | 12px 错误色，对选中项底浅色 4.35:1、深色 4.27:1 | 2026-11-27 |
+| 下拉选择框列表项左内边距 | 6px | 2026-11-27 |
 
 ## 10. 终端界面
 
