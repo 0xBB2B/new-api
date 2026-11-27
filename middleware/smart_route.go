@@ -92,9 +92,9 @@ func applySmartRoute(c *gin.Context, modelRequest *ModelRequest) bool {
 
 	var sessionKey string
 	if tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId); tokenID != 0 {
-		sessionKey = smartroute.SessionKey(tokenID, inspection)
+		sessionKey = smartroute.SessionKey(tokenID, route.Name, inspection)
 	} else {
-		sessionKey = smartroute.SessionKeyForUser(common.GetContextKeyInt(c, constant.ContextKeyUserId), inspection)
+		sessionKey = smartroute.SessionKeyForUser(common.GetContextKeyInt(c, constant.ContextKeyUserId), route.Name, inspection)
 	}
 	var session *smartroute.SessionRecord
 	state, found := smartroute.LoadSession(sessionKey)

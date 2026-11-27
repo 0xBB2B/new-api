@@ -431,47 +431,64 @@ func TestSessionKey(t *testing.T) {
 
 	t.Run("first user message without text gives no session key", func(t *testing.T) {
 		in := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"x"}}]},{"role":"assistant","content":"a"},{"role":"user","content":"再看看"}]}`)
-		assert.Empty(t, smartroute.SessionKey(7, in))
+		assert.Empty(t, smartroute.SessionKey(7, "A", in))
 	})
 
 	t.Run("prompt_cache_key hashes token id and key", func(t *testing.T) {
 		in := inspect(t, responsesEndpoint, `{"prompt_cache_key":"k1","input":"hi"}`)
-		assert.Equal(t, sha256Hex("7|pck|k1"), smartroute.SessionKey(7, in))
+		assert.Equal(t, sha256Hex("7|vm|A|pck|k1"), smartroute.SessionKey(7, "A", in))
 	})
 
 	t.Run("without key hashes token id and first user message", func(t *testing.T) {
 		in := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"第一条"},{"role":"assistant","content":"a"},{"role":"user","content":"第二条"}]}`)
-		assert.Equal(t, sha256Hex("7|first|第一条"), smartroute.SessionKey(7, in))
+		assert.Equal(t, sha256Hex("7|vm|A|first|第一条"), smartroute.SessionKey(7, "A", in))
 	})
 
 	t.Run("same token and key give the same key across different messages and endpoints", func(t *testing.T) {
 		a := inspect(t, responsesEndpoint, `{"prompt_cache_key":"k1","input":"甲"}`)
 		b := inspect(t, chatEndpoint, `{"prompt_cache_key":"k1","messages":[{"role":"user","content":"乙"}]}`)
-		assert.Equal(t, smartroute.SessionKey(7, a), smartroute.SessionKey(7, b))
+		assert.Equal(t, smartroute.SessionKey(7, "A", a), smartroute.SessionKey(7, "A", b))
 	})
 
 	t.Run("same first message gives the same key as the conversation grows", func(t *testing.T) {
 		a := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"开头"}]}`)
 		b := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"开头"},{"role":"assistant","content":"a"},{"role":"user","content":"后续"}]}`)
-		assert.Equal(t, smartroute.SessionKey(7, a), smartroute.SessionKey(7, b))
+		assert.Equal(t, smartroute.SessionKey(7, "A", a), smartroute.SessionKey(7, "A", b))
 	})
 
 	t.Run("different first message gives different keys", func(t *testing.T) {
 		a := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"甲"}]}`)
 		b := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"乙"}]}`)
-		assert.NotEqual(t, smartroute.SessionKey(7, a), smartroute.SessionKey(7, b))
+		assert.NotEqual(t, smartroute.SessionKey(7, "A", a), smartroute.SessionKey(7, "A", b))
 	})
 
 	t.Run("different tokens give different keys", func(t *testing.T) {
 		withKey := inspect(t, responsesEndpoint, `{"prompt_cache_key":"k1","input":"hi"}`)
 		noKey := inspect(t, responsesEndpoint, `{"input":"hi"}`)
-		assert.NotEqual(t, smartroute.SessionKey(7, withKey), smartroute.SessionKey(8, withKey))
-		assert.NotEqual(t, smartroute.SessionKey(7, noKey), smartroute.SessionKey(8, noKey))
+		assert.NotEqual(t, smartroute.SessionKey(7, "A", withKey), smartroute.SessionKey(8, "A", withKey))
+		assert.NotEqual(t, smartroute.SessionKey(7, "A", noKey), smartroute.SessionKey(8, "A", noKey))
+	})
+
+	t.Run("different virtual models give different keys", func(t *testing.T) {
+		withKey := inspect(t, responsesEndpoint, `{"prompt_cache_key":"k1","input":"hi"}`)
+		noKey := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"同一条"}]}`)
+		assert.NotEqual(t, smartroute.SessionKey(7, "A", withKey), smartroute.SessionKey(7, "B", withKey))
+		assert.NotEqual(t, smartroute.SessionKey(7, "A", noKey), smartroute.SessionKey(7, "B", noKey))
+	})
+
+	t.Run("playground key hashes u-prefixed user id and virtual model", func(t *testing.T) {
+		withKey := inspect(t, responsesEndpoint, `{"prompt_cache_key":"k1","input":"hi"}`)
+		noKey := inspect(t, chatEndpoint, `{"messages":[{"role":"user","content":"同一条"}]}`)
+		assert.Equal(t, sha256Hex("u12|vm|A|pck|k1"), smartroute.SessionKeyForUser(12, "A", withKey))
+		assert.Equal(t, sha256Hex("u12|vm|A|first|同一条"), smartroute.SessionKeyForUser(12, "A", noKey))
+		assert.NotEqual(t, smartroute.SessionKeyForUser(12, "A", withKey), smartroute.SessionKeyForUser(12, "B", withKey))
+		assert.NotEqual(t, smartroute.SessionKeyForUser(12, "A", noKey), smartroute.SessionKeyForUser(12, "B", noKey))
 	})
 
 	t.Run("no user messages and no key returns empty", func(t *testing.T) {
 		in := inspect(t, chatEndpoint, `{"messages":[{"role":"system","content":"s"}]}`)
-		assert.Empty(t, smartroute.SessionKey(7, in))
+		assert.Empty(t, smartroute.SessionKey(7, "A", in))
+		assert.Empty(t, smartroute.SessionKeyForUser(12, "A", in))
 	})
 }
 
@@ -2116,10 +2133,10 @@ func TestAnthropicScorerInputAndSessionKey(t *testing.T) {
 
 	later, err := smartroute.InspectRequest("anthropic", []byte(`{"messages":[{"role":"user","content":"q1"},{"role":"assistant","content":"a1"},{"role":"user","content":"q9"}]}`))
 	require.NoError(t, err)
-	key := smartroute.SessionKey(7, in)
+	key := smartroute.SessionKey(7, "A", in)
 	require.NotEmpty(t, key)
-	assert.Equal(t, key, smartroute.SessionKey(7, later))
-	assert.NotEqual(t, key, smartroute.SessionKey(8, in))
+	assert.Equal(t, key, smartroute.SessionKey(7, "A", later))
+	assert.NotEqual(t, key, smartroute.SessionKey(8, "A", in))
 }
 
 const keyFormatRejected = "{{model}} has only {{channel_types}} channels in group {{group}}, which cannot accept the {{format}} format"

@@ -170,22 +170,23 @@ func BuildScorerInput(in Inspection, n int) ScorerInput {
 	return out
 }
 
-func SessionKey(tokenID int, in Inspection) string {
-	return sessionKey(strconv.Itoa(tokenID), in)
+func SessionKey(tokenID int, virtualModel string, in Inspection) string {
+	return sessionKey(strconv.Itoa(tokenID), virtualModel, in)
 }
 
 // SessionKeyForUser 给没有令牌的请求（演练场）用，按用户区分会话。
-func SessionKeyForUser(userID int, in Inspection) string {
-	return sessionKey("u"+strconv.Itoa(userID), in)
+func SessionKeyForUser(userID int, virtualModel string, in Inspection) string {
+	return sessionKey("u"+strconv.Itoa(userID), virtualModel, in)
 }
 
-func sessionKey(owner string, in Inspection) string {
+func sessionKey(owner, virtualModel string, in Inspection) string {
+	prefix := owner + "|vm|" + virtualModel
 	var seed string
 	switch {
 	case in.PromptCacheKey != "":
-		seed = owner + "|pck|" + in.PromptCacheKey
+		seed = prefix + "|pck|" + in.PromptCacheKey
 	case len(in.UserMessages) > 0 && in.UserMessages[0] != "":
-		seed = owner + "|first|" + in.UserMessages[0]
+		seed = prefix + "|first|" + in.UserMessages[0]
 	default:
 		return ""
 	}
