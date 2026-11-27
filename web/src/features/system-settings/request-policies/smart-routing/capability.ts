@@ -97,6 +97,19 @@ export function effortOverflow(
   )
   if (outOfRange.length === 0) return { overflow: false, actual: highest }
   const reported = outOfRange.at(-1) as SmartEffort
+  if (tier.effort_mode === 'follow') {
+    const low = SMART_EFFORTS.indexOf(tier.effort_min as SmartEffort)
+    const high = SMART_EFFORTS.indexOf(tier.effort_max as SmartEffort)
+    const supported = SMART_EFFORTS.filter(
+      (level, rank) =>
+        rank >= low && rank <= high && capability.efforts.includes(level)
+    )
+    if (supported.length > 0) {
+      const actual =
+        reported === tier.effort_max ? supported.at(-1) : supported[0]
+      return { overflow: true, actual: actual as SmartEffort }
+    }
+  }
   return { overflow: true, actual: clampEffort(reported, capability).value }
 }
 

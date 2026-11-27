@@ -11,7 +11,11 @@ import {
   capabilityModelsOfRoutes,
 } from '../capability'
 import { endpointShortNames, slotSummaries, tierEffortSummary } from '../lib'
-import { createRouteFormSchema, emptyRouteFormValues } from '../route-form'
+import {
+  createRouteFormSchema,
+  emptyRouteFormValues,
+  routeToFormValues,
+} from '../route-form'
 import type { SmartEffort, SmartRoute, SmartRouteTier } from '../types'
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
@@ -505,6 +509,41 @@ describe('effortOverflow', () => {
     ).toEqual({ overflow: true, actual: 'high' })
   })
 
+  it('settles on the highest supported level when the follow min is unsupported and the model has a lower supported level', () => {
+    expect(
+      effortOverflow(
+        tier({ effort_mode: 'follow', effort_min: 'low', effort_max: 'high' }),
+        cap(['minimal', 'high'])
+      )
+    ).toEqual({ overflow: true, actual: 'high' })
+  })
+
+  it('shifts an unsupported follow min up to the lowest supported level inside the range, not below it', () => {
+    expect(
+      effortOverflow(
+        tier({
+          effort_mode: 'follow',
+          effort_min: 'medium',
+          effort_max: 'max',
+        }),
+        cap(['low', 'xhigh', 'max'])
+      )
+    ).toEqual({ overflow: true, actual: 'xhigh' })
+  })
+
+  it('takes the supported level nearest the range when none inside it is supported', () => {
+    expect(
+      effortOverflow(
+        tier({
+          effort_mode: 'follow',
+          effort_min: 'low',
+          effort_max: 'medium',
+        }),
+        cap(['high'])
+      )
+    ).toEqual({ overflow: true, actual: 'high' })
+  })
+
   it('reports no overflow when the model cannot think', () => {
     expect(
       effortOverflow(
@@ -512,6 +551,38 @@ describe('effortOverflow', () => {
         cap([], true)
       ).overflow
     ).toBe(false)
+  })
+})
+
+describe('routeToFormValues with null effort fields', () => {
+  it('turns null scorer, advisor and tier effort fields into empty strings that pass validation', () => {
+    const nullEfforts = {
+      effort_mode: null,
+      effort: null,
+      effort_min: null,
+      effort_max: null,
+    }
+    const base = validValues()
+    const stored = {
+      ...base,
+      scorer: { ...base.scorer, effort: null },
+      tiers: {
+        ...base.tiers,
+        simple: { ...base.tiers.simple, ...nullEfforts },
+      },
+      advisor: { ...base.advisor, ...nullEfforts },
+    } as unknown as SmartRoute
+
+    const values = routeToFormValues(stored)
+
+    for (const slot of [values.tiers.simple, values.advisor]) {
+      expect(slot.effort_mode).toBe('')
+      expect(slot.effort).toBe('')
+      expect(slot.effort_min).toBe('')
+      expect(slot.effort_max).toBe('')
+    }
+    expect(values.scorer.effort).toBe('')
+    expect(createRouteFormSchema(t).safeParse(values).success).toBe(true)
   })
 })
 

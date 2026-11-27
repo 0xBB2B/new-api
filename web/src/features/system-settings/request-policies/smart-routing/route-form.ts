@@ -139,6 +139,10 @@ export function formValuesToRoute(values: RouteFormValues): SmartRoute {
 
 export function normalizeTier(tier?: Partial<SmartRouteTier>): SmartRouteTier {
   const full = { ...emptyRouteFormValues().tiers.simple, ...tier }
+  full.effort_mode ??= ''
+  full.effort ??= ''
+  full.effort_min ??= ''
+  full.effort_max ??= ''
   if (!full.effort_mode && full.effort) full.effort_mode = 'fixed'
   return full
 }
@@ -156,7 +160,18 @@ export function routeToFormValues(route: SmartRoute): RouteFormValues {
       normal: normalizeTier(route.tiers?.normal),
       hard: normalizeTier(route.tiers?.hard),
     },
-    scorer: { ...defaults.scorer, ...route.scorer },
-    advisor: { ...defaults.advisor, ...route.advisor },
+    scorer: {
+      ...defaults.scorer,
+      ...route.scorer,
+      effort: route.scorer?.effort ?? '',
+    },
+    advisor: {
+      ...defaults.advisor,
+      ...route.advisor,
+      effort_mode: route.advisor?.effort_mode ?? '',
+      effort: route.advisor?.effort ?? '',
+      effort_min: route.advisor?.effort_min ?? '',
+      effort_max: route.advisor?.effort_max ?? '',
+    },
   }
 }
