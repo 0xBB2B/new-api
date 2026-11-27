@@ -129,7 +129,7 @@ func TestIsRequestPolicyOption_SmartRouting(t *testing.T) {
 
 func TestSmartRoutingRoutesOptionReload(t *testing.T) {
 	const key = "smart_routing_setting.routes"
-	const fullRoutes = `[{"name":"auto-gpt","endpoints":["openai-response","openai"],"tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"],"effort_mode":"follow","effort":"","effort_min":"low","effort_max":"high"},"normal":{"model":"gpt-5.5","groups":["subscription","api"],"effort_mode":"","effort":"","effort_min":"","effort_max":""},"hard":{"model":"gpt-5.6-sol","groups":["subscription","api"],"effort_mode":"fixed","effort":"high","effort_min":"","effort_max":""}},"default_tier":"normal","scorer":{"model":"gpt-5.6-luna","groups":["api"],"timeout_ms":1500,"effort":""},"advisor":{"model":"gpt-5.6-pro","groups":["subscription"],"after_dissatisfied":3},"downgrade_max_history_tokens":30000,"confidence_threshold":0.7,"simple_max_message_chars":1500}]`
+	const fullRoutes = `[{"name":"auto-gpt","endpoints":["openai-response","openai"],"tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"],"effort_mode":"follow","effort":"","effort_min":"low","effort_max":"high"},"normal":{"model":"gpt-5.5","groups":["subscription","api"],"effort_mode":"","effort":"","effort_min":"","effort_max":""},"hard":{"model":"gpt-5.6-sol","groups":["subscription","api"],"effort_mode":"fixed","effort":"high","effort_min":"","effort_max":""}},"default_tier":"normal","scorer":{"model":"gpt-5.6-luna","groups":["api"],"timeout_ms":1500,"effort":""},"advisor":{"model":"gpt-5.6-pro","groups":["subscription"],"after_dissatisfied":3,"effort_mode":"follow","effort":"","effort_min":"medium","effort_max":"max"},"downgrade_max_history_tokens":30000,"confidence_threshold":0.7,"simple_max_message_chars":1500}]`
 	const otherRoutes = `[{"name":"auto-chat","tiers":{"simple":{"model":"gpt-5.4-mini","groups":["api"]}}}]`
 
 	originalMap := common.OptionMap
@@ -157,6 +157,9 @@ func TestSmartRoutingRoutesOptionReload(t *testing.T) {
 	assert.Equal(t, 1500, route.Scorer.TimeoutMs)
 	assert.Equal(t, "gpt-5.6-pro", route.Advisor.Model)
 	assert.Equal(t, 3, route.Advisor.AfterDissatisfied)
+	assert.Equal(t, "follow", route.Advisor.EffortMode)
+	assert.Equal(t, "medium", route.Advisor.EffortMin)
+	assert.Equal(t, "max", route.Advisor.EffortMax)
 	assert.Equal(t, 30000, route.DowngradeMaxHistoryTokens)
 	assert.InDelta(t, 0.7, route.ConfidenceThreshold, 1e-9)
 	assert.Equal(t, 1500, route.SimpleMaxMessageChars)
