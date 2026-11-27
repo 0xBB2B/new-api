@@ -310,7 +310,14 @@ export function ScorerPanel(props: ScorerPanelProps) {
   )
 }
 
-export function AdvisorPanel(props: PanelOptions) {
+type AdvisorPanelProps = PanelOptions & {
+  capability: EffectiveCapability
+  unconfirmed: boolean
+  unavailable: boolean
+  failed: boolean
+}
+
+export function AdvisorPanel(props: AdvisorPanelProps) {
   const { t } = useTranslation()
   return (
     <div className='flex flex-col gap-3'>
@@ -321,6 +328,13 @@ export function AdvisorPanel(props: PanelOptions) {
           'When a user is dissatisfied several messages in a row in one conversation, the advisor answers this turn.'
         )}
         options={props.modelOptions}
+      />
+      <TierEffortField
+        base='advisor'
+        capability={props.capability}
+        unconfirmed={props.unconfirmed}
+        unavailable={props.unavailable}
+        failed={props.failed}
       />
       <NumberRow
         name='advisor.after_dissatisfied'
@@ -432,7 +446,7 @@ export function TiersPanel(props: TiersPanelProps) {
             options={props.modelOptions}
           />
           <TierEffortField
-            tierId={id}
+            base={`tiers.${id}`}
             capability={props.capabilities[id]}
             unconfirmed={props.unconfirmed[id]}
             unavailable={props.unavailable[id]}

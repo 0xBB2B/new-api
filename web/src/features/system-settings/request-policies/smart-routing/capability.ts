@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ThinkingCapabilities } from './api'
 import { SMART_TIER_IDS } from './lib'
-import type { SmartEffort, SmartRoute, SmartRouteTier } from './types'
+import type { SmartEffort, SmartEffortSetting, SmartRoute } from './types'
 
 export const SMART_EFFORTS: SmartEffort[] = [
   'none',
@@ -81,7 +81,7 @@ export function clampEffort(
 }
 
 export function effortOverflow(
-  tier: SmartRouteTier,
+  tier: SmartEffortSetting,
   capability: EffectiveCapability
 ): { overflow: boolean; actual: SmartEffort | '' } {
   let stored: (SmartEffort | '')[] = []
@@ -104,6 +104,7 @@ export function capabilityModelsOfRoutes(routes: SmartRoute[]) {
   const models = routes.flatMap((route) => [
     ...SMART_TIER_IDS.map((id) => route.tiers[id].model),
     route.scorer.model,
+    route.advisor.model,
   ])
   return [...new Set(models.filter(Boolean))]
 }

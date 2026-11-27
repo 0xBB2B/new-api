@@ -44,7 +44,15 @@ function validValues(): SmartRoute {
       hard: tier(),
     },
     scorer: { model: 's', groups: ['api'], timeout_ms: 2000, effort: '' },
-    advisor: { model: 'a', groups: ['api'], after_dissatisfied: 2 },
+    advisor: {
+      model: 'a',
+      groups: ['api'],
+      after_dissatisfied: 2,
+      effort_mode: '',
+      effort: '',
+      effort_min: '',
+      effort_max: '',
+    },
   }
 }
 
@@ -67,7 +75,15 @@ function route(
       timeout_ms: 2000,
       effort: scorerEffort,
     },
-    advisor: { model: advisor, groups: [], after_dissatisfied: 2 },
+    advisor: {
+      model: advisor,
+      groups: [],
+      after_dissatisfied: 2,
+      effort_mode: '',
+      effort: '',
+      effort_min: '',
+      effort_max: '',
+    },
   }
 }
 
@@ -267,7 +283,7 @@ describe('tierEffortSummary', () => {
 
 describe('slotSummaries', () => {
   it('reports unset slots for a new route', () => {
-    expect(slotSummaries(route({}), t, cap(['low']))).toEqual({
+    expect(slotSummaries(route({}), t, cap(['low']), cap(['low']))).toEqual({
       scorer: 'Not set',
       tiers: '0/3 set',
       advisor: 'Not set',
@@ -279,6 +295,7 @@ describe('slotSummaries', () => {
       slotSummaries(
         route({ simple: 'a', normal: 'b', hard: 'c' }),
         t,
+        cap(['low']),
         cap(['low'])
       ).tiers
     ).toBe('3/3 set')
@@ -288,9 +305,10 @@ describe('slotSummaries', () => {
     const summary = slotSummaries(
       route({}, 'gpt-5.6-luna', 'gpt-5.6-sol'),
       t,
+      cap(['low']),
       cap(['low'])
     )
-    expect(summary.advisor).toBe('gpt-5.6-sol')
+    expect(summary.advisor).toBe('gpt-5.6-sol · Not overridden')
   })
 
   it.each([
@@ -314,7 +332,9 @@ describe('slotSummaries', () => {
       'gpt-5.6-luna · low',
     ],
   ])('scorer summary for %s', (_case, input, capability, expected) => {
-    expect(slotSummaries(input, t, capability).scorer).toBe(expected)
+    expect(slotSummaries(input, t, capability, cap(['low'])).scorer).toBe(
+      expected
+    )
   })
 })
 
@@ -496,12 +516,13 @@ describe('effortOverflow', () => {
 })
 
 describe('capabilityModelsOfRoutes', () => {
-  it('lists tier and scorer models once each, skipping advisor and empty models', () => {
+  it('lists tier, scorer and advisor models once each, skipping empty models', () => {
     const routes = [
       route({ simple: 'm1', normal: 'm2', hard: 'm3' }, 's1', 'adv'),
       route({ simple: 's1' }, '', 'adv'),
     ]
     expect(capabilityModelsOfRoutes(routes).sort()).toEqual([
+      'adv',
       'm1',
       'm2',
       'm3',

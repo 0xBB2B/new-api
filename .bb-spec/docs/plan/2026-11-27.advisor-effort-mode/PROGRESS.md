@@ -2,10 +2,10 @@
 | 序号 | Plan | 状态 | 完成时间 |
 |---|---|---|---|
 | 01 | 01-backend-advisor-effort | done | 2026-11-27 |
-| 02 | 02-editor-advisor-effort | pending | — |
+| 02 | 02-editor-advisor-effort | done | 2026-11-27 |
 | 03 | 03-list-advisor-effort | pending | — |
 ## 当前
-准备执行 `02-editor-advisor-effort.md`。
+准备执行 `03-list-advisor-effort.md`。
 ## 阻塞
 （无）
 ## 重试与自修（每次记一条）

@@ -102,8 +102,10 @@ export function EffortCapabilityStatus(props: {
   )
 }
 
+type EffortBase = `tiers.${SmartTierId}` | 'advisor'
+
 type TierEffortFieldProps = {
-  tierId: SmartTierId
+  base: EffortBase
   capability: EffectiveCapability
   unconfirmed: boolean
   unavailable: boolean
@@ -113,7 +115,7 @@ type TierEffortFieldProps = {
 export function TierEffortField(props: TierEffortFieldProps) {
   const { t } = useTranslation()
   const form = useFormContext<RouteFormValues>()
-  const base = `tiers.${props.tierId}` as const
+  const { base } = props
   const items = props.capability.efforts.map((effort) => ({
     value: effort,
     label: effort,
@@ -125,7 +127,7 @@ export function TierEffortField(props: TierEffortFieldProps) {
   ]
 
   const effortSelect = (
-    name: `${typeof base}.${(typeof EFFORT_FIELDS)[number]}`,
+    name: `${EffortBase}.${(typeof EFFORT_FIELDS)[number]}`,
     label: string
   ) => (
     <FormField
@@ -241,7 +243,7 @@ export function TierEffortField(props: TierEffortFieldProps) {
 }
 
 function EffortMessage(props: {
-  name: `tiers.${SmartTierId}.${(typeof EFFORT_FIELDS)[number]}`
+  name: `${EffortBase}.${(typeof EFFORT_FIELDS)[number]}`
 }) {
   const form = useFormContext<RouteFormValues>()
   return (
